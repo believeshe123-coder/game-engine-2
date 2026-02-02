@@ -1,0 +1,79 @@
+:root {
+  font-family: 'Inter', system-ui, sans-serif;
+  color: #f5f4f0;
+  background-color: #1f1f1f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.app {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: radial-gradient(circle at top, #2f2f2f, #1b1b1b);
+}
+
+.app__header {
+  padding: 16px 24px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #ece7da;
+}
+
+.app__main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.table {
+  position: relative;
+  width: min(1100px, 90vw);
+  height: min(680px, 70vh);
+  background: linear-gradient(135deg, #4c6b4c, #3f5a43);
+  border-radius: 48px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.table__surface {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+}
+
+.card {
+  position: absolute;
+  width: 72px;
+  height: 104px;
+  border-radius: 10px;
+  background: #fdfcf9;
+  color: #1f1f1f;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  user-select: none;
+  touch-action: none;
+  cursor: grab;
+}
+
+.card:active {
+  cursor: grabbing;
+}
