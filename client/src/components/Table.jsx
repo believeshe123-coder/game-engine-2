@@ -171,18 +171,16 @@ const Table = () => {
             if (!target || !dragged) {
               return prev;
             }
+            const merged = {
+              ...target,
+              cardIds: [...target.cardIds, ...dragged.cardIds]
+            };
             return prev
-              .filter((stack) => stack.id !== dragging.stackId)
-              .map((stack) =>
-                stack.id === closestId
-                  ? {
-                      ...stack,
-                      x: stack.x,
-                      y: stack.y,
-                      cardIds: [...stack.cardIds, ...dragged.cardIds]
-                    }
-                  : stack
-              );
+              .filter(
+                (stack) =>
+                  stack.id !== dragging.stackId && stack.id !== closestId
+              )
+              .concat(merged);
           });
         }
       }
