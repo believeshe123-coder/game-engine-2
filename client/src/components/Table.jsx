@@ -18,7 +18,7 @@ const SEATS = [
 const Table = () => {
   const tableRef = useRef(null);
   const [tableRect, setTableRect] = useState({ width: 0, height: 0 });
-  const { stacks, setStacks, createStackId, resetTable } = useTableState(
+  const { cardsById, stacks, setStacks, createStackId, resetTable } = useTableState(
     tableRect,
     CARD_SIZE
   );
@@ -31,6 +31,9 @@ const Table = () => {
     mode: 'single'
   });
   const [hoveredStackId, setHoveredStackId] = useState(null);
+  const [selectedStackId, setSelectedStackId] = useState(null);
+  const [pickCountOpen, setPickCountOpen] = useState(false);
+  const [pickCountValue, setPickCountValue] = useState('1');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [occupiedSeats, setOccupiedSeats] = useState(() =>
     SEATS.reduce((acc, seat) => {
@@ -94,6 +97,20 @@ const Table = () => {
       return next;
     });
   }, [setStacks]);
+
+  const getPointerOffset = useCallback(
+    (event, stack) => {
+      const table = tableRef.current;
+      if (!table) {
+        return { dx: 0, dy: 0 };
+      }
+      const rect = table.getBoundingClientRect();
+      const pointerX = event.clientX - rect.left;
+      const pointerY = event.clientY - rect.top;
+      return { dx: pointerX - stack.x, dy: pointerY - stack.y };
+    },
+    []
+  );
 
   const startDrag = useCallback((stackId, pointerId, offset, mode, sourceStackId = null) => {
     bringStackToFront(stackId);
@@ -245,29 +262,20 @@ const Table = () => {
   );
 
   useEffect(() => {
-    if (!dragging.active || !dragging.stackId) {
-      return undefined;
-    }
-
     const handleKeyDown = (event) => {
       if (event.repeat) {
         return;
       }
-      if (event.key?.toLowerCase() !== 'f') {
+      if (event.key !== 'Escape') {
         return;
       }
-      setStacks((prev) =>
-        prev.map((stack) =>
-          stack.id === dragging.stackId
-            ? { ...stack, faceUp: !stack.faceUp }
-            : stack
-        )
-      );
+      setSelectedStackId(null);
+      setPickCountOpen(false);
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [dragging.active, dragging.stackId, setStacks]);
+  }, []);
 
   useEffect(() => {
     if (!dragging.active) {
@@ -291,19 +299,18 @@ const Table = () => {
     };
   }, [dragging.active, handlePointerMove, handlePointerUp]);
 
-  const handlePointerDown = useCallback(
+  const handleStackPointerDown = useCallback(
     (event, stackIdOverride = null) => {
+      if (dragging.active) {
+        return;
+      }
       const table = tableRef.current;
       if (!table) {
         return;
       }
 
-      if (event.button === 2 || event.button === 1) {
-        event.preventDefault();
-      }
-      if (event.button !== 0 && event.button !== 2 && event.button !== 1) {
-        return;
-      }
+      event.preventDefault();
+      event.stopPropagation();
 
       const rect = table.getBoundingClientRect();
       const pointerX = event.clientX - rect.left;
@@ -312,84 +319,34 @@ const Table = () => {
       if (!stackId) {
         return;
       }
-      const stack = stacksById[stackId];
-      if (!stack) {
-        return;
-      }
-
-      const offset = { dx: pointerX - stack.x, dy: pointerY - stack.y };
-      event.currentTarget.setPointerCapture(event.pointerId);
-
-      if (event.button === 2) {
-        startDrag(stackId, event.pointerId, offset, 'stack');
-        return;
-      }
-
-      if (stack.cardIds.length <= 1) {
-        startDrag(stackId, event.pointerId, offset, 'single');
-        return;
-      }
-
-      if (event.button === 1) {
-        const newStackId = createStackId();
-        setStacks((prev) => {
-          const source = prev.find((item) => item.id === stackId);
-          if (!source || source.cardIds.length <= 1) {
-            return prev;
-          }
-          const pickedCount = Math.floor(source.cardIds.length / 2);
-          if (pickedCount === 0) {
-            return prev;
-          }
-          const remainingCount = source.cardIds.length - pickedCount;
-          const remainingCardIds = source.cardIds.slice(0, remainingCount);
-          const pickedCardIds = source.cardIds.slice(remainingCount);
-          const next = prev
-            .map((item) =>
-              item.id === stackId ? { ...item, cardIds: remainingCardIds } : item
-            )
-            .filter((item) => item.id !== stackId || item.cardIds.length > 0);
-          next.push({
-            id: newStackId,
-            x: source.x,
-            y: source.y,
-            rotation: source.rotation,
-            faceUp: source.faceUp,
-            cardIds: pickedCardIds
-          });
-          return next;
-        });
-        startDrag(newStackId, event.pointerId, offset, 'stack', stackId);
-        return;
-      }
-
-      const newStackId = createStackId();
-      setStacks((prev) => {
-        const source = prev.find((item) => item.id === stackId);
-        if (!source || source.cardIds.length <= 1) {
-          return prev;
-        }
-        const topCardId = source.cardIds[source.cardIds.length - 1];
-        const next = prev
-          .map((item) =>
-            item.id === stackId
-              ? { ...item, cardIds: item.cardIds.slice(0, -1) }
-              : item
-          )
-          .filter((item) => item.id !== stackId || item.cardIds.length > 0);
-        next.push({
-          id: newStackId,
-          x: source.x,
-          y: source.y,
-          rotation: source.rotation,
-          faceUp: source.faceUp,
-          cardIds: [topCardId]
-        });
-        return next;
-      });
-      startDrag(newStackId, event.pointerId, offset, 'single', stackId);
+      bringStackToFront(stackId);
+      setSelectedStackId(stackId);
+      setPickCountOpen(false);
     },
-    [createStackId, hitTestStack, setStacks, stacksById, startDrag]
+    [bringStackToFront, dragging.active, hitTestStack]
+  );
+
+  const handleSurfacePointerDown = useCallback(
+    (event) => {
+      if (dragging.active) {
+        return;
+      }
+      const table = tableRef.current;
+      if (!table) {
+        return;
+      }
+      const rect = table.getBoundingClientRect();
+      const pointerX = event.clientX - rect.left;
+      const pointerY = event.clientY - rect.top;
+      const stackId = hitTestStack(pointerX, pointerY);
+      if (stackId) {
+        handleStackPointerDown(event, stackId);
+        return;
+      }
+      setSelectedStackId(null);
+      setPickCountOpen(false);
+    },
+    [dragging.active, handleStackPointerDown, hitTestStack]
   );
 
   const handlePointerMoveHover = useCallback(
@@ -431,6 +388,80 @@ const Table = () => {
     }));
   }, []);
 
+  const pickUpFromStack = useCallback(
+    (event, stackId, requestedCount) => {
+      event.preventDefault();
+      const source = stacksById[stackId];
+      if (!source) {
+        return;
+      }
+      const clampedCount = Math.max(1, Math.min(requestedCount, source.cardIds.length));
+      const newStackId = createStackId();
+      let created = false;
+
+      setStacks((prev) => {
+        const current = prev.find((stack) => stack.id === stackId);
+        if (!current) {
+          return prev;
+        }
+        const safeCount = Math.max(1, Math.min(clampedCount, current.cardIds.length));
+        const remainingCount = current.cardIds.length - safeCount;
+        const remainingCardIds = current.cardIds.slice(0, remainingCount);
+        const pickedCardIds = current.cardIds.slice(remainingCount);
+        if (pickedCardIds.length === 0) {
+          return prev;
+        }
+        created = true;
+        const next = prev
+          .map((item) =>
+            item.id === stackId ? { ...item, cardIds: remainingCardIds } : item
+          )
+          .filter((item) => item.id !== stackId || item.cardIds.length > 0);
+        next.push({
+          id: newStackId,
+          x: current.x,
+          y: current.y,
+          rotation: current.rotation,
+          faceUp: current.faceUp,
+          cardIds: pickedCardIds
+        });
+        return next;
+      });
+
+      if (!created) {
+        return;
+      }
+      const offset = getPointerOffset(event, source);
+      startDrag(newStackId, event.pointerId, offset, 'stack', stackId);
+      setSelectedStackId(null);
+      setPickCountOpen(false);
+    },
+    [createStackId, getPointerOffset, setStacks, stacksById, startDrag]
+  );
+
+  const handleFlipSelected = useCallback(() => {
+    if (!selectedStackId) {
+      return;
+    }
+    setStacks((prev) =>
+      prev.map((stack) =>
+        stack.id === selectedStackId ? { ...stack, faceUp: !stack.faceUp } : stack
+      )
+    );
+  }, [selectedStackId, setStacks]);
+
+  const selectedStack = selectedStackId ? stacksById[selectedStackId] : null;
+  const menuBelow = selectedStack ? selectedStack.y < 140 : false;
+  const menuPosition = selectedStack
+    ? {
+        left: selectedStack.x + CARD_SIZE.width / 2,
+        top: menuBelow
+          ? selectedStack.y + CARD_SIZE.height + 10
+          : selectedStack.y - 10
+      }
+    : null;
+  const menuStackCount = selectedStack ? selectedStack.cardIds.length : 0;
+
   return (
     <div className="table-frame">
       <div className="table__seats" aria-label="Table seats">
@@ -460,11 +491,13 @@ const Table = () => {
       <div
         ref={tableRef}
         className="table__surface"
-        onPointerDown={handlePointerDown}
+        onPointerDown={handleSurfacePointerDown}
         onPointerMove={handlePointerMoveHover}
         onContextMenu={(event) => event.preventDefault()}
       >
         {stacks.map((stack, index) => {
+          const topCardId = stack.cardIds[stack.cardIds.length - 1];
+          const topCard = cardsById[topCardId];
           return (
             <Card
               key={stack.id}
@@ -474,10 +507,103 @@ const Table = () => {
               rotation={stack.rotation}
               faceUp={stack.faceUp}
               zIndex={index + 1}
-              onPointerDown={handlePointerDown}
+              rank={topCard?.rank}
+              suit={topCard?.suit}
+              isSelected={stack.id === selectedStackId}
+              onPointerDown={handleStackPointerDown}
             />
           );
         })}
+        {selectedStack && menuPosition ? (
+          <div
+            className={`stack-menu ${menuBelow ? 'stack-menu--below' : 'stack-menu--above'}`}
+            style={menuPosition}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="stack-menu__button"
+              onPointerDown={(event) =>
+                pickUpFromStack(event, selectedStack.id, selectedStack.cardIds.length)
+              }
+            >
+              Pick up full stack
+            </button>
+            <button
+              type="button"
+              className="stack-menu__button"
+              onPointerDown={(event) => {
+                const halfCount = Math.floor(selectedStack.cardIds.length / 2);
+                if (halfCount < 1) {
+                  return;
+                }
+                pickUpFromStack(event, selectedStack.id, halfCount);
+              }}
+            >
+              Pick up half stack
+            </button>
+            <button
+              type="button"
+              className="stack-menu__button"
+              onPointerDown={(event) => pickUpFromStack(event, selectedStack.id, 1)}
+            >
+              Pick up 1 card
+            </button>
+            <button
+              type="button"
+              className="stack-menu__button"
+              onClick={() => {
+                setPickCountOpen(true);
+                setPickCountValue('1');
+              }}
+            >
+              Pick up N cards...
+            </button>
+            {pickCountOpen ? (
+              <div className="stack-menu__picker">
+                <label className="stack-menu__label" htmlFor="pick-count-input">
+                  Cards to pick up
+                </label>
+                <input
+                  id="pick-count-input"
+                  className="stack-menu__input"
+                  type="number"
+                  min="1"
+                  max={menuStackCount}
+                  value={pickCountValue}
+                  onChange={(event) => setPickCountValue(event.target.value)}
+                />
+                <div className="stack-menu__actions">
+                  <button
+                    type="button"
+                    className="stack-menu__button stack-menu__button--primary"
+                    onPointerDown={(event) => {
+                      const parsed = Number.parseInt(pickCountValue, 10);
+                      const count = Number.isNaN(parsed) ? 1 : parsed;
+                      pickUpFromStack(event, selectedStack.id, count);
+                    }}
+                  >
+                    Pick up
+                  </button>
+                  <button
+                    type="button"
+                    className="stack-menu__button stack-menu__button--secondary"
+                    onClick={() => setPickCountOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className="stack-menu__button"
+              onClick={handleFlipSelected}
+            >
+              Flip
+            </button>
+          </div>
+        ) : null}
         {hoverTooltip ? (
           <div className="stack-tooltip" style={hoverTooltip}>
             Stack: {hoveredCount}
