@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Card from './Card.jsx';
 import { clampCardToTable } from '../utils/geometry.js';
 import { useTableState } from '../state/useTableState.js';
+import { loadSettings, saveSettings } from '../state/tableSettings.js';
 
 const CARD_SIZE = { width: 72, height: 104 };
 const SEATS = [
@@ -14,15 +15,23 @@ const SEATS = [
   { id: 7, label: 'Seat 7', side: 'left', offset: '33%' },
   { id: 8, label: 'Seat 8', side: 'left', offset: '67%' }
 ];
-const SHOW_STACK_COUNTS = true;
 
 const Table = () => {
   const tableRef = useRef(null);
   const [tableRect, setTableRect] = useState({ width: 0, height: 0 });
   const pendingDragRef = useRef(null);
-  const { cardsById, stacks, setStacks, createStackId, resetTable } = useTableState(
+  const [settings, setSettings] = useState(() => loadSettings());
+  const [appliedSettings, setAppliedSettings] = useState(() => loadSettings());
+  const {
+    cardsById,
+    stacks,
+    setStacks,
+    createStackId,
+    rebuildTableFromSettings
+  } = useTableState(
     tableRect,
-    CARD_SIZE
+    CARD_SIZE,
+    appliedSettings
   );
   const [heldStack, setHeldStack] = useState({
     active: false,
@@ -48,6 +57,10 @@ const Table = () => {
   const rafRef = useRef(null);
   const latestPoint = useRef(null);
   const DRAG_THRESHOLD = 8;
+
+  useEffect(() => {
+    saveSettings(settings);
+  }, [settings]);
 
   useEffect(() => {
     if (!tableRef.current) {
@@ -576,9 +589,27 @@ const Table = () => {
         }
       : null;
 
-  const handleResetTable = useCallback(() => {
-    resetTable();
-  }, [resetTable]);
+  const resetInteractionStates = useCallback(() => {
+    setHeldStack({
+      active: false,
+      stackId: null,
+      cardIds: [],
+      sourceStackId: null,
+      offset: { dx: 0, dy: 0 },
+      origin: null,
+      mode: 'stack'
+    });
+    setSelectedStackId(null);
+    setHoveredStackId(null);
+    setPickCountOpen(false);
+    setPickCountValue('1');
+  }, []);
+
+  const applySettings = useCallback(() => {
+    setAppliedSettings(settings);
+    rebuildTableFromSettings(settings);
+    resetInteractionStates();
+  }, [rebuildTableFromSettings, resetInteractionStates, settings]);
 
   const toggleSeat = useCallback((seatId) => {
     setOccupiedSeats((prev) => ({
@@ -738,6 +769,10 @@ const Table = () => {
           const topCard = cardsById[topCardId];
           const isHeld = heldStack.active && stack.id === heldStack.stackId;
           const zIndex = isHeld ? stacks.length + 20 : index + 1;
+          const showStackCount =
+            settings.stackCountDisplayMode === 'always' ||
+            (settings.stackCountDisplayMode === 'hover' &&
+              stack.id === hoveredStackId);
           return (
             <Card
               key={stack.id}
@@ -746,6 +781,7 @@ const Table = () => {
               y={stack.y}
               rotation={stack.rotation}
               faceUp={stack.faceUp}
+              cardStyle={appliedSettings.cardStyle}
               zIndex={zIndex}
               rank={topCard?.rank}
               suit={topCard?.suit}
@@ -753,7 +789,7 @@ const Table = () => {
               isHeld={isHeld}
               isSelected={stack.id === selectedStackId}
               stackCount={stack.cardIds.length}
-              showStackCount={SHOW_STACK_COUNTS}
+              showStackCount={showStackCount}
               onPointerDown={handleStackPointerDown}
             />
           );
@@ -871,10 +907,132 @@ const Table = () => {
         </button>
         {settingsOpen ? (
           <div className="table-settings__panel">
+            <div className="table-settings__row">
+              <span className="table-settings__label">Reset spawns face down</span>
+              <label className="table-settings__switch">
+                <input
+                  type="checkbox"
+                  checked={settings.resetFaceDown}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      resetFaceDown: event.target.checked
+                    }))
+                  }
+                />
+                <span>Reset Face-Down</span>
+              </label>
+            </div>
+            <label className="table-settings__row">
+              <span className="table-settings__label">Card Style</span>
+              <select
+                className="table-settings__select"
+                value={settings.cardStyle}
+                onChange={(event) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    cardStyle: event.target.value
+                  }))
+                }
+              >
+                <option value="medieval">Medieval</option>
+                <option value="classic">Classic</option>
+              </select>
+            </label>
+            <div className="table-settings__row">
+              <span className="table-settings__label">Include Jokers</span>
+              <label className="table-settings__switch">
+                <input
+                  type="checkbox"
+                  checked={settings.includeJokers}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      includeJokers: event.target.checked
+                    }))
+                  }
+                />
+                <span>Include Jokers</span>
+              </label>
+            </div>
+            <label className="table-settings__row">
+              <span className="table-settings__label">Deck Count</span>
+              <input
+                className="table-settings__input"
+                type="number"
+                min="1"
+                max="8"
+                value={settings.deckCount}
+                onChange={(event) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    deckCount: (() => {
+                      const parsed = Number.parseInt(event.target.value, 10);
+                      if (Number.isNaN(parsed)) {
+                        return 1;
+                      }
+                      return Math.min(8, Math.max(1, parsed));
+                    })()
+                  }))
+                }
+              />
+            </label>
+            <label className="table-settings__row">
+              <span className="table-settings__label">Preset Layout</span>
+              <select
+                className="table-settings__select"
+                value={settings.presetLayout}
+                onChange={(event) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    presetLayout: event.target.value
+                  }))
+                }
+              >
+                <option value="none">None</option>
+                <option value="solitaire">Solitaire</option>
+                <option value="grid">Test: Face-Up Grid</option>
+              </select>
+            </label>
+            <button
+              className="table-settings__button table-settings__button--secondary"
+              type="button"
+              onClick={() =>
+                setSettings((prev) => ({
+                  ...prev,
+                  presetLayout: 'none'
+                }))
+              }
+            >
+              Reset Preset Settings
+            </button>
+            <label className="table-settings__row">
+              <span className="table-settings__label">Stack Count Display</span>
+              <select
+                className="table-settings__select"
+                value={settings.stackCountDisplayMode}
+                onChange={(event) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    stackCountDisplayMode: event.target.value
+                  }))
+                }
+              >
+                <option value="always">Always On</option>
+                <option value="hover">Hover Only</option>
+              </select>
+            </label>
             <button
               className="table-settings__button"
               type="button"
-              onClick={handleResetTable}
+              onClick={applySettings}
+            >
+              Reload With Changes
+            </button>
+            <button
+              className="table-settings__button"
+              type="button"
+              onClick={applySettings}
             >
               Reset Table
             </button>

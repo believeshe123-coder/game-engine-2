@@ -423,6 +423,73 @@ body,
     radial-gradient(circle at center, rgba(214, 188, 132, 0.2), transparent 55%);
 }
 
+.card--style-classic {
+  border-radius: 8px;
+  border: 1px solid rgba(30, 30, 30, 0.8);
+  box-shadow:
+    0 8px 14px rgba(0, 0, 0, 0.28),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+
+.card--style-classic .card__surface {
+  border-radius: 8px;
+}
+
+.card--style-classic.card--faceup .card__surface {
+  background: linear-gradient(135deg, #ffffff, #f0f0f0 60%, #e4e4e4);
+}
+
+.card--style-classic.card--faceup .card__surface::before {
+  border: 1px solid rgba(40, 40, 40, 0.2);
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.04), transparent),
+    radial-gradient(circle at top, rgba(0, 0, 0, 0.03), transparent 60%);
+}
+
+.card--style-classic.card--faceup .card__surface::after {
+  border: 1px solid rgba(40, 40, 40, 0.15);
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(0, 0, 0, 0.03) 0px,
+      rgba(0, 0, 0, 0.03) 2px,
+      transparent 2px,
+      transparent 6px
+    );
+}
+
+.card--style-classic.card--facedown .card__surface {
+  background:
+    linear-gradient(135deg, #1f3b6d, #1a2f57 55%, #142444);
+}
+
+.card--style-classic.card--facedown .card__surface::before {
+  border: 1px solid rgba(230, 230, 230, 0.5);
+  background:
+    repeating-linear-gradient(
+      45deg,
+      rgba(230, 230, 230, 0.2) 0px,
+      rgba(230, 230, 230, 0.2) 2px,
+      transparent 2px,
+      transparent 6px
+    );
+}
+
+.card--style-classic.card--facedown .card__surface::after {
+  border: 1px solid rgba(230, 230, 230, 0.25);
+  background:
+    radial-gradient(circle at center, rgba(230, 230, 230, 0.2), transparent 55%);
+}
+
+.card--style-classic .card__face {
+  font-family: 'Inter', system-ui, sans-serif;
+  color: #1f1f1f;
+}
+
+.card--style-classic .card__face--red {
+  color: #b02323;
+}
+
 .card:active {
   cursor: grabbing;
 }
@@ -551,4 +618,47 @@ body,
   border-radius: 14px;
   background: rgba(20, 20, 20, 0.85);
   box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
+}
+
+.table-settings__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #f5ede1;
+  font-size: 12px;
+}
+
+.table-settings__label {
+  font-weight: 600;
+}
+
+.table-settings__input,
+.table-settings__select {
+  min-width: 120px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(244, 231, 200, 0.4);
+  background: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+}
+
+.table-settings__switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.table-settings__switch input {
+  accent-color: #e7d1a1;
+}
+
+.table-settings__button--secondary {
+  background: rgba(100, 84, 66, 0.35);
+  color: #f5ede1;
+}
+
+.table-settings__button--secondary:hover {
+  background: rgba(120, 102, 82, 0.45);
 }
