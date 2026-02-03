@@ -4,7 +4,12 @@ import { clampCardToTable } from '../utils/geometry.js';
 import { useTableState } from '../state/useTableState.js';
 import { loadSettings, saveSettings } from '../state/tableSettings.js';
 
-const CARD_SIZE = { width: 72, height: 104 };
+const CARD_SCALE = 0.8;
+const BASE_CARD_SIZE = { width: 72, height: 104 };
+const CARD_SIZE = {
+  width: BASE_CARD_SIZE.width * CARD_SCALE,
+  height: BASE_CARD_SIZE.height * CARD_SCALE
+};
 const SEAT_POSITION = {
   radiusX: 46,
   radiusY: 38
@@ -762,6 +767,7 @@ const Table = () => {
   return (
     <div
       className={`table-frame table-frame--${tableStyle} table-frame--${tableShape}`}
+      style={{ '--card-scale': CARD_SCALE }}
     >
       <div className="table__seats" aria-label="Table seats">
         {seats.map((seat) => {
