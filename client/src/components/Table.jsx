@@ -14,6 +14,7 @@ const SEATS = [
   { id: 7, label: 'Seat 7', side: 'left', offset: '33%' },
   { id: 8, label: 'Seat 8', side: 'left', offset: '67%' }
 ];
+const SHOW_STACK_COUNTS = true;
 
 const Table = () => {
   const tableRef = useRef(null);
@@ -278,6 +279,118 @@ const Table = () => {
     [getHeldAnchorPosition, heldStack, setStacks, stacks, stacksById]
   );
 
+  const dealOneFromHeld = useCallback(
+    (pointerX, pointerY) => {
+      if (!heldStack.active || !heldStack.stackId) {
+        return;
+      }
+      if (heldStack.cardIds.length === 0) {
+        setHeldStack({
+          active: false,
+          stackId: null,
+          cardIds: [],
+          sourceStackId: null,
+          offset: { dx: 0, dy: 0 },
+          origin: null,
+          mode: 'stack'
+        });
+        return;
+      }
+
+      const placement = getHeldAnchorPosition(pointerX, pointerY);
+      const newStackId = createStackId();
+      let removedCardId = null;
+      let remainingCardIds = [];
+
+      setStacks((prev) => {
+        const currentHeld = prev.find((stack) => stack.id === heldStack.stackId);
+        if (!currentHeld || currentHeld.cardIds.length === 0) {
+          return prev;
+        }
+        const nextCardIds = [...currentHeld.cardIds];
+        removedCardId = nextCardIds.pop() ?? null;
+        remainingCardIds = nextCardIds;
+        if (!removedCardId) {
+          return prev;
+        }
+
+        const newStack = {
+          id: newStackId,
+          x: placement?.x ?? currentHeld.x,
+          y: placement?.y ?? currentHeld.y,
+          rotation: currentHeld.rotation,
+          faceUp: currentHeld.faceUp,
+          cardIds: [removedCardId]
+        };
+
+        let next = prev
+          .map((stack) =>
+            stack.id === heldStack.stackId ? { ...stack, cardIds: nextCardIds } : stack
+          )
+          .filter((stack) => stack.id !== heldStack.stackId || nextCardIds.length > 0)
+          .concat(newStack);
+
+        let overlapId = null;
+        for (let i = next.length - 1; i >= 0; i -= 1) {
+          const stack = next[i];
+          if (stack.id === newStackId || stack.id === heldStack.stackId) {
+            continue;
+          }
+          const overlaps =
+            newStack.x < stack.x + CARD_SIZE.width &&
+            newStack.x + CARD_SIZE.width > stack.x &&
+            newStack.y < stack.y + CARD_SIZE.height &&
+            newStack.y + CARD_SIZE.height > stack.y;
+          if (overlaps) {
+            overlapId = stack.id;
+            break;
+          }
+        }
+
+        if (overlapId) {
+          const target = next.find((stack) => stack.id === overlapId);
+          const dealt = next.find((stack) => stack.id === newStackId);
+          if (!target || !dealt) {
+            return next;
+          }
+          const merged = {
+            ...target,
+            faceUp: dealt.faceUp ?? target.faceUp,
+            cardIds: [...target.cardIds, ...dealt.cardIds]
+          };
+          next = next
+            .filter((stack) => stack.id !== overlapId && stack.id !== newStackId)
+            .concat(merged);
+        }
+
+        return next;
+      });
+
+      if (!removedCardId) {
+        return;
+      }
+
+      if (remainingCardIds.length === 0) {
+        setHeldStack({
+          active: false,
+          stackId: null,
+          cardIds: [],
+          sourceStackId: null,
+          offset: { dx: 0, dy: 0 },
+          origin: null,
+          mode: 'stack'
+        });
+        latestPoint.current = null;
+      } else {
+        setHeldStack((prev) => ({
+          ...prev,
+          cardIds: remainingCardIds
+        }));
+      }
+    },
+    [createStackId, getHeldAnchorPosition, heldStack, setStacks]
+  );
+
   const startHeldFullStack = useCallback(
     (stackId, pointerX, pointerY) => {
       const stack = stacksById[stackId];
@@ -364,6 +477,18 @@ const Table = () => {
         return;
       }
 
+      if (event.button === 2) {
+        if (heldStack.active) {
+          event.preventDefault();
+          event.stopPropagation();
+          const rect = table.getBoundingClientRect();
+          const pointerX = event.clientX - rect.left;
+          const pointerY = event.clientY - rect.top;
+          dealOneFromHeld(pointerX, pointerY);
+        }
+        return;
+      }
+
       event.preventDefault();
       event.stopPropagation();
 
@@ -383,7 +508,7 @@ const Table = () => {
       pendingDragRef.current = { stackId, startX: pointerX, startY: pointerY };
       setPendingDragActive(true);
     },
-    [heldStack.active, hitTestStack, placeHeldStack]
+    [dealOneFromHeld, heldStack.active, hitTestStack, placeHeldStack]
   );
 
   const handleSurfacePointerDown = useCallback(
@@ -395,6 +520,14 @@ const Table = () => {
       const rect = table.getBoundingClientRect();
       const pointerX = event.clientX - rect.left;
       const pointerY = event.clientY - rect.top;
+      if (event.button === 2) {
+        if (heldStack.active) {
+          event.preventDefault();
+          event.stopPropagation();
+          dealOneFromHeld(pointerX, pointerY);
+        }
+        return;
+      }
       if (heldStack.active) {
         placeHeldStack(pointerX, pointerY);
         setSelectedStackId(null);
@@ -409,7 +542,7 @@ const Table = () => {
       setSelectedStackId(null);
       setPickCountOpen(false);
     },
-    [handleStackPointerDown, heldStack.active, hitTestStack, placeHeldStack]
+    [dealOneFromHeld, handleStackPointerDown, heldStack.active, hitTestStack, placeHeldStack]
   );
 
   const handlePointerMoveHover = useCallback(
@@ -591,7 +724,11 @@ const Table = () => {
         className="table__surface"
         onPointerDown={handleSurfacePointerDown}
         onPointerMove={handlePointerMoveHover}
-        onContextMenu={(event) => event.preventDefault()}
+        onContextMenu={(event) => {
+          if (heldStack.active) {
+            event.preventDefault();
+          }
+        }}
       >
         {stacks.map((stack, index) => {
           const topCardId = stack.cardIds[stack.cardIds.length - 1];
@@ -612,6 +749,8 @@ const Table = () => {
               color={topCard?.color}
               isHeld={isHeld}
               isSelected={stack.id === selectedStackId}
+              stackCount={stack.cardIds.length}
+              showStackCount={SHOW_STACK_COUNTS}
               onPointerDown={handleStackPointerDown}
             />
           );
