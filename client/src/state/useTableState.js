@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 
+const createStack = (cardIds, centerX, centerY) => {
+  return [
+    {
+      id: 's1',
+      x: centerX,
+      y: centerY,
+      rotation: 0,
+      cardIds
+    }
+  ];
 const createStacks = (count, centerX, centerY) => {
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -34,6 +44,7 @@ export const useTableState = (tableRect, cardSize) => {
   const [cardsById, setCardsById] = useState({});
   const [stacks, setStacks] = useState([]);
   const initializedRef = useRef(false);
+  const nextStackIdRef = useRef(2);
   const nextStackIdRef = useRef(21);
 
     return {
@@ -62,6 +73,9 @@ export const useTableState = (tableRect, cardSize) => {
 
     const centerX = tableRect.width / 2 - cardSize.width / 2;
     const centerY = tableRect.height / 2 - cardSize.height / 2;
+    const cards = createCardsById(20);
+    setCardsById(cards);
+    setStacks(createStack(Object.keys(cards), centerX, centerY));
     setCardsById(createCardsById(20));
     setStacks(createStacks(20, centerX, centerY));
     initializedRef.current = true;

@@ -4,6 +4,7 @@ import Card from './Card.jsx';
 import { clampCardToTable } from '../utils/geometry.js';
 import { useTableState } from '../state/useTableState.js';
 
+const CARD_SIZE = { width: 70, height: 100 };
 const CARD_SIZE = { width: 72, height: 104 };
 const SNAP_DISTANCE = 35;
 
@@ -188,6 +189,27 @@ const Table = () => {
       if (!dragging.active || event.pointerId !== dragging.pointerId) {
         return;
       }
+      const table = tableRef.current;
+      let finalPosition = null;
+      if (table) {
+        const rect = table.getBoundingClientRect();
+        const pointerX = event.clientX - rect.left;
+        const pointerY = event.clientY - rect.top;
+        const nextX = pointerX - dragging.offset.dx;
+        const nextY = pointerY - dragging.offset.dy;
+        finalPosition = clampCardToTable(
+          nextX,
+          nextY,
+          CARD_SIZE.width,
+          CARD_SIZE.height,
+          tableRect.width,
+          tableRect.height
+        );
+      }
+
+      const draggedStack = stacksById[dragging.stackId];
+      const draggedX = finalPosition?.x ?? draggedStack?.x;
+      const draggedY = finalPosition?.y ?? draggedStack?.y;
       const draggedStack = stacksById[dragging.stackId];
       if (draggedStack) {
         let closestId = null;
@@ -197,6 +219,8 @@ const Table = () => {
           if (stack.id === dragging.stackId) {
             return;
           }
+          const dx = stack.x - draggedX;
+          const dy = stack.y - draggedY;
           const dx = stack.x - draggedStack.x;
           const dy = stack.y - draggedStack.y;
           const distance = Math.hypot(dx, dy);
@@ -224,6 +248,14 @@ const Table = () => {
               )
               .concat(merged);
           });
+        } else if (finalPosition) {
+          setStacks((prev) =>
+            prev.map((stack) =>
+              stack.id === dragging.stackId
+                ? { ...stack, x: finalPosition.x, y: finalPosition.y }
+                : stack
+            )
+          );
         }
       }
 
