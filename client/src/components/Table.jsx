@@ -220,7 +220,7 @@ const Table = () => {
   }, [dragging.active, handlePointerMove, handlePointerUp]);
 
   const handlePointerDown = useCallback(
-    (event) => {
+    (event, stackIdOverride = null) => {
       const table = tableRef.current;
       if (!table) {
         return;
@@ -236,7 +236,7 @@ const Table = () => {
       const rect = table.getBoundingClientRect();
       const pointerX = event.clientX - rect.left;
       const pointerY = event.clientY - rect.top;
-      const stackId = hitTestStack(pointerX, pointerY);
+      const stackId = stackIdOverride ?? hitTestStack(pointerX, pointerY);
       if (!stackId) {
         return;
       }
@@ -325,11 +325,13 @@ const Table = () => {
           return (
             <Card
               key={stack.id}
+              id={stack.id}
               label={card?.label ?? 'Card'}
               x={stack.x}
               y={stack.y}
               rotation={stack.rotation}
               zIndex={index + 1}
+              onPointerDown={handlePointerDown}
             />
           );
         })}

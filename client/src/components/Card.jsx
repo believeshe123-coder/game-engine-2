@@ -1,4 +1,4 @@
-const Card = ({ label, x, y, rotation, zIndex }) => {
+const Card = ({ id, label, x, y, rotation, zIndex, onPointerDown }) => {
   return (
     <div
       className="card"
@@ -6,6 +6,7 @@ const Card = ({ label, x, y, rotation, zIndex }) => {
         transform: `translate(${x}px, ${y}px) rotate(${rotation}deg)`,
         zIndex
       }}
+      onPointerDown={(event) => onPointerDown?.(event, id)}
     >
       {label}
     </div>
