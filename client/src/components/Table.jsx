@@ -18,6 +18,7 @@ const SEATS = [
 const Table = () => {
   const tableRef = useRef(null);
   const [tableRect, setTableRect] = useState({ width: 0, height: 0 });
+  const pendingDragRef = useRef(null);
   const { cardsById, stacks, setStacks, createStackId, resetTable } = useTableState(
     tableRect,
     CARD_SIZE
@@ -33,6 +34,7 @@ const Table = () => {
   });
   const [hoveredStackId, setHoveredStackId] = useState(null);
   const [selectedStackId, setSelectedStackId] = useState(null);
+  const [pendingDragActive, setPendingDragActive] = useState(false);
   const [pickCountOpen, setPickCountOpen] = useState(false);
   const [pickCountValue, setPickCountValue] = useState('1');
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -44,6 +46,7 @@ const Table = () => {
   );
   const rafRef = useRef(null);
   const latestPoint = useRef(null);
+  const DRAG_THRESHOLD = 8;
 
   useEffect(() => {
     if (!tableRef.current) {
@@ -99,18 +102,24 @@ const Table = () => {
     });
   }, [setStacks]);
 
-  const getPointerOffset = useCallback(
-    (event, stack) => {
+  const getHeldAnchorPosition = useCallback(
+    (pointerX, pointerY) => {
+      const nextX = pointerX - CARD_SIZE.width / 2;
+      const nextY = pointerY - CARD_SIZE.height / 2;
       const table = tableRef.current;
-      if (!table) {
-        return { dx: 0, dy: 0 };
-      }
-      const rect = table.getBoundingClientRect();
-      const pointerX = event.clientX - rect.left;
-      const pointerY = event.clientY - rect.top;
-      return { dx: pointerX - stack.x, dy: pointerY - stack.y };
+      const rect = table?.getBoundingClientRect();
+      const boundsWidth = tableRect.width || rect?.width || 0;
+      const boundsHeight = tableRect.height || rect?.height || 0;
+      return clampCardToTable(
+        nextX,
+        nextY,
+        CARD_SIZE.width,
+        CARD_SIZE.height,
+        boundsWidth,
+        boundsHeight
+      );
     },
-    []
+    [tableRect.height, tableRect.width]
   );
 
   const flushAnimation = useCallback(() => {
@@ -181,16 +190,7 @@ const Table = () => {
       const rect = table.getBoundingClientRect();
       const pointerX = event.clientX - rect.left;
       const pointerY = event.clientY - rect.top;
-      const nextX = pointerX - heldStack.offset.dx;
-      const nextY = pointerY - heldStack.offset.dy;
-      const clamped = clampCardToTable(
-        nextX,
-        nextY,
-        CARD_SIZE.width,
-        CARD_SIZE.height,
-        tableRect.width,
-        tableRect.height
-      );
+      const clamped = getHeldAnchorPosition(pointerX, pointerY);
 
       latestPoint.current = clamped;
       if (!rafRef.current) {
@@ -205,11 +205,8 @@ const Table = () => {
     };
   }, [
     flushAnimation,
-    heldStack.active,
-    heldStack.offset.dx,
-    heldStack.offset.dy,
-    tableRect.height,
-    tableRect.width
+    getHeldAnchorPosition,
+    heldStack.active
   ]);
 
   const placeHeldStack = useCallback(
@@ -217,16 +214,7 @@ const Table = () => {
       if (!heldStack.active || !heldStack.stackId) {
         return;
       }
-      const nextX = pointerX - heldStack.offset.dx;
-      const nextY = pointerY - heldStack.offset.dy;
-      const finalPosition = clampCardToTable(
-        nextX,
-        nextY,
-        CARD_SIZE.width,
-        CARD_SIZE.height,
-        tableRect.width,
-        tableRect.height
-      );
+      const finalPosition = getHeldAnchorPosition(pointerX, pointerY);
 
       const draggedStack = stacksById[heldStack.stackId];
       if (draggedStack) {
@@ -287,8 +275,87 @@ const Table = () => {
         mode: 'stack'
       });
     },
-    [heldStack, setStacks, stacks, stacksById, tableRect.height, tableRect.width]
+    [getHeldAnchorPosition, heldStack, setStacks, stacks, stacksById]
   );
+
+  const startHeldFullStack = useCallback(
+    (stackId, pointerX, pointerY) => {
+      const stack = stacksById[stackId];
+      if (!stack) {
+        return;
+      }
+      const heldPosition = getHeldAnchorPosition(pointerX, pointerY);
+      latestPoint.current = heldPosition;
+      setStacks((prev) =>
+        prev.map((item) =>
+          item.id === stackId
+            ? { ...item, x: heldPosition.x, y: heldPosition.y }
+            : item
+        )
+      );
+      setHeldStack({
+        active: true,
+        stackId,
+        cardIds: stack.cardIds,
+        sourceStackId: stackId,
+        offset: { dx: 0, dy: 0 },
+        origin: { x: stack.x, y: stack.y },
+        mode: 'stack'
+      });
+    },
+    [getHeldAnchorPosition, setStacks, stacksById]
+  );
+
+  useEffect(() => {
+    if (!pendingDragActive) {
+      return undefined;
+    }
+
+    const handlePendingPointerMove = (event) => {
+      const pending = pendingDragRef.current;
+      if (!pending) {
+        return;
+      }
+      const table = tableRef.current;
+      if (!table) {
+        return;
+      }
+      const rect = table.getBoundingClientRect();
+      const pointerX = event.clientX - rect.left;
+      const pointerY = event.clientY - rect.top;
+      const deltaX = pointerX - pending.startX;
+      const deltaY = pointerY - pending.startY;
+      const distance = Math.hypot(deltaX, deltaY);
+      if (distance < DRAG_THRESHOLD) {
+        return;
+      }
+      pendingDragRef.current = null;
+      setPendingDragActive(false);
+      setSelectedStackId(null);
+      setPickCountOpen(false);
+      bringStackToFront(pending.stackId);
+      startHeldFullStack(pending.stackId, pointerX, pointerY);
+    };
+
+    const handlePendingPointerUp = () => {
+      const pending = pendingDragRef.current;
+      if (!pending) {
+        return;
+      }
+      pendingDragRef.current = null;
+      setPendingDragActive(false);
+      bringStackToFront(pending.stackId);
+      setSelectedStackId(pending.stackId);
+      setPickCountOpen(false);
+    };
+
+    window.addEventListener('pointermove', handlePendingPointerMove);
+    window.addEventListener('pointerup', handlePendingPointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handlePendingPointerMove);
+      window.removeEventListener('pointerup', handlePendingPointerUp);
+    };
+  }, [bringStackToFront, pendingDragActive, startHeldFullStack]);
 
   const handleStackPointerDown = useCallback(
     (event, stackIdOverride = null) => {
@@ -313,11 +380,10 @@ const Table = () => {
       if (!stackId) {
         return;
       }
-      bringStackToFront(stackId);
-      setSelectedStackId(stackId);
-      setPickCountOpen(false);
+      pendingDragRef.current = { stackId, startX: pointerX, startY: pointerY };
+      setPendingDragActive(true);
     },
-    [bringStackToFront, heldStack.active, hitTestStack, placeHeldStack]
+    [heldStack.active, hitTestStack, placeHeldStack]
   );
 
   const handleSurfacePointerDown = useCallback(
@@ -415,6 +481,14 @@ const Table = () => {
       const newStackId = createStackId();
       let pickedCardIds = [];
       let origin = null;
+      let heldPosition = null;
+      const table = tableRef.current;
+      if (table) {
+        const rect = table.getBoundingClientRect();
+        const pointerX = event.clientX - rect.left;
+        const pointerY = event.clientY - rect.top;
+        heldPosition = getHeldAnchorPosition(pointerX, pointerY);
+      }
 
       setStacks((prev) => {
         const current = prev.find((stack) => stack.id === stackId);
@@ -436,8 +510,8 @@ const Table = () => {
           .filter((item) => item.id !== stackId || item.cardIds.length > 0);
         next.push({
           id: newStackId,
-          x: current.x,
-          y: current.y,
+          x: heldPosition?.x ?? current.x,
+          y: heldPosition?.y ?? current.y,
           rotation: current.rotation,
           faceUp: current.faceUp,
           cardIds: pickedCardIds
@@ -448,20 +522,19 @@ const Table = () => {
       if (pickedCardIds.length === 0) {
         return;
       }
-      const offset = getPointerOffset(event, source);
       setHeldStack({
         active: true,
         stackId: newStackId,
         cardIds: pickedCardIds,
         sourceStackId: stackId,
-        offset,
+        offset: { dx: 0, dy: 0 },
         origin,
         mode: 'stack'
       });
       setSelectedStackId(null);
       setPickCountOpen(false);
     },
-    [createStackId, getPointerOffset, setStacks, stacksById]
+    [createStackId, getHeldAnchorPosition, setStacks, stacksById]
   );
 
   const handleFlipSelected = useCallback(() => {
