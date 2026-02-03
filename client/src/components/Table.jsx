@@ -517,17 +517,20 @@ const Table = () => {
       if (!table) {
         return;
       }
-      const rect = table.getBoundingClientRect();
-      const pointerX = event.clientX - rect.left;
-      const pointerY = event.clientY - rect.top;
       if (event.button === 2) {
         if (heldStack.active) {
           event.preventDefault();
           event.stopPropagation();
+          const rect = table.getBoundingClientRect();
+          const pointerX = event.clientX - rect.left;
+          const pointerY = event.clientY - rect.top;
           dealOneFromHeld(pointerX, pointerY);
         }
         return;
       }
+      const rect = table.getBoundingClientRect();
+      const pointerX = event.clientX - rect.left;
+      const pointerY = event.clientY - rect.top;
       if (heldStack.active) {
         placeHeldStack(pointerX, pointerY);
         setSelectedStackId(null);
