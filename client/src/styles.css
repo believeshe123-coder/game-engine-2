@@ -199,6 +199,10 @@ body,
     inset 0 0 0 1px rgba(255, 255, 255, 0.2);
 }
 
+.card--held {
+  filter: drop-shadow(4px 6px 8px rgba(0, 0, 0, 0.45));
+}
+
 .card__surface {
   position: absolute;
   inset: 0;
@@ -262,6 +266,36 @@ body,
 
 .card__face--red {
   color: #8a1f1f;
+}
+
+.card__face--joker {
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+}
+
+.card__joker {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  place-items: center;
+  text-align: center;
+  font-weight: 700;
+}
+
+.card__joker-title {
+  font-size: 14px;
+  letter-spacing: 0.3em;
+}
+
+.card__joker-title--small {
+  font-size: 10px;
+  letter-spacing: 0.25em;
+  opacity: 0.75;
+}
+
+.card__joker-emblem {
+  font-size: 28px;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .card__corner {
