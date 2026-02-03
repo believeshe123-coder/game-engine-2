@@ -18,7 +18,7 @@ const SEATS = [
 const Table = () => {
   const tableRef = useRef(null);
   const [tableRect, setTableRect] = useState({ width: 0, height: 0 });
-  const { cardsById, stacks, setStacks, createStackId, resetTable } = useTableState(
+  const { stacks, setStacks, createStackId, resetTable } = useTableState(
     tableRect,
     CARD_SIZE
   );
@@ -331,11 +331,19 @@ const Table = () => {
       }
 
       if (event.button === 1) {
-        const pickedCount = Math.ceil(stack.cardIds.length / 2);
-        const pickedCardIds = stack.cardIds.slice(-pickedCount);
-        const remainingCardIds = stack.cardIds.slice(0, -pickedCount);
         const newStackId = createStackId();
         setStacks((prev) => {
+          const source = prev.find((item) => item.id === stackId);
+          if (!source || source.cardIds.length <= 1) {
+            return prev;
+          }
+          const pickedCount = Math.floor(source.cardIds.length / 2);
+          if (pickedCount === 0) {
+            return prev;
+          }
+          const remainingCount = source.cardIds.length - pickedCount;
+          const remainingCardIds = source.cardIds.slice(0, remainingCount);
+          const pickedCardIds = source.cardIds.slice(remainingCount);
           const next = prev
             .map((item) =>
               item.id === stackId ? { ...item, cardIds: remainingCardIds } : item
@@ -343,10 +351,10 @@ const Table = () => {
             .filter((item) => item.id !== stackId || item.cardIds.length > 0);
           next.push({
             id: newStackId,
-            x: stack.x,
-            y: stack.y,
-            rotation: stack.rotation,
-            faceUp: stack.faceUp,
+            x: source.x,
+            y: source.y,
+            rotation: source.rotation,
+            faceUp: source.faceUp,
             cardIds: pickedCardIds
           });
           return next;
@@ -355,9 +363,13 @@ const Table = () => {
         return;
       }
 
-      const topCardId = stack.cardIds[stack.cardIds.length - 1];
       const newStackId = createStackId();
       setStacks((prev) => {
+        const source = prev.find((item) => item.id === stackId);
+        if (!source || source.cardIds.length <= 1) {
+          return prev;
+        }
+        const topCardId = source.cardIds[source.cardIds.length - 1];
         const next = prev
           .map((item) =>
             item.id === stackId
@@ -367,10 +379,10 @@ const Table = () => {
           .filter((item) => item.id !== stackId || item.cardIds.length > 0);
         next.push({
           id: newStackId,
-          x: stack.x,
-          y: stack.y,
-          rotation: stack.rotation,
-          faceUp: stack.faceUp,
+          x: source.x,
+          y: source.y,
+          rotation: source.rotation,
+          faceUp: source.faceUp,
           cardIds: [topCardId]
         });
         return next;
@@ -453,13 +465,10 @@ const Table = () => {
         onContextMenu={(event) => event.preventDefault()}
       >
         {stacks.map((stack, index) => {
-          const topCardId = stack.cardIds[stack.cardIds.length - 1];
-          const card = cardsById[topCardId];
           return (
             <Card
               key={stack.id}
               id={stack.id}
-              label={card?.label ?? 'Card'}
               x={stack.x}
               y={stack.y}
               rotation={stack.rotation}
