@@ -103,9 +103,7 @@ const Card = ({
   color,
   cardStyle,
   isHeld,
-  isSelected,
-  stackCount,
-  showStackCount
+  isSelected
 }) => {
   const displayRank = rank ?? '?';
   const isJoker = displayRank === 'JOKER';
@@ -132,11 +130,6 @@ const Card = ({
       }}
       onPointerDown={(event) => onPointerDown(event, id)}
     >
-      {showStackCount ? (
-        <div className="card__count" aria-hidden="true">
-          Stack: {stackCount}
-        </div>
-      ) : null}
       <div className="card__surface" aria-hidden="true">
         {faceUp ? (
           <div
