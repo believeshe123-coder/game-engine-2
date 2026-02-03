@@ -9,7 +9,7 @@ const SNAP_DISTANCE = 35;
 const Table = () => {
   const tableRef = useRef(null);
   const [tableRect, setTableRect] = useState({ width: 0, height: 0 });
-  const { cardsById, stacks, setStacks, createStackId } = useTableState(
+  const { cardsById, stacks, setStacks, createStackId, resetTable } = useTableState(
     tableRect,
     CARD_SIZE
   );
@@ -22,6 +22,7 @@ const Table = () => {
     mode: 'single'
   });
   const [hoveredStackId, setHoveredStackId] = useState(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const rafRef = useRef(null);
   const latestPoint = useRef(null);
 
@@ -339,6 +340,10 @@ const Table = () => {
         }
       : null;
 
+  const handleResetTable = useCallback(() => {
+    resetTable();
+  }, [resetTable]);
+
   return (
     <div className="table">
       <div
@@ -367,6 +372,26 @@ const Table = () => {
         {hoverTooltip ? (
           <div className="stack-tooltip" style={hoverTooltip}>
             Stack: {hoveredCount}
+          </div>
+        ) : null}
+      </div>
+      <div className="table-settings">
+        <button
+          className="table-settings__toggle"
+          type="button"
+          onClick={() => setSettingsOpen((prev) => !prev)}
+        >
+          Table Settings
+        </button>
+        {settingsOpen ? (
+          <div className="table-settings__panel">
+            <button
+              className="table-settings__button"
+              type="button"
+              onClick={handleResetTable}
+            >
+              Reset Table
+            </button>
           </div>
         ) : null}
       </div>

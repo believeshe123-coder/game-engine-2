@@ -51,10 +51,36 @@ export const useTableState = (tableRect, cardSize) => {
     return id;
   }, []);
 
+  const resetTable = useCallback(() => {
+    if (!tableRect?.width || !tableRect?.height) {
+      return;
+    }
+
+    const nextCardsById =
+      Object.keys(cardsById).length > 0 ? cardsById : createCardsById(20);
+    const centerX = tableRect.width / 2 - cardSize.width / 2;
+    const centerY = tableRect.height / 2 - cardSize.height / 2;
+    const cardIds = Object.keys(nextCardsById);
+
+    setCardsById(nextCardsById);
+    setStacks([
+      {
+        id: 's1',
+        x: centerX,
+        y: centerY,
+        rotation: 0,
+        cardIds
+      }
+    ]);
+    nextStackIdRef.current = 2;
+    initializedRef.current = true;
+  }, [cardSize.height, cardSize.width, cardsById, tableRect?.height, tableRect?.width]);
+
   return {
     cardsById,
     stacks,
     setStacks,
-    createStackId
+    createStackId,
+    resetTable
   };
 };
