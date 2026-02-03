@@ -579,15 +579,9 @@ const Table = () => {
     [heldStack.active, hitTestStack]
   );
 
-  const hoveredStack = hoveredStackId ? stacksById[hoveredStackId] : null;
-  const hoveredCount = hoveredStack ? hoveredStack.cardIds.length : 0;
-  const hoverTooltip =
-    hoveredStack && hoveredCount >= 2
-      ? {
-          left: hoveredStack.x + CARD_SIZE.width + 8,
-          top: hoveredStack.y - 8
-        }
-      : null;
+  const badgeOffset = 24;
+  const visibleBadgeStackId =
+    settings.stackCountDisplayMode === 'hover' ? hoveredStackId : null;
 
   const resetInteractionStates = useCallback(() => {
     setHeldStack({
@@ -753,149 +747,163 @@ const Table = () => {
           );
         })}
       </div>
-      <div
-        ref={tableRef}
-        className="table__surface"
-        onPointerDown={handleSurfacePointerDown}
-        onPointerMove={handlePointerMoveHover}
-        onContextMenu={(event) => {
-          if (heldStack.active) {
-            event.preventDefault();
-          }
-        }}
-      >
-        {stacks.map((stack, index) => {
-          const topCardId = stack.cardIds[stack.cardIds.length - 1];
-          const topCard = cardsById[topCardId];
-          const isHeld = heldStack.active && stack.id === heldStack.stackId;
-          const zIndex = isHeld ? stacks.length + 20 : index + 1;
-          const showStackCount =
-            settings.stackCountDisplayMode === 'always' ||
-            (settings.stackCountDisplayMode === 'hover' &&
-              stack.id === hoveredStackId);
-          return (
-            <Card
-              key={stack.id}
-              id={stack.id}
-              x={stack.x}
-              y={stack.y}
-              rotation={stack.rotation}
-              faceUp={stack.faceUp}
-              cardStyle={appliedSettings.cardStyle}
-              zIndex={zIndex}
-              rank={topCard?.rank}
-              suit={topCard?.suit}
-              color={topCard?.color}
-              isHeld={isHeld}
-              isSelected={stack.id === selectedStackId}
-              stackCount={stack.cardIds.length}
-              showStackCount={showStackCount}
-              onPointerDown={handleStackPointerDown}
-            />
-          );
-        })}
-        {selectedStack && menuPosition ? (
-          <div
-            className={`stack-menu ${menuBelow ? 'stack-menu--below' : 'stack-menu--above'}`}
-            style={menuPosition}
-            onPointerDown={(event) => event.stopPropagation()}
-          >
-            <button
-              type="button"
-              className="stack-menu__button"
-              onPointerDown={(event) =>
-                pickUpFromStack(event, selectedStack.id, selectedStack.cardIds.length)
-              }
+      <div className="table__surface-wrapper">
+        <div
+          ref={tableRef}
+          className="table__surface"
+          onPointerDown={handleSurfacePointerDown}
+          onPointerMove={handlePointerMoveHover}
+          onContextMenu={(event) => {
+            if (heldStack.active) {
+              event.preventDefault();
+            }
+          }}
+        >
+          {stacks.map((stack, index) => {
+            const topCardId = stack.cardIds[stack.cardIds.length - 1];
+            const topCard = cardsById[topCardId];
+            const isHeld = heldStack.active && stack.id === heldStack.stackId;
+            const zIndex = isHeld ? stacks.length + 20 : index + 1;
+            return (
+              <Card
+                key={stack.id}
+                id={stack.id}
+                x={stack.x}
+                y={stack.y}
+                rotation={stack.rotation}
+                faceUp={stack.faceUp}
+                cardStyle={appliedSettings.cardStyle}
+                zIndex={zIndex}
+                rank={topCard?.rank}
+                suit={topCard?.suit}
+                color={topCard?.color}
+                isHeld={isHeld}
+                isSelected={stack.id === selectedStackId}
+                onPointerDown={handleStackPointerDown}
+              />
+            );
+          })}
+          {selectedStack && menuPosition ? (
+            <div
+              className={`stack-menu ${menuBelow ? 'stack-menu--below' : 'stack-menu--above'}`}
+              style={menuPosition}
+              onPointerDown={(event) => event.stopPropagation()}
             >
-              Pick up full stack
-            </button>
-            <button
-              type="button"
-              className="stack-menu__button"
-              onPointerDown={(event) => {
-                const halfCount = Math.floor(selectedStack.cardIds.length / 2);
-                if (halfCount < 1) {
-                  return;
+              <button
+                type="button"
+                className="stack-menu__button"
+                onPointerDown={(event) =>
+                  pickUpFromStack(event, selectedStack.id, selectedStack.cardIds.length)
                 }
-                pickUpFromStack(event, selectedStack.id, halfCount);
-              }}
-            >
-              Pick up half stack
-            </button>
-            <button
-              type="button"
-              className="stack-menu__button"
-              onPointerDown={(event) => pickUpFromStack(event, selectedStack.id, 1)}
-            >
-              Pick up 1 card
-            </button>
-            <button
-              type="button"
-              className="stack-menu__button"
-              onClick={() => {
-                setPickCountOpen(true);
-                setPickCountValue('1');
-              }}
-            >
-              Pick up N cards...
-            </button>
-            {pickCountOpen ? (
-              <div className="stack-menu__picker">
-                <label className="stack-menu__label" htmlFor="pick-count-input">
-                  Cards to pick up
-                </label>
-                <input
-                  id="pick-count-input"
-                  className="stack-menu__input"
-                  type="number"
-                  min="1"
-                  max={menuStackCount}
-                  value={pickCountValue}
-                  onChange={(event) => setPickCountValue(event.target.value)}
-                />
-                <div className="stack-menu__actions">
-                  <button
-                    type="button"
-                    className="stack-menu__button stack-menu__button--primary"
-                    onPointerDown={(event) => {
-                      const parsed = Number.parseInt(pickCountValue, 10);
-                      const count = Number.isNaN(parsed) ? 1 : parsed;
-                      pickUpFromStack(event, selectedStack.id, count);
-                    }}
-                  >
-                    Pick up
-                  </button>
-                  <button
-                    type="button"
-                    className="stack-menu__button stack-menu__button--secondary"
-                    onClick={() => setPickCountOpen(false)}
-                  >
-                    Cancel
-                  </button>
+              >
+                Pick up full stack
+              </button>
+              <button
+                type="button"
+                className="stack-menu__button"
+                onPointerDown={(event) => {
+                  const halfCount = Math.floor(selectedStack.cardIds.length / 2);
+                  if (halfCount < 1) {
+                    return;
+                  }
+                  pickUpFromStack(event, selectedStack.id, halfCount);
+                }}
+              >
+                Pick up half stack
+              </button>
+              <button
+                type="button"
+                className="stack-menu__button"
+                onPointerDown={(event) => pickUpFromStack(event, selectedStack.id, 1)}
+              >
+                Pick up 1 card
+              </button>
+              <button
+                type="button"
+                className="stack-menu__button"
+                onClick={() => {
+                  setPickCountOpen(true);
+                  setPickCountValue('1');
+                }}
+              >
+                Pick up N cards...
+              </button>
+              {pickCountOpen ? (
+                <div className="stack-menu__picker">
+                  <label className="stack-menu__label" htmlFor="pick-count-input">
+                    Cards to pick up
+                  </label>
+                  <input
+                    id="pick-count-input"
+                    className="stack-menu__input"
+                    type="number"
+                    min="1"
+                    max={menuStackCount}
+                    value={pickCountValue}
+                    onChange={(event) => setPickCountValue(event.target.value)}
+                  />
+                  <div className="stack-menu__actions">
+                    <button
+                      type="button"
+                      className="stack-menu__button stack-menu__button--primary"
+                      onPointerDown={(event) => {
+                        const parsed = Number.parseInt(pickCountValue, 10);
+                        const count = Number.isNaN(parsed) ? 1 : parsed;
+                        pickUpFromStack(event, selectedStack.id, count);
+                      }}
+                    >
+                      Pick up
+                    </button>
+                    <button
+                      type="button"
+                      className="stack-menu__button stack-menu__button--secondary"
+                      onClick={() => setPickCountOpen(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
+              ) : null}
+              <button
+                type="button"
+                className="stack-menu__button"
+                onClick={handleFlipSelected}
+              >
+                Flip
+              </button>
+              <button
+                type="button"
+                className="stack-menu__button"
+                onClick={handleShuffleSelected}
+              >
+                Shuffle
+              </button>
+            </div>
+          ) : null}
+        </div>
+        <div id="stackLabelLayer" className="stack-label-layer" aria-hidden="true">
+          {stacks.map((stack) => {
+            const showBadge =
+              settings.stackCountDisplayMode === 'always' ||
+              (settings.stackCountDisplayMode === 'hover' &&
+                stack.id === visibleBadgeStackId);
+            if (!showBadge) {
+              return null;
+            }
+            return (
+              <div
+                key={stack.id}
+                className="stackCountBadge"
+                style={{
+                  left: stack.x + CARD_SIZE.width / 2,
+                  top: stack.y - badgeOffset
+                }}
+              >
+                Stack: {stack.cardIds.length}
               </div>
-            ) : null}
-            <button
-              type="button"
-              className="stack-menu__button"
-              onClick={handleFlipSelected}
-            >
-              Flip
-            </button>
-            <button
-              type="button"
-              className="stack-menu__button"
-              onClick={handleShuffleSelected}
-            >
-              Shuffle
-            </button>
-          </div>
-        ) : null}
-        {hoverTooltip ? (
-          <div className="stack-tooltip" style={hoverTooltip}>
-            Stack: {hoveredCount}
-          </div>
-        ) : null}
+            );
+          })}
+        </div>
       </div>
       <div className="table-settings">
         <button

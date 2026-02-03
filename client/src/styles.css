@@ -85,16 +85,45 @@ body,
   z-index: 1;
 }
 
-.table__surface {
+.table__surface-wrapper {
   position: relative;
   width: var(--table-width);
   height: var(--table-height);
+  z-index: 4;
+}
+
+.table__surface {
+  position: relative;
+  width: 100%;
+  height: 100%;
   padding: 24px;
   background: linear-gradient(135deg, #4c6b4c, #3f5a43);
   border-radius: 40px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
   overflow: hidden;
-  z-index: 2;
+}
+
+#stackLabelLayer {
+  position: absolute;
+  inset: 0;
+  padding: 24px;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.stackCountBadge {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+  user-select: none;
 }
 
 .table__seats {
@@ -209,24 +238,6 @@ body,
   border-radius: 10px;
 }
 
-.card__count {
-  position: absolute;
-  top: -28px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.85);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.35);
-  white-space: nowrap;
-  pointer-events: none;
-  user-select: none;
-  z-index: 50;
-}
 
 .card__surface::before,
 .card__surface::after {
@@ -496,19 +507,6 @@ body,
 
 .card:active {
   cursor: grabbing;
-}
-
-.stack-tooltip {
-  position: absolute;
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: rgba(20, 20, 20, 0.85);
-  color: #f8f3e6;
-  font-size: 12px;
-  font-weight: 600;
-  pointer-events: none;
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.25);
-  white-space: nowrap;
 }
 
 .stack-menu {
