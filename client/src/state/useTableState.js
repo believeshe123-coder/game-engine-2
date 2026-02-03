@@ -1,31 +1,56 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-const createCardsById = (count) => {
-  return Array.from({ length: count }, (_, index) => {
-    const cardId = `c${index + 1}`;
-    return [cardId, { id: cardId, label: `Card ${index + 1}` }];
-  }).reduce((acc, [id, card]) => {
-    acc[id] = card;
+const SUITS = [
+  { id: 'S', name: 'Spades' },
+  { id: 'C', name: 'Clubs' },
+  { id: 'H', name: 'Hearts' },
+  { id: 'D', name: 'Diamonds' }
+];
+const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+
+const createDeck = () => {
+  const cards = [];
+  SUITS.forEach((suit) => {
+    RANKS.forEach((rank) => {
+      const id = `${rank}${suit.id}`;
+      cards.push({
+        id,
+        rank,
+        suit: suit.name
+      });
+    });
+  });
+  cards.push(
+    { id: 'JR', rank: 'Joker', suit: 'Red' },
+    { id: 'JB', rank: 'Joker', suit: 'Black' }
+  );
+  return cards;
+};
+
+const createCardsById = () => {
+  return createDeck().reduce((acc, card) => {
+    acc[card.id] = card;
     return acc;
   }, {});
 };
 
-const createStacks = (count, centerX, centerY) => {
-  return Array.from({ length: count }, (_, index) => {
-    const spread = 80;
-    const offsetX = (Math.random() - 0.5) * spread;
-    const offsetY = (Math.random() - 0.5) * spread;
-    const cardId = `c${index + 1}`;
-
-    return {
-      id: `s${index + 1}`,
-      x: centerX + offsetX,
-      y: centerY + offsetY,
-      rotation: 0,
-      faceUp: true,
-      cardIds: [cardId]
-    };
+const validateUniqueCardIds = (stacks) => {
+  const counts = new Map();
+  stacks.forEach((stack) => {
+    stack.cardIds.forEach((cardId) => {
+      counts.set(cardId, (counts.get(cardId) ?? 0) + 1);
+    });
   });
+  const duplicates = [];
+  counts.forEach((count, cardId) => {
+    if (count > 1) {
+      duplicates.push(`${cardId} appears ${count}x`);
+    }
+  });
+  if (duplicates.length > 0) {
+    // eslint-disable-next-line no-console
+    console.error(`DUPLICATE CARD IDS: ${duplicates.join(', ')}`);
+  }
 };
 
 export const useTableState = (tableRect, cardSize) => {
@@ -41,10 +66,28 @@ export const useTableState = (tableRect, cardSize) => {
 
     const centerX = tableRect.width / 2 - cardSize.width / 2;
     const centerY = tableRect.height / 2 - cardSize.height / 2;
-    setCardsById(createCardsById(20));
-    setStacks(createStacks(20, centerX, centerY));
+    const nextCardsById = createCardsById();
+    const cardIds = Object.keys(nextCardsById);
+    setCardsById(nextCardsById);
+    setStacks([
+      {
+        id: 's1',
+        x: centerX,
+        y: centerY,
+        rotation: 0,
+        faceUp: true,
+        cardIds
+      }
+    ]);
+    nextStackIdRef.current = 2;
     initializedRef.current = true;
   }, [cardSize.height, cardSize.width, tableRect?.height, tableRect?.width]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'production') {
+      validateUniqueCardIds(stacks);
+    }
+  }, [stacks]);
 
   const createStackId = useCallback(() => {
     const id = `s${nextStackIdRef.current}`;
@@ -58,7 +101,7 @@ export const useTableState = (tableRect, cardSize) => {
     }
 
     const nextCardsById =
-      Object.keys(cardsById).length > 0 ? cardsById : createCardsById(20);
+      Object.keys(cardsById).length > 0 ? cardsById : createCardsById();
     const centerX = tableRect.width / 2 - cardSize.width / 2;
     const centerY = tableRect.height / 2 - cardSize.height / 2;
     const cardIds = Object.keys(nextCardsById);
