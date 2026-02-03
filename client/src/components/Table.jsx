@@ -883,6 +883,9 @@ const Table = () => {
         </div>
         <div id="stackLabelLayer" className="stack-label-layer" aria-hidden="true">
           {stacks.map((stack) => {
+            if (stack.cardIds.length <= 1) {
+              return null;
+            }
             const showBadge =
               settings.stackCountDisplayMode === 'always' ||
               (settings.stackCountDisplayMode === 'hover' &&
