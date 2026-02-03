@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { clampCardToTable } from '../utils/geometry.js';
+import { DEFAULT_SETTINGS, normalizeSettings } from './tableSettings.js';
 
 const SUITS = [
   { id: 'S', name: 'Spades' },
@@ -8,11 +10,12 @@ const SUITS = [
 ];
 const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
 
-const createDeck = () => {
+const createDeck = ({ includeJokers, deckIndex }) => {
   const cards = [];
   SUITS.forEach((suit) => {
     RANKS.forEach((rank) => {
-      const id = `${rank}${suit.id}`;
+      const baseId = `${rank}${suit.id}`;
+      const id = deckIndex ? `${baseId}-${deckIndex}` : baseId;
       cards.push({
         id,
         rank,
@@ -20,28 +23,45 @@ const createDeck = () => {
       });
     });
   });
-  cards.push(
-    {
-      id: 'JOKER_BLACK',
-      rank: 'JOKER',
-      suit: 'Joker',
-      color: 'black'
-    },
-    {
-      id: 'JOKER_RED',
-      rank: 'JOKER',
-      suit: 'Joker',
-      color: 'red'
-    }
-  );
+  if (includeJokers) {
+    const blackId = deckIndex ? `JOKER_BLACK-${deckIndex}` : 'JOKER_BLACK';
+    const redId = deckIndex ? `JOKER_RED-${deckIndex}` : 'JOKER_RED';
+    cards.push(
+      {
+        id: blackId,
+        rank: 'JOKER',
+        suit: 'Joker',
+        color: 'black'
+      },
+      {
+        id: redId,
+        rank: 'JOKER',
+        suit: 'Joker',
+        color: 'red'
+      }
+    );
+  }
   return cards;
 };
 
-const createCardsById = () => {
-  return createDeck().reduce((acc, card) => {
-    acc[card.id] = card;
-    return acc;
-  }, {});
+const buildDecks = (settings) => {
+  const deckCount = settings.deckCount;
+  const includeJokers = settings.includeJokers;
+  const cardsById = {};
+  const deckCardIds = [];
+  for (let i = 0; i < deckCount; i += 1) {
+    const deckIndex = i + 1;
+    const cards = createDeck({ includeJokers, deckIndex });
+    deckCardIds.push(cards.map((card) => card.id));
+    cards.forEach((card) => {
+      cardsById[card.id] = card;
+    });
+  }
+  return {
+    cardsById,
+    deckCardIds,
+    allCardIds: deckCardIds.flat()
+  };
 };
 
 const validateUniqueCardIds = (stacks) => {
@@ -63,41 +83,11 @@ const validateUniqueCardIds = (stacks) => {
   }
 };
 
-export const useTableState = (tableRect, cardSize) => {
+export const useTableState = (tableRect, cardSize, initialSettings) => {
   const [cardsById, setCardsById] = useState({});
   const [stacks, setStacks] = useState([]);
   const initializedRef = useRef(false);
   const nextStackIdRef = useRef(21);
-
-  useEffect(() => {
-    if (!tableRect?.width || !tableRect?.height || initializedRef.current) {
-      return;
-    }
-
-    const centerX = tableRect.width / 2 - cardSize.width / 2;
-    const centerY = tableRect.height / 2 - cardSize.height / 2;
-    const nextCardsById = createCardsById();
-    const cardIds = Object.keys(nextCardsById);
-    setCardsById(nextCardsById);
-    setStacks([
-      {
-        id: 's1',
-        x: centerX,
-        y: centerY,
-        rotation: 0,
-        faceUp: true,
-        cardIds
-      }
-    ]);
-    nextStackIdRef.current = 2;
-    initializedRef.current = true;
-  }, [cardSize.height, cardSize.width, tableRect?.height, tableRect?.width]);
-
-  useEffect(() => {
-    if (process.env.NODE_ENV !== 'production') {
-      validateUniqueCardIds(stacks);
-    }
-  }, [stacks]);
 
   const createStackId = useCallback(() => {
     const id = `s${nextStackIdRef.current}`;
@@ -105,37 +95,132 @@ export const useTableState = (tableRect, cardSize) => {
     return id;
   }, []);
 
-  const resetTable = useCallback(() => {
-    if (!tableRect?.width || !tableRect?.height) {
+  const rebuildTableFromSettings = useCallback(
+    (settingsInput) => {
+      if (!tableRect?.width || !tableRect?.height) {
+        return;
+      }
+      const settings = normalizeSettings(settingsInput ?? DEFAULT_SETTINGS);
+      const {
+        cardsById: nextCardsById,
+        deckCardIds,
+        allCardIds
+      } = buildDecks(settings);
+      const boundsWidth = tableRect.width;
+      const boundsHeight = tableRect.height;
+      const deckGap = 18;
+      const nextStacks = [];
+      nextStackIdRef.current = 1;
+
+      const pushStack = (x, y, cardIds, faceUp) => {
+        const clamped = clampCardToTable(
+          x,
+          y,
+          cardSize.width,
+          cardSize.height,
+          boundsWidth,
+          boundsHeight
+        );
+        nextStacks.push({
+          id: createStackId(),
+          x: clamped.x,
+          y: clamped.y,
+          rotation: 0,
+          faceUp,
+          cardIds
+        });
+      };
+
+      if (settings.presetLayout === 'solitaire') {
+        const columnCount = 7;
+        const columnGap = 22;
+        const totalWidth =
+          columnCount * cardSize.width + (columnCount - 1) * columnGap;
+        const startX = (boundsWidth - totalWidth) / 2;
+        const startY = Math.max(140, boundsHeight * 0.32);
+        let remaining = [...allCardIds];
+
+        for (let col = 0; col < columnCount; col += 1) {
+          const cardCount = col + 1;
+          const columnCards = remaining.slice(0, cardCount);
+          remaining = remaining.slice(cardCount);
+          const x = startX + col * (cardSize.width + columnGap);
+          const y = startY;
+          pushStack(x, y, columnCards, true);
+        }
+
+        const stockX = Math.max(24, boundsWidth * 0.12);
+        const stockY = Math.max(24, boundsHeight * 0.12);
+        if (remaining.length > 0) {
+          pushStack(stockX, stockY, remaining, false);
+        }
+      } else if (settings.presetLayout === 'grid') {
+        const padding = 24;
+        const gap = 12;
+        const cols = Math.max(
+          1,
+          Math.floor(
+            (boundsWidth - padding * 2 + gap) / (cardSize.width + gap)
+          )
+        );
+        const startX = padding;
+        const startY = padding;
+        allCardIds.forEach((cardId, index) => {
+          const col = index % cols;
+          const row = Math.floor(index / cols);
+          const x = startX + col * (cardSize.width + gap);
+          const y = startY + row * (cardSize.height + gap);
+          pushStack(x, y, [cardId], true);
+        });
+      } else {
+        const totalWidth =
+          settings.deckCount * cardSize.width + (settings.deckCount - 1) * deckGap;
+        const startX = (boundsWidth - totalWidth) / 2;
+        const startY = boundsHeight / 2 - cardSize.height / 2;
+        const faceUp = !settings.resetFaceDown;
+        deckCardIds.forEach((deckIds, index) => {
+          const x = startX + index * (cardSize.width + deckGap);
+          const y = startY;
+          pushStack(x, y, deckIds, faceUp);
+        });
+      }
+
+      setCardsById(nextCardsById);
+      setStacks(nextStacks);
+      initializedRef.current = true;
+    },
+    [
+      cardSize.height,
+      cardSize.width,
+      createStackId,
+      tableRect?.height,
+      tableRect?.width
+    ]
+  );
+
+  useEffect(() => {
+    if (!tableRect?.width || !tableRect?.height || initializedRef.current) {
       return;
     }
+    rebuildTableFromSettings(initialSettings ?? DEFAULT_SETTINGS);
+  }, [
+    initialSettings,
+    rebuildTableFromSettings,
+    tableRect?.height,
+    tableRect?.width
+  ]);
 
-    const nextCardsById =
-      Object.keys(cardsById).length > 0 ? cardsById : createCardsById();
-    const centerX = tableRect.width / 2 - cardSize.width / 2;
-    const centerY = tableRect.height / 2 - cardSize.height / 2;
-    const cardIds = Object.keys(nextCardsById);
-
-    setCardsById(nextCardsById);
-    setStacks([
-      {
-        id: 's1',
-        x: centerX,
-        y: centerY,
-        rotation: 0,
-        faceUp: true,
-        cardIds
-      }
-    ]);
-    nextStackIdRef.current = 2;
-    initializedRef.current = true;
-  }, [cardSize.height, cardSize.width, cardsById, tableRect?.height, tableRect?.width]);
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'production') {
+      validateUniqueCardIds(stacks);
+    }
+  }, [stacks]);
 
   return {
     cardsById,
     stacks,
     setStacks,
     createStackId,
-    resetTable
+    rebuildTableFromSettings
   };
 };

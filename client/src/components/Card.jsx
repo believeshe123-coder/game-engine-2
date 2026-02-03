@@ -101,6 +101,7 @@ const Card = ({
   rank,
   suit,
   color,
+  cardStyle,
   isHeld,
   isSelected,
   stackCount,
@@ -122,9 +123,9 @@ const Card = ({
   const pipLayout = PIP_LAYOUTS[displayRank] ?? [];
   return (
     <div
-      className={`card ${faceUp ? 'card--faceup' : 'card--facedown'} ${
-        isHeld ? 'card--held' : ''
-      } ${isSelected ? 'card--selected' : ''}`}
+      className={`card card--style-${cardStyle ?? 'medieval'} ${
+        faceUp ? 'card--faceup' : 'card--facedown'
+      } ${isHeld ? 'card--held' : ''} ${isSelected ? 'card--selected' : ''}`}
       style={{
         transform: `translate(${x}px, ${y}px) rotate(${rotation}deg)`,
         zIndex
