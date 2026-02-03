@@ -22,13 +22,14 @@ const Table = () => {
     tableRect,
     CARD_SIZE
   );
-  const [dragging, setDragging] = useState({
+  const [heldStack, setHeldStack] = useState({
     active: false,
     stackId: null,
+    cardIds: [],
     sourceStackId: null,
-    pointerId: null,
     offset: { dx: 0, dy: 0 },
-    mode: 'single'
+    origin: null,
+    mode: 'stack'
   });
   const [hoveredStackId, setHoveredStackId] = useState(null);
   const [selectedStackId, setSelectedStackId] = useState(null);
@@ -112,51 +113,76 @@ const Table = () => {
     []
   );
 
-  const startDrag = useCallback((stackId, pointerId, offset, mode, sourceStackId = null) => {
-    bringStackToFront(stackId);
-    setDragging({
-      active: true,
-      stackId,
-      sourceStackId,
-      pointerId,
-      offset,
-      mode
-    });
-  }, [bringStackToFront]);
-
   const flushAnimation = useCallback(() => {
-    if (!dragging.active || !dragging.stackId || !latestPoint.current) {
+    if (!heldStack.active || !heldStack.stackId || !latestPoint.current) {
       rafRef.current = null;
       return;
     }
 
     setStacks((prev) =>
       prev.map((stack) =>
-        stack.id === dragging.stackId
+        stack.id === heldStack.stackId
           ? { ...stack, x: latestPoint.current.x, y: latestPoint.current.y }
           : stack
       )
     );
     rafRef.current = null;
-  }, [dragging.active, dragging.stackId, setStacks]);
+  }, [heldStack.active, heldStack.stackId, setStacks]);
 
-  const handlePointerMove = useCallback(
-    (event) => {
-      if (!dragging.active || event.pointerId !== dragging.pointerId) {
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.repeat) {
         return;
       }
+      if (event.key !== 'Escape') {
+        return;
+      }
+      if (heldStack.active && heldStack.stackId && heldStack.origin) {
+        setStacks((prev) =>
+          prev.map((stack) =>
+            stack.id === heldStack.stackId
+              ? { ...stack, x: heldStack.origin.x, y: heldStack.origin.y }
+              : stack
+          )
+        );
+        setHeldStack({
+          active: false,
+          stackId: null,
+          cardIds: [],
+          sourceStackId: null,
+          offset: { dx: 0, dy: 0 },
+          origin: null,
+          mode: 'stack'
+        });
+      }
+      setSelectedStackId(null);
+      setPickCountOpen(false);
+    };
 
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [heldStack.active, heldStack.origin, heldStack.stackId, setStacks]);
+
+  useEffect(() => {
+    if (!heldStack.active) {
+      latestPoint.current = null;
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      return undefined;
+    }
+
+    const handleWindowPointerMove = (event) => {
       const table = tableRef.current;
       if (!table) {
         return;
       }
-
       const rect = table.getBoundingClientRect();
       const pointerX = event.clientX - rect.left;
       const pointerY = event.clientY - rect.top;
-
-      const nextX = pointerX - dragging.offset.dx;
-      const nextY = pointerY - dragging.offset.dy;
+      const nextX = pointerX - heldStack.offset.dx;
+      const nextY = pointerY - heldStack.offset.dy;
       const clamped = clampCardToTable(
         nextX,
         nextY,
@@ -170,34 +196,39 @@ const Table = () => {
       if (!rafRef.current) {
         rafRef.current = requestAnimationFrame(flushAnimation);
       }
-    },
-    [dragging, flushAnimation, tableRect.height, tableRect.width]
-  );
+    };
 
-  const handlePointerUp = useCallback(
-    (event) => {
-      if (!dragging.active || event.pointerId !== dragging.pointerId) {
+    window.addEventListener('pointermove', handleWindowPointerMove);
+
+    return () => {
+      window.removeEventListener('pointermove', handleWindowPointerMove);
+    };
+  }, [
+    flushAnimation,
+    heldStack.active,
+    heldStack.offset.dx,
+    heldStack.offset.dy,
+    tableRect.height,
+    tableRect.width
+  ]);
+
+  const placeHeldStack = useCallback(
+    (pointerX, pointerY) => {
+      if (!heldStack.active || !heldStack.stackId) {
         return;
       }
-      const table = tableRef.current;
-      let finalPosition = null;
-      if (table) {
-        const rect = table.getBoundingClientRect();
-        const pointerX = event.clientX - rect.left;
-        const pointerY = event.clientY - rect.top;
-        const nextX = pointerX - dragging.offset.dx;
-        const nextY = pointerY - dragging.offset.dy;
-        finalPosition = clampCardToTable(
-          nextX,
-          nextY,
-          CARD_SIZE.width,
-          CARD_SIZE.height,
-          tableRect.width,
-          tableRect.height
-        );
-      }
+      const nextX = pointerX - heldStack.offset.dx;
+      const nextY = pointerY - heldStack.offset.dy;
+      const finalPosition = clampCardToTable(
+        nextX,
+        nextY,
+        CARD_SIZE.width,
+        CARD_SIZE.height,
+        tableRect.width,
+        tableRect.height
+      );
 
-      const draggedStack = stacksById[dragging.stackId];
+      const draggedStack = stacksById[heldStack.stackId];
       if (draggedStack) {
         const draggedX = finalPosition?.x ?? draggedStack?.x;
         const draggedY = finalPosition?.y ?? draggedStack?.y;
@@ -205,7 +236,7 @@ const Table = () => {
         let overlapId = null;
         for (let i = stacks.length - 1; i >= 0; i -= 1) {
           const stack = stacks[i];
-          if (stack.id === dragging.stackId) {
+          if (stack.id === heldStack.stackId) {
             continue;
           }
           const overlaps =
@@ -222,7 +253,7 @@ const Table = () => {
         if (overlapId) {
           setStacks((prev) => {
             const target = prev.find((stack) => stack.id === overlapId);
-            const dragged = prev.find((stack) => stack.id === dragging.stackId);
+            const dragged = prev.find((stack) => stack.id === heldStack.stackId);
             if (!target || !dragged) {
               return prev;
             }
@@ -232,16 +263,13 @@ const Table = () => {
               cardIds: [...target.cardIds, ...dragged.cardIds]
             };
             return prev
-              .filter(
-                (stack) =>
-                  stack.id !== dragging.stackId && stack.id !== overlapId
-              )
+              .filter((stack) => stack.id !== heldStack.stackId && stack.id !== overlapId)
               .concat(merged);
           });
         } else if (finalPosition) {
           setStacks((prev) =>
             prev.map((stack) =>
-              stack.id === dragging.stackId
+              stack.id === heldStack.stackId
                 ? { ...stack, x: finalPosition.x, y: finalPosition.y }
                 : stack
             )
@@ -249,61 +277,21 @@ const Table = () => {
         }
       }
 
-      setDragging({
+      setHeldStack({
         active: false,
         stackId: null,
+        cardIds: [],
         sourceStackId: null,
-        pointerId: null,
         offset: { dx: 0, dy: 0 },
-        mode: 'single'
+        origin: null,
+        mode: 'stack'
       });
     },
-    [dragging.active, dragging.pointerId, dragging.stackId, setStacks, stacks, stacksById]
+    [heldStack, setStacks, stacks, stacksById, tableRect.height, tableRect.width]
   );
-
-  useEffect(() => {
-    const handleKeyDown = (event) => {
-      if (event.repeat) {
-        return;
-      }
-      if (event.key !== 'Escape') {
-        return;
-      }
-      setSelectedStackId(null);
-      setPickCountOpen(false);
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  useEffect(() => {
-    if (!dragging.active) {
-      latestPoint.current = null;
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-      return undefined;
-    }
-
-    const handleWindowPointerUp = (event) => handlePointerUp(event);
-    const handleWindowPointerMove = (event) => handlePointerMove(event);
-
-    window.addEventListener('pointerup', handleWindowPointerUp);
-    window.addEventListener('pointermove', handleWindowPointerMove);
-
-    return () => {
-      window.removeEventListener('pointerup', handleWindowPointerUp);
-      window.removeEventListener('pointermove', handleWindowPointerMove);
-    };
-  }, [dragging.active, handlePointerMove, handlePointerUp]);
 
   const handleStackPointerDown = useCallback(
     (event, stackIdOverride = null) => {
-      if (dragging.active) {
-        return;
-      }
       const table = tableRef.current;
       if (!table) {
         return;
@@ -315,6 +303,12 @@ const Table = () => {
       const rect = table.getBoundingClientRect();
       const pointerX = event.clientX - rect.left;
       const pointerY = event.clientY - rect.top;
+      if (heldStack.active) {
+        placeHeldStack(pointerX, pointerY);
+        setSelectedStackId(null);
+        setPickCountOpen(false);
+        return;
+      }
       const stackId = stackIdOverride ?? hitTestStack(pointerX, pointerY);
       if (!stackId) {
         return;
@@ -323,14 +317,11 @@ const Table = () => {
       setSelectedStackId(stackId);
       setPickCountOpen(false);
     },
-    [bringStackToFront, dragging.active, hitTestStack]
+    [bringStackToFront, heldStack.active, hitTestStack, placeHeldStack]
   );
 
   const handleSurfacePointerDown = useCallback(
     (event) => {
-      if (dragging.active) {
-        return;
-      }
       const table = tableRef.current;
       if (!table) {
         return;
@@ -338,6 +329,12 @@ const Table = () => {
       const rect = table.getBoundingClientRect();
       const pointerX = event.clientX - rect.left;
       const pointerY = event.clientY - rect.top;
+      if (heldStack.active) {
+        placeHeldStack(pointerX, pointerY);
+        setSelectedStackId(null);
+        setPickCountOpen(false);
+        return;
+      }
       const stackId = hitTestStack(pointerX, pointerY);
       if (stackId) {
         handleStackPointerDown(event, stackId);
@@ -346,12 +343,12 @@ const Table = () => {
       setSelectedStackId(null);
       setPickCountOpen(false);
     },
-    [dragging.active, handleStackPointerDown, hitTestStack]
+    [handleStackPointerDown, heldStack.active, hitTestStack, placeHeldStack]
   );
 
   const handlePointerMoveHover = useCallback(
     (event) => {
-      if (dragging.active) {
+      if (heldStack.active) {
         return;
       }
       const table = tableRef.current;
@@ -364,7 +361,7 @@ const Table = () => {
       const stackId = hitTestStack(pointerX, pointerY);
       setHoveredStackId(stackId);
     },
-    [dragging.active, hitTestStack]
+    [heldStack.active, hitTestStack]
   );
 
   const hoveredStack = hoveredStackId ? stacksById[hoveredStackId] : null;
@@ -388,6 +385,25 @@ const Table = () => {
     }));
   }, []);
 
+  const handleShuffleSelected = useCallback(() => {
+    if (!selectedStackId) {
+      return;
+    }
+    setStacks((prev) =>
+      prev.map((stack) => {
+        if (stack.id !== selectedStackId) {
+          return stack;
+        }
+        const nextCardIds = [...stack.cardIds];
+        for (let i = nextCardIds.length - 1; i > 0; i -= 1) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [nextCardIds[i], nextCardIds[j]] = [nextCardIds[j], nextCardIds[i]];
+        }
+        return { ...stack, cardIds: nextCardIds };
+      })
+    );
+  }, [selectedStackId, setStacks]);
+
   const pickUpFromStack = useCallback(
     (event, stackId, requestedCount) => {
       event.preventDefault();
@@ -397,7 +413,8 @@ const Table = () => {
       }
       const clampedCount = Math.max(1, Math.min(requestedCount, source.cardIds.length));
       const newStackId = createStackId();
-      let created = false;
+      let pickedCardIds = [];
+      let origin = null;
 
       setStacks((prev) => {
         const current = prev.find((stack) => stack.id === stackId);
@@ -407,11 +424,11 @@ const Table = () => {
         const safeCount = Math.max(1, Math.min(clampedCount, current.cardIds.length));
         const remainingCount = current.cardIds.length - safeCount;
         const remainingCardIds = current.cardIds.slice(0, remainingCount);
-        const pickedCardIds = current.cardIds.slice(remainingCount);
+        pickedCardIds = current.cardIds.slice(remainingCount);
         if (pickedCardIds.length === 0) {
           return prev;
         }
-        created = true;
+        origin = { x: current.x, y: current.y };
         const next = prev
           .map((item) =>
             item.id === stackId ? { ...item, cardIds: remainingCardIds } : item
@@ -428,15 +445,23 @@ const Table = () => {
         return next;
       });
 
-      if (!created) {
+      if (pickedCardIds.length === 0) {
         return;
       }
       const offset = getPointerOffset(event, source);
-      startDrag(newStackId, event.pointerId, offset, 'stack', stackId);
+      setHeldStack({
+        active: true,
+        stackId: newStackId,
+        cardIds: pickedCardIds,
+        sourceStackId: stackId,
+        offset,
+        origin,
+        mode: 'stack'
+      });
       setSelectedStackId(null);
       setPickCountOpen(false);
     },
-    [createStackId, getPointerOffset, setStacks, stacksById, startDrag]
+    [createStackId, getPointerOffset, setStacks, stacksById]
   );
 
   const handleFlipSelected = useCallback(() => {
@@ -498,6 +523,8 @@ const Table = () => {
         {stacks.map((stack, index) => {
           const topCardId = stack.cardIds[stack.cardIds.length - 1];
           const topCard = cardsById[topCardId];
+          const isHeld = heldStack.active && stack.id === heldStack.stackId;
+          const zIndex = isHeld ? stacks.length + 20 : index + 1;
           return (
             <Card
               key={stack.id}
@@ -506,9 +533,11 @@ const Table = () => {
               y={stack.y}
               rotation={stack.rotation}
               faceUp={stack.faceUp}
-              zIndex={index + 1}
+              zIndex={zIndex}
               rank={topCard?.rank}
               suit={topCard?.suit}
+              color={topCard?.color}
+              isHeld={isHeld}
               isSelected={stack.id === selectedStackId}
               onPointerDown={handleStackPointerDown}
             />
@@ -601,6 +630,13 @@ const Table = () => {
               onClick={handleFlipSelected}
             >
               Flip
+            </button>
+            <button
+              type="button"
+              className="stack-menu__button"
+              onClick={handleShuffleSelected}
+            >
+              Shuffle
             </button>
           </div>
         ) : null}
