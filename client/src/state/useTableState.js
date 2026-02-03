@@ -20,10 +20,6 @@ const createDeck = () => {
       });
     });
   });
-  cards.push(
-    { id: 'JR', rank: 'Joker', suit: 'Red' },
-    { id: 'JB', rank: 'Joker', suit: 'Black' }
-  );
   return cards;
 };
 
