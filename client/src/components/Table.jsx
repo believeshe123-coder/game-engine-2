@@ -4,7 +4,6 @@ import { clampCardToTable } from '../utils/geometry.js';
 import { useTableState } from '../state/useTableState.js';
 
 const CARD_SIZE = { width: 72, height: 104 };
-const SNAP_DISTANCE = 35;
 const SEATS = [
   { id: 1, label: 'Seat 1', side: 'top', offset: '33%' },
   { id: 2, label: 'Seat 2', side: 'top', offset: '67%' },
@@ -186,37 +185,39 @@ const Table = () => {
         const draggedX = finalPosition?.x ?? draggedStack?.x;
         const draggedY = finalPosition?.y ?? draggedStack?.y;
 
-        let closestId = null;
-        let closestDistance = Infinity;
-
-        stacks.forEach((stack) => {
+        let overlapId = null;
+        for (let i = stacks.length - 1; i >= 0; i -= 1) {
+          const stack = stacks[i];
           if (stack.id === dragging.stackId) {
-            return;
+            continue;
           }
-          const dx = stack.x - draggedX;
-          const dy = stack.y - draggedY;
-          const distance = Math.hypot(dx, dy);
-          if (distance < closestDistance && distance <= SNAP_DISTANCE) {
-            closestDistance = distance;
-            closestId = stack.id;
+          const overlaps =
+            draggedX < stack.x + CARD_SIZE.width &&
+            draggedX + CARD_SIZE.width > stack.x &&
+            draggedY < stack.y + CARD_SIZE.height &&
+            draggedY + CARD_SIZE.height > stack.y;
+          if (overlaps) {
+            overlapId = stack.id;
+            break;
           }
-        });
+        }
 
-        if (closestId) {
+        if (overlapId) {
           setStacks((prev) => {
-            const target = prev.find((stack) => stack.id === closestId);
+            const target = prev.find((stack) => stack.id === overlapId);
             const dragged = prev.find((stack) => stack.id === dragging.stackId);
             if (!target || !dragged) {
               return prev;
             }
             const merged = {
               ...target,
+              faceUp: dragged.faceUp ?? target.faceUp,
               cardIds: [...target.cardIds, ...dragged.cardIds]
             };
             return prev
               .filter(
                 (stack) =>
-                  stack.id !== dragging.stackId && stack.id !== closestId
+                  stack.id !== dragging.stackId && stack.id !== overlapId
               )
               .concat(merged);
           });
@@ -242,6 +243,31 @@ const Table = () => {
     },
     [dragging.active, dragging.pointerId, dragging.stackId, setStacks, stacks, stacksById]
   );
+
+  useEffect(() => {
+    if (!dragging.active || !dragging.stackId) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event) => {
+      if (event.repeat) {
+        return;
+      }
+      if (event.key?.toLowerCase() !== 'f') {
+        return;
+      }
+      setStacks((prev) =>
+        prev.map((stack) =>
+          stack.id === dragging.stackId
+            ? { ...stack, faceUp: !stack.faceUp }
+            : stack
+        )
+      );
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [dragging.active, dragging.stackId, setStacks]);
 
   useEffect(() => {
     if (!dragging.active) {
@@ -272,10 +298,10 @@ const Table = () => {
         return;
       }
 
-      if (event.button === 2) {
+      if (event.button === 2 || event.button === 1) {
         event.preventDefault();
       }
-      if (event.button !== 0 && event.button !== 2) {
+      if (event.button !== 0 && event.button !== 2 && event.button !== 1) {
         return;
       }
 
@@ -304,6 +330,31 @@ const Table = () => {
         return;
       }
 
+      if (event.button === 1) {
+        const pickedCount = Math.ceil(stack.cardIds.length / 2);
+        const pickedCardIds = stack.cardIds.slice(-pickedCount);
+        const remainingCardIds = stack.cardIds.slice(0, -pickedCount);
+        const newStackId = createStackId();
+        setStacks((prev) => {
+          const next = prev
+            .map((item) =>
+              item.id === stackId ? { ...item, cardIds: remainingCardIds } : item
+            )
+            .filter((item) => item.id !== stackId || item.cardIds.length > 0);
+          next.push({
+            id: newStackId,
+            x: stack.x,
+            y: stack.y,
+            rotation: stack.rotation,
+            faceUp: stack.faceUp,
+            cardIds: pickedCardIds
+          });
+          return next;
+        });
+        startDrag(newStackId, event.pointerId, offset, 'stack', stackId);
+        return;
+      }
+
       const topCardId = stack.cardIds[stack.cardIds.length - 1];
       const newStackId = createStackId();
       setStacks((prev) => {
@@ -318,7 +369,8 @@ const Table = () => {
           id: newStackId,
           x: stack.x,
           y: stack.y,
-          rotation: 0,
+          rotation: stack.rotation,
+          faceUp: stack.faceUp,
           cardIds: [topCardId]
         });
         return next;
@@ -411,6 +463,7 @@ const Table = () => {
               x={stack.x}
               y={stack.y}
               rotation={stack.rotation}
+              faceUp={stack.faceUp}
               zIndex={index + 1}
               onPointerDown={handlePointerDown}
             />
