@@ -5,6 +5,16 @@ import { useTableState } from '../state/useTableState.js';
 
 const CARD_SIZE = { width: 72, height: 104 };
 const SNAP_DISTANCE = 35;
+const SEATS = [
+  { id: 1, label: 'Seat 1', side: 'top', offset: '33%' },
+  { id: 2, label: 'Seat 2', side: 'top', offset: '67%' },
+  { id: 3, label: 'Seat 3', side: 'right', offset: '33%' },
+  { id: 4, label: 'Seat 4', side: 'right', offset: '67%' },
+  { id: 5, label: 'Seat 5', side: 'bottom', offset: '33%' },
+  { id: 6, label: 'Seat 6', side: 'bottom', offset: '67%' },
+  { id: 7, label: 'Seat 7', side: 'left', offset: '33%' },
+  { id: 8, label: 'Seat 8', side: 'left', offset: '67%' }
+];
 
 const Table = () => {
   const tableRef = useRef(null);
@@ -23,6 +33,12 @@ const Table = () => {
   });
   const [hoveredStackId, setHoveredStackId] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [occupiedSeats, setOccupiedSeats] = useState(() =>
+    SEATS.reduce((acc, seat) => {
+      acc[seat.id] = false;
+      return acc;
+    }, {})
+  );
   const rafRef = useRef(null);
   const latestPoint = useRef(null);
 
@@ -344,8 +360,39 @@ const Table = () => {
     resetTable();
   }, [resetTable]);
 
+  const toggleSeat = useCallback((seatId) => {
+    setOccupiedSeats((prev) => ({
+      ...prev,
+      [seatId]: !prev[seatId]
+    }));
+  }, []);
+
   return (
-    <div className="table">
+    <div className="table-frame">
+      <div className="table__seats" aria-label="Table seats">
+        {SEATS.map((seat) => {
+          const occupied = occupiedSeats[seat.id];
+          const seatStyle =
+            seat.side === 'top' || seat.side === 'bottom'
+              ? { left: seat.offset }
+              : { top: seat.offset };
+          return (
+            <button
+              key={seat.id}
+              type="button"
+              className={`seat seat--${seat.side} ${
+                occupied ? 'seat--occupied' : ''
+              }`}
+              style={seatStyle}
+              onClick={() => toggleSeat(seat.id)}
+            >
+              <span className="seat__label">
+                {occupied ? 'You' : seat.label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
       <div
         ref={tableRef}
         className="table__surface"
