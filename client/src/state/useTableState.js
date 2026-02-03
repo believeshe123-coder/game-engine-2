@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 
 const createStacks = (count, centerX, centerY) => {
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+const createCards = (count, centerX, centerY) => {
   return Array.from({ length: count }, (_, index) => {
     const spread = 80;
     const offsetX = (Math.random() - 0.5) * spread;
@@ -33,6 +36,25 @@ export const useTableState = (tableRect, cardSize) => {
   const initializedRef = useRef(false);
   const nextStackIdRef = useRef(21);
 
+    return {
+      id: `c${index + 1}`,
+      label: `Card ${index + 1}`,
+      x: centerX + offsetX,
+      y: centerY + offsetY,
+      rotation: 0
+    };
+  });
+};
+
+export const useTableState = (tableRect, cardSize) => {
+  const [cards, setCards] = useState([]);
+  const [dragging, setDragging] = useState({
+    cardId: null,
+    pointerOffset: { dx: 0, dy: 0 },
+    pointerId: null
+  });
+  const initializedRef = useRef(false);
+
   useEffect(() => {
     if (!tableRect?.width || !tableRect?.height || initializedRef.current) {
       return;
@@ -56,5 +78,44 @@ export const useTableState = (tableRect, cardSize) => {
     stacks,
     setStacks,
     createStackId
+    setCards(createCards(20, centerX, centerY));
+    initializedRef.current = true;
+  }, [cardSize.height, cardSize.width, tableRect?.height, tableRect?.width]);
+
+  const bringToFront = useCallback((cardId) => {
+    setCards((prev) => {
+      const index = prev.findIndex((card) => card.id === cardId);
+      if (index === -1 || index === prev.length - 1) {
+        return prev;
+      }
+
+      const next = [...prev];
+      const [card] = next.splice(index, 1);
+      next.push(card);
+      return next;
+    });
+  }, []);
+
+  const startDrag = useCallback((cardId, pointerId, pointerOffset) => {
+    bringToFront(cardId);
+    setDragging({ cardId, pointerOffset, pointerId });
+  }, [bringToFront]);
+
+  const endDrag = useCallback(() => {
+    setDragging({ cardId: null, pointerOffset: { dx: 0, dy: 0 }, pointerId: null });
+  }, []);
+
+  const updateCardPosition = useCallback((cardId, x, y) => {
+    setCards((prev) =>
+      prev.map((card) => (card.id === cardId ? { ...card, x, y } : card))
+    );
+  }, []);
+
+  return {
+    cards,
+    dragging,
+    startDrag,
+    endDrag,
+    updateCardPosition
   };
 };
