@@ -22,6 +22,7 @@ const createStacks = (count, centerX, centerY) => {
       x: centerX + offsetX,
       y: centerY + offsetY,
       rotation: 0,
+      faceUp: true,
       cardIds: [cardId]
     };
   });
@@ -69,6 +70,7 @@ export const useTableState = (tableRect, cardSize) => {
         x: centerX,
         y: centerY,
         rotation: 0,
+        faceUp: true,
         cardIds
       }
     ]);
