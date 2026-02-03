@@ -7,6 +7,7 @@ const Card = ({ id, label, x, y, rotation, zIndex, onPointerDown }) => {
         zIndex
       }}
       onPointerDown={(event) => onPointerDown?.(event, id)}
+      onPointerDown={(event) => onPointerDown(id, event)}
     >
       {label}
     </div>
