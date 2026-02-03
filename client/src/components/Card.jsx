@@ -134,7 +134,7 @@ const Card = ({
     >
       {showStackCount ? (
         <div className="card__count" aria-hidden="true">
-          {stackCount}
+          Stack: {stackCount}
         </div>
       ) : null}
       <div className="card__surface" aria-hidden="true">
