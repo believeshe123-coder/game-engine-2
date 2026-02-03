@@ -74,6 +74,24 @@ body,
   z-index: 0;
 }
 
+.table-frame--plain::before {
+  background:
+    linear-gradient(140deg, rgba(255, 255, 255, 0.08), transparent 60%),
+    linear-gradient(130deg, #6e6e6e, #4d4d4d 55%, #3a3a3a);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 -10px 16px rgba(0, 0, 0, 0.35),
+    0 18px 28px rgba(0, 0, 0, 0.45);
+}
+
+.table-frame--rectangle::before {
+  border-radius: 64px;
+}
+
+.table-frame--oval::before {
+  border-radius: 999px;
+}
+
 .table-frame::after {
   content: '';
   position: absolute;
@@ -83,6 +101,14 @@ body,
     inset 0 8px 18px rgba(0, 0, 0, 0.35),
     inset 0 -2px 4px rgba(255, 255, 255, 0.1);
   z-index: 1;
+}
+
+.table-frame--rectangle::after {
+  border-radius: 52px;
+}
+
+.table-frame--oval::after {
+  border-radius: 999px;
 }
 
 .table__surface-wrapper {
@@ -101,6 +127,19 @@ body,
   border-radius: 40px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
   overflow: hidden;
+}
+
+.table__surface--plain {
+  background: linear-gradient(135deg, #4b5454, #3b4343);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.table__surface--rectangle {
+  border-radius: 40px;
+}
+
+.table__surface--oval {
+  border-radius: 999px;
 }
 
 #stackLabelLayer {
@@ -150,8 +189,8 @@ body,
     inset 0 2px 6px rgba(255, 255, 255, 0.1),
     inset 0 -4px 6px rgba(0, 0, 0, 0.4),
     0 10px 16px rgba(0, 0, 0, 0.35);
-  --seat-transform: translate(-50%, -100%);
-  transform: var(--seat-transform);
+  --seat-rotation: 0deg;
+  transform: translate(-50%, -50%) rotate(var(--seat-rotation));
   cursor: pointer;
   pointer-events: auto;
   transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
@@ -166,7 +205,7 @@ body,
 }
 
 .seat:hover {
-  transform: var(--seat-transform) translateY(-2px);
+  transform: translate(-50%, -50%) rotate(var(--seat-rotation)) translateY(-2px);
   box-shadow:
     inset 0 2px 8px rgba(255, 255, 255, 0.12),
     inset 0 -4px 6px rgba(0, 0, 0, 0.45),
@@ -182,26 +221,6 @@ body,
     inset 0 2px 8px rgba(255, 255, 255, 0.25),
     inset 0 -4px 6px rgba(0, 0, 0, 0.25),
     0 12px 20px rgba(0, 0, 0, 0.45);
-}
-
-.seat--top {
-  top: 6px;
-  --seat-transform: translate(-50%, -100%);
-}
-
-.seat--bottom {
-  bottom: 6px;
-  --seat-transform: translate(-50%, 100%);
-}
-
-.seat--left {
-  left: 6px;
-  --seat-transform: translate(-100%, -50%) rotate(-90deg);
-}
-
-.seat--right {
-  right: 6px;
-  --seat-transform: translate(100%, -50%) rotate(90deg);
 }
 
 .card {
