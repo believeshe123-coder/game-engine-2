@@ -6,7 +6,12 @@ const DEFAULT_SETTINGS = {
   includeJokers: true,
   deckCount: 1,
   presetLayout: 'none',
-  stackCountDisplayMode: 'always'
+  stackCountDisplayMode: 'always',
+  roomSettings: {
+    tableStyle: 'medieval',
+    tableShape: 'rectangle',
+    seatCount: 8
+  }
 };
 
 const normalizeDeckCount = (value) => {
@@ -29,6 +34,23 @@ const normalizeSettings = (settings) => {
   if (!['always', 'hover'].includes(next.stackCountDisplayMode)) {
     next.stackCountDisplayMode = DEFAULT_SETTINGS.stackCountDisplayMode;
   }
+  const roomSettings = {
+    ...DEFAULT_SETTINGS.roomSettings,
+    ...(next.roomSettings ?? {})
+  };
+  if (!['medieval', 'plain'].includes(roomSettings.tableStyle)) {
+    roomSettings.tableStyle = DEFAULT_SETTINGS.roomSettings.tableStyle;
+  }
+  if (!['rectangle', 'oval'].includes(roomSettings.tableShape)) {
+    roomSettings.tableShape = DEFAULT_SETTINGS.roomSettings.tableShape;
+  }
+  const seatCount = Number.parseInt(roomSettings.seatCount, 10);
+  if (Number.isNaN(seatCount)) {
+    roomSettings.seatCount = DEFAULT_SETTINGS.roomSettings.seatCount;
+  } else {
+    roomSettings.seatCount = Math.min(12, Math.max(2, seatCount));
+  }
+  next.roomSettings = roomSettings;
   next.resetFaceDown = Boolean(next.resetFaceDown);
   next.includeJokers = Boolean(next.includeJokers);
   return next;

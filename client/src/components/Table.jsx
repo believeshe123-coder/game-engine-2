@@ -5,16 +5,10 @@ import { useTableState } from '../state/useTableState.js';
 import { loadSettings, saveSettings } from '../state/tableSettings.js';
 
 const CARD_SIZE = { width: 72, height: 104 };
-const SEATS = [
-  { id: 1, label: 'Seat 1', side: 'top', offset: '33%' },
-  { id: 2, label: 'Seat 2', side: 'top', offset: '67%' },
-  { id: 3, label: 'Seat 3', side: 'right', offset: '33%' },
-  { id: 4, label: 'Seat 4', side: 'right', offset: '67%' },
-  { id: 5, label: 'Seat 5', side: 'bottom', offset: '33%' },
-  { id: 6, label: 'Seat 6', side: 'bottom', offset: '67%' },
-  { id: 7, label: 'Seat 7', side: 'left', offset: '33%' },
-  { id: 8, label: 'Seat 8', side: 'left', offset: '67%' }
-];
+const SEAT_POSITION = {
+  radiusX: 46,
+  radiusY: 38
+};
 
 const Table = () => {
   const tableRef = useRef(null);
@@ -48,12 +42,17 @@ const Table = () => {
   const [pickCountOpen, setPickCountOpen] = useState(false);
   const [pickCountValue, setPickCountValue] = useState('1');
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [occupiedSeats, setOccupiedSeats] = useState(() =>
-    SEATS.reduce((acc, seat) => {
-      acc[seat.id] = false;
-      return acc;
-    }, {})
-  );
+  const [roomSettingsOpen, setRoomSettingsOpen] = useState(false);
+  const [occupiedSeats, setOccupiedSeats] = useState(() => {
+    const initialCount = settings.roomSettings?.seatCount ?? 8;
+    return Array.from({ length: initialCount }, (_, index) => index + 1).reduce(
+      (acc, seatId) => {
+        acc[seatId] = false;
+        return acc;
+      },
+      {}
+    );
+  });
   const rafRef = useRef(null);
   const latestPoint = useRef(null);
   const DRAG_THRESHOLD = 8;
@@ -61,6 +60,42 @@ const Table = () => {
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
+
+  const seatCount = settings.roomSettings.seatCount;
+
+  useEffect(() => {
+    setOccupiedSeats((prev) => {
+      const next = {};
+      for (let seatId = 1; seatId <= seatCount; seatId += 1) {
+        next[seatId] = prev[seatId] ?? false;
+      }
+      return next;
+    });
+  }, [seatCount]);
+
+  const seats = useMemo(() => {
+    const count = Math.max(2, seatCount);
+    if (count === 8) {
+      return [
+        { id: 1, label: 'Seat 1', position: { left: '30%', top: '6%' } },
+        { id: 2, label: 'Seat 2', position: { left: '70%', top: '6%' } },
+        { id: 3, label: 'Seat 3', position: { left: '94%', top: '30%' } },
+        { id: 4, label: 'Seat 4', position: { left: '94%', top: '70%' } },
+        { id: 5, label: 'Seat 5', position: { left: '70%', top: '94%' } },
+        { id: 6, label: 'Seat 6', position: { left: '30%', top: '94%' } },
+        { id: 7, label: 'Seat 7', position: { left: '6%', top: '70%' } },
+        { id: 8, label: 'Seat 8', position: { left: '6%', top: '30%' } }
+      ];
+    }
+    return Array.from({ length: count }, (_, index) => {
+      const angle = (index / count) * Math.PI * 2 - Math.PI / 2;
+      return {
+        id: index + 1,
+        label: `Seat ${index + 1}`,
+        angle
+      };
+    });
+  }, [seatCount]);
 
   useEffect(() => {
     if (!tableRef.current) {
@@ -720,23 +755,28 @@ const Table = () => {
       }
     : null;
   const menuStackCount = selectedStack ? selectedStack.cardIds.length : 0;
+  const tableStyle = settings.roomSettings.tableStyle;
+  // Table shape is visual-only for now; clamp logic remains rectangular.
+  const tableShape = settings.roomSettings.tableShape;
 
   return (
-    <div className="table-frame">
+    <div
+      className={`table-frame table-frame--${tableStyle} table-frame--${tableShape}`}
+    >
       <div className="table__seats" aria-label="Table seats">
-        {SEATS.map((seat) => {
+        {seats.map((seat) => {
           const occupied = occupiedSeats[seat.id];
-          const seatStyle =
-            seat.side === 'top' || seat.side === 'bottom'
-              ? { left: seat.offset }
-              : { top: seat.offset };
+          const seatStyle = seat.position
+            ? seat.position
+            : {
+                left: `${50 + Math.cos(seat.angle) * SEAT_POSITION.radiusX}%`,
+                top: `${50 + Math.sin(seat.angle) * SEAT_POSITION.radiusY}%`
+              };
           return (
             <button
               key={seat.id}
               type="button"
-              className={`seat seat--${seat.side} ${
-                occupied ? 'seat--occupied' : ''
-              }`}
+              className={`seat ${occupied ? 'seat--occupied' : ''}`}
               style={seatStyle}
               onClick={() => toggleSeat(seat.id)}
             >
@@ -750,7 +790,7 @@ const Table = () => {
       <div className="table__surface-wrapper">
         <div
           ref={tableRef}
-          className="table__surface"
+          className={`table__surface table__surface--${tableStyle} table__surface--${tableShape}`}
           onPointerDown={handleSurfacePointerDown}
           onPointerMove={handlePointerMoveHover}
           onContextMenu={(event) => {
@@ -1047,6 +1087,80 @@ const Table = () => {
             >
               Reset Table
             </button>
+          </div>
+        ) : null}
+        <button
+          className="table-settings__toggle"
+          type="button"
+          onClick={() => setRoomSettingsOpen((prev) => !prev)}
+        >
+          Room Settings
+        </button>
+        {roomSettingsOpen ? (
+          <div className="table-settings__panel">
+            <label className="table-settings__row">
+              <span className="table-settings__label">Table Style</span>
+              <select
+                className="table-settings__select"
+                value={settings.roomSettings.tableStyle}
+                onChange={(event) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    roomSettings: {
+                      ...prev.roomSettings,
+                      tableStyle: event.target.value
+                    }
+                  }))
+                }
+              >
+                <option value="medieval">Medieval</option>
+                <option value="plain">Plain</option>
+              </select>
+            </label>
+            <label className="table-settings__row">
+              <span className="table-settings__label">Table Shape</span>
+              <select
+                className="table-settings__select"
+                value={settings.roomSettings.tableShape}
+                onChange={(event) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    roomSettings: {
+                      ...prev.roomSettings,
+                      tableShape: event.target.value
+                    }
+                  }))
+                }
+              >
+                <option value="rectangle">Rectangle</option>
+                <option value="oval">Oval</option>
+              </select>
+            </label>
+            <label className="table-settings__row">
+              <span className="table-settings__label"># of Seats</span>
+              <input
+                className="table-settings__input"
+                type="number"
+                min="2"
+                max="12"
+                value={settings.roomSettings.seatCount}
+                onChange={(event) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    roomSettings: {
+                      ...prev.roomSettings,
+                      seatCount: (() => {
+                        const parsed = Number.parseInt(event.target.value, 10);
+                        if (Number.isNaN(parsed)) {
+                          return 2;
+                        }
+                        return Math.min(12, Math.max(2, parsed));
+                      })()
+                    }
+                  }))
+                }
+              />
+            </label>
           </div>
         ) : null}
       </div>
