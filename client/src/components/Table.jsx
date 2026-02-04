@@ -176,6 +176,10 @@ const Table = () => {
   const [feltScreenRect, setFeltScreenRect] = useState(null);
   const [debugClampPoint, setDebugClampPoint] = useState(null);
   const [showFeltDebug, setShowFeltDebug] = useState(false);
+  const placementDebugEnabled =
+    typeof window !== 'undefined' &&
+    process.env.NODE_ENV !== 'production' &&
+    window.localStorage?.getItem('placementDebug') === 'true';
   const safeFeltEllipse = useMemo(() => {
     if (!feltEllipse || tableShape !== 'oval') {
       return null;
@@ -505,13 +509,20 @@ const Table = () => {
     rafRef.current = null;
   }, [heldStack.active, heldStack.stackId, setStacks]);
 
-  const computeHeldPlacement = useCallback(
-    (pointerX, pointerY, options = {}) => {
+  const computeNextDropTransform = useCallback(
+    ({
+      pointerX,
+      pointerY,
+      useCursorPlacement = false,
+      sweepDirection = null,
+      applySweepSpacing = false
+    }) => {
       const {
-        useCursorPlacement = false,
-        sweepDirection = null,
-        applySweepSpacing = false
-      } = options;
+        rotation = 0,
+        scale = 1
+      } = heldStack.active && heldStack.stackId
+        ? stacksById[heldStack.stackId] ?? {}
+        : {};
       const rawPlacement = useCursorPlacement
         ? { x: pointerX, y: pointerY }
         : getHeldTopLeft(pointerX, pointerY, heldStack.offset);
@@ -526,7 +537,13 @@ const Table = () => {
         clampedFinal = clampTopLeftToFelt(placement);
         placement = clampedFinal.position ?? placement;
       }
-      return { placement, clampedInitial, clampedFinal };
+      return {
+        placement,
+        clampedInitial,
+        clampedFinal,
+        rotation,
+        scale
+      };
     },
     [
       applySweepJitter,
@@ -534,9 +551,29 @@ const Table = () => {
       getHeldTopLeft,
       heldStack.offset,
       heldStack.stackId,
+      heldStack.active,
       pushOutOfStackEps,
-      stacks
+      stacks,
+      stacksById
     ]
+  );
+
+  const logPlacementDebug = useCallback(
+    (context, previewTransform, actualTransform) => {
+      if (!placementDebugEnabled) {
+        return;
+      }
+      console.log(`[placement-debug] ${context} preview`, previewTransform);
+      console.log(`[placement-debug] ${context} actual`, actualTransform);
+      console.assert(
+        previewTransform.x === actualTransform.x &&
+          previewTransform.y === actualTransform.y &&
+          previewTransform.rotation === actualTransform.rotation,
+        `[placement-debug] ${context} mismatch`,
+        { previewTransform, actualTransform }
+      );
+    },
+    [placementDebugEnabled]
   );
 
   useEffect(() => {
@@ -578,10 +615,11 @@ const Table = () => {
       if (!heldStack.active || !heldStack.stackId) {
         return;
       }
-      const { placement: finalPosition, clampedInitial } = computeHeldPlacement(
+      const placementResult = computeNextDropTransform({
         pointerX,
         pointerY
-      );
+      });
+      const { placement: finalPosition, clampedInitial, rotation } = placementResult;
       const { inside, clampedCenter } = clampedInitial;
       if (showFeltDebug && !inside && clampedCenter) {
         setDebugClampPoint(clampedCenter);
@@ -593,6 +631,19 @@ const Table = () => {
       if (draggedStack) {
         const draggedX = finalPosition?.x ?? draggedStack?.x;
         const draggedY = finalPosition?.y ?? draggedStack?.y;
+        logPlacementDebug(
+          'placeStack',
+          {
+            x: finalPosition?.x ?? draggedStack?.x,
+            y: finalPosition?.y ?? draggedStack?.y,
+            rotation
+          },
+          {
+            x: draggedX,
+            y: draggedY,
+            rotation
+          }
+        );
 
         let overlapId = null;
         for (let i = stacks.length - 1; i >= 0; i -= 1) {
@@ -649,8 +700,9 @@ const Table = () => {
       });
     },
     [
-      computeHeldPlacement,
+      computeNextDropTransform,
       heldStack,
+      logPlacementDebug,
       setStacks,
       showFeltDebug,
       stacks,
@@ -682,15 +734,18 @@ const Table = () => {
         applySweepSpacing = false,
         skipMerge = false
       } = options;
-      const { placement, clampedInitial, clampedFinal } = computeHeldPlacement(
+      const {
+        placement,
+        clampedInitial,
+        clampedFinal,
+        rotation
+      } = computeNextDropTransform({
         pointerX,
         pointerY,
-        {
-          useCursorPlacement,
-          sweepDirection,
-          applySweepSpacing
-        }
-      );
+        useCursorPlacement,
+        sweepDirection,
+        applySweepSpacing
+      });
       if (applySweepSpacing) {
         if (showFeltDebug && !clampedFinal.inside && clampedFinal.clampedCenter) {
           setDebugClampPoint(clampedFinal.clampedCenter);
@@ -728,6 +783,20 @@ const Table = () => {
           faceUp: currentHeld.faceUp,
           cardIds: [removedCardId]
         };
+
+        logPlacementDebug(
+          'dealOne',
+          {
+            x: placement?.x ?? currentHeld.x,
+            y: placement?.y ?? currentHeld.y,
+            rotation
+          },
+          {
+            x: newStack.x,
+            y: newStack.y,
+            rotation: newStack.rotation
+          }
+        );
 
         let next = prev
           .map((stack) =>
@@ -797,9 +866,10 @@ const Table = () => {
       }
     },
     [
-      computeHeldPlacement,
+      computeNextDropTransform,
       createStackId,
       heldStack,
+      logPlacementDebug,
       setStacks,
       showFeltDebug,
       stacks
@@ -1255,11 +1325,13 @@ const Table = () => {
       : null;
   const placementGhost =
     heldStack.active && heldStackData && placementPointer
-      ? computeHeldPlacement(placementPointer.x, placementPointer.y, {
+      ? computeNextDropTransform({
+          pointerX: placementPointer.x,
+          pointerY: placementPointer.y,
           useCursorPlacement: placementIsCursor,
           sweepDirection: placementDirection,
           applySweepSpacing: placementIsSweep
-        }).placement
+        })
       : null;
   const menuBelow = selectedStack ? selectedStack.y < 140 : false;
   const menuPosition =
@@ -1381,12 +1453,12 @@ const Table = () => {
                   ) : null}
                 </svg>
               ) : null}
-              {placementGhost ? (
+              {placementGhost?.placement ? (
                 <div
                   className="placement-ghost"
                   aria-hidden="true"
                   style={{
-                    transform: `translate(${placementGhost.x}px, ${placementGhost.y}px) rotate(${heldStackData.rotation}deg)`,
+                    transform: `translate(${placementGhost.placement.x}px, ${placementGhost.placement.y}px) rotate(${placementGhost.rotation}deg)`,
                     zIndex: 0
                   }}
                 />
