@@ -1,12 +1,13 @@
 {
   "name": "game-engine-2",
-  "image": "mcr.microsoft.com/devcontainers/node:20",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-20-bullseye",
   "forwardPorts": [5173],
   "portsAttributes": {
     "5173": {
+      "label": "Vite",
       "onAutoForward": "openBrowser"
     }
   },
   "postCreateCommand": "cd client && npm install",
-  "postStartCommand": "cd client && npm run dev"
+  "postStartCommand": "cd client && (npm run dev -- --host 0.0.0.0 --port 5173 --strictPort || true)"
 }
