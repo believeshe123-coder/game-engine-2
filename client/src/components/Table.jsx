@@ -86,6 +86,21 @@ const Table = () => {
   const tableShape = settings.roomSettings.tableShape;
   const [feltEllipse, setFeltEllipse] = useState(null);
   const [showFeltDebug, setShowFeltDebug] = useState(false);
+  const safeFeltEllipse = useMemo(() => {
+    if (!feltEllipse) {
+      return null;
+    }
+    const rxSafe = feltEllipse.rx - CARD_SIZE.width / 2;
+    const rySafe = feltEllipse.ry - CARD_SIZE.height / 2;
+    if (rxSafe <= 0 || rySafe <= 0) {
+      return null;
+    }
+    return {
+      ...feltEllipse,
+      rx: rxSafe,
+      ry: rySafe
+    };
+  }, [feltEllipse]);
 
   useEffect(() => {
     setOccupiedSeats((prev) => {
@@ -326,6 +341,25 @@ const Table = () => {
     []
   );
 
+  const clampTopLeftToFelt = useCallback(
+    (x, y) => {
+      const centerX = x + CARD_SIZE.width / 2;
+      const centerY = y + CARD_SIZE.height / 2;
+      const clampedCenter = clampStackToFeltEllipse(
+        centerX,
+        centerY,
+        CARD_SIZE.width,
+        CARD_SIZE.height,
+        feltEllipse
+      );
+      return {
+        x: clampedCenter.x - CARD_SIZE.width / 2,
+        y: clampedCenter.y - CARD_SIZE.height / 2
+      };
+    },
+    [feltEllipse]
+  );
+
   const getTablePointerPosition = useCallback((event) => {
     const sceneRoot = sceneRootRef.current;
     const table = tableRef.current;
@@ -434,13 +468,7 @@ const Table = () => {
         return;
       }
       const rawPosition = getHeldAnchorPosition(pointerX, pointerY);
-      const finalPosition = clampStackToFeltEllipse(
-        rawPosition.x,
-        rawPosition.y,
-        CARD_SIZE.width,
-        CARD_SIZE.height,
-        feltEllipse
-      );
+      const finalPosition = clampTopLeftToFelt(rawPosition.x, rawPosition.y);
 
       const draggedStack = stacksById[heldStack.stackId];
       if (draggedStack) {
@@ -501,7 +529,7 @@ const Table = () => {
         mode: 'stack'
       });
     },
-    [feltEllipse, getHeldAnchorPosition, heldStack, setStacks, stacks, stacksById]
+    [clampTopLeftToFelt, getHeldAnchorPosition, heldStack, setStacks, stacks, stacksById]
   );
 
   const dealOneFromHeld = useCallback(
@@ -523,13 +551,7 @@ const Table = () => {
       }
 
       const rawPlacement = getHeldAnchorPosition(pointerX, pointerY);
-      const placement = clampStackToFeltEllipse(
-        rawPlacement.x,
-        rawPlacement.y,
-        CARD_SIZE.width,
-        CARD_SIZE.height,
-        feltEllipse
-      );
+      const placement = clampTopLeftToFelt(rawPlacement.x, rawPlacement.y);
       const newStackId = createStackId();
       let removedCardId = null;
       let remainingCardIds = [];
@@ -620,7 +642,7 @@ const Table = () => {
         }));
       }
     },
-    [createStackId, feltEllipse, getHeldAnchorPosition, heldStack, setStacks]
+    [clampTopLeftToFelt, createStackId, getHeldAnchorPosition, heldStack, setStacks]
   );
 
   const startHeldFullStack = useCallback(
@@ -1000,12 +1022,29 @@ const Table = () => {
                   viewBox={`0 0 ${tableRect.width} ${tableRect.height}`}
                   aria-hidden="true"
                 >
+                  <rect
+                    className="table__felt-debug-rect"
+                    x={feltEllipse.bounds?.left ?? 0}
+                    y={feltEllipse.bounds?.top ?? 0}
+                    width={feltEllipse.w}
+                    height={feltEllipse.h}
+                  />
                   <ellipse
+                    className="table__felt-debug-ellipse"
                     cx={feltEllipse.cx}
                     cy={feltEllipse.cy}
                     rx={feltEllipse.rx}
                     ry={feltEllipse.ry}
                   />
+                  {safeFeltEllipse ? (
+                    <ellipse
+                      className="table__felt-debug-safe-ellipse"
+                      cx={safeFeltEllipse.cx}
+                      cy={safeFeltEllipse.cy}
+                      rx={safeFeltEllipse.rx}
+                      ry={safeFeltEllipse.ry}
+                    />
+                  ) : null}
                 </svg>
               ) : null}
               {stacks.map((stack, index) => {

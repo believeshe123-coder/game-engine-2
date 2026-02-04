@@ -121,13 +121,19 @@ export const useTableState = (tableRect, cardSize, initialSettings) => {
       nextStackIdRef.current = 1;
 
       const pushStack = (x, y, cardIds, faceUp) => {
-        const clamped = clampStackToFeltEllipse(
-          x,
-          y,
+        const centerX = x + cardSize.width / 2;
+        const centerY = y + cardSize.height / 2;
+        const clampedCenter = clampStackToFeltEllipse(
+          centerX,
+          centerY,
           cardSize.width,
           cardSize.height,
           feltEllipse
         );
+        const clamped = {
+          x: clampedCenter.x - cardSize.width / 2,
+          y: clampedCenter.y - cardSize.height / 2
+        };
         nextStacks.push({
           id: createStackId(),
           x: clamped.x,

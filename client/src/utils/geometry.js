@@ -65,14 +65,14 @@ export const clampStackToFeltEllipse = (x, y, stackW, stackH, feltEllipse) => {
   const cy = feltEllipse.cy ?? 0;
   const rx = feltEllipse.rx ?? 0;
   const ry = feltEllipse.ry ?? 0;
-  const sx = x + stackW / 2;
-  const sy = y + stackH / 2;
+  const sx = x;
+  const sy = y;
   const erx = rx - stackW / 2;
   const ery = ry - stackH / 2;
   if (erx <= 0 || ery <= 0) {
     return {
-      x: cx - stackW / 2,
-      y: cy - stackH / 2
+      x: cx,
+      y: cy
     };
   }
   const dx = sx - cx;
@@ -85,8 +85,8 @@ export const clampStackToFeltEllipse = (x, y, stackW, stackH, feltEllipse) => {
   const sx2 = cx + dx * k;
   const sy2 = cy + dy * k;
   return {
-    x: sx2 - stackW / 2,
-    y: sy2 - stackH / 2
+    x: sx2,
+    y: sy2
   };
 };
 
@@ -99,14 +99,14 @@ export const clampStackToFelt = (x, y, stackW, stackH, felt) => {
     const cy = felt.cy ?? 0;
     const rx = felt.rx ?? 0;
     const ry = felt.ry ?? 0;
-    const sx = x + stackW / 2;
-    const sy = y + stackH / 2;
+    const sx = x;
+    const sy = y;
     const erx = rx - stackW / 2;
     const ery = ry - stackH / 2;
     if (erx <= 0 || ery <= 0) {
       return {
-        x: cx - stackW / 2,
-        y: cy - stackH / 2
+        x: cx,
+        y: cy
       };
     }
     const dx = sx - cx;
@@ -119,8 +119,8 @@ export const clampStackToFelt = (x, y, stackW, stackH, felt) => {
     const sx2 = cx + dx * k;
     const sy2 = cy + dy * k;
     return {
-      x: sx2 - stackW / 2,
-      y: sy2 - stackH / 2
+      x: sx2,
+      y: sy2
     };
   }
   const bounds = felt.bounds ?? {
@@ -130,7 +130,7 @@ export const clampStackToFelt = (x, y, stackW, stackH, felt) => {
     bottom: (felt.h ?? 0)
   };
   return {
-    x: clamp(x, bounds.left, bounds.right - stackW),
-    y: clamp(y, bounds.top, bounds.bottom - stackH)
+    x: clamp(x, bounds.left + stackW / 2, bounds.right - stackW / 2),
+    y: clamp(y, bounds.top + stackH / 2, bounds.bottom - stackH / 2)
   };
 };

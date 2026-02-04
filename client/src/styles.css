@@ -187,10 +187,24 @@ body,
   z-index: 1;
 }
 
-.table__felt-debug ellipse {
+.table__felt-debug-rect {
+  fill: none;
+  stroke: rgba(130, 210, 255, 0.8);
+  stroke-width: 2;
+  stroke-dasharray: 6 6;
+}
+
+.table__felt-debug-ellipse {
   fill: none;
   stroke: rgba(236, 255, 130, 0.95);
   stroke-width: 3;
+}
+
+.table__felt-debug-safe-ellipse {
+  fill: none;
+  stroke: rgba(255, 160, 130, 0.95);
+  stroke-width: 2;
+  stroke-dasharray: 8 6;
 }
 
 .drag-layer {
