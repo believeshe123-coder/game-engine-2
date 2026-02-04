@@ -52,6 +52,7 @@ body,
 }
 
 #sceneRoot {
+  position: relative;
   transform: scale(var(--tableScale, 1));
   transform-origin: center center;
   will-change: transform;
@@ -139,6 +140,7 @@ body,
   width: var(--table-width);
   height: var(--table-height);
   z-index: 4;
+  overflow: visible;
 }
 
 .table__surface {
@@ -149,7 +151,7 @@ body,
   background: linear-gradient(135deg, #4c6b4c, #3f5a43);
   border-radius: 40px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .table__surface--plain {
@@ -163,6 +165,47 @@ body,
 
 .table__surface--oval {
   border-radius: 999px;
+}
+
+.table__felt {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.table__felt--debug {
+  outline: 2px dashed rgba(236, 255, 130, 0.85);
+  outline-offset: -2px;
+}
+
+.table__felt-debug {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.table__felt-debug ellipse {
+  fill: none;
+  stroke: rgba(236, 255, 130, 0.95);
+  stroke-width: 3;
+}
+
+.drag-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 30;
+}
+
+.drag-layer__inner {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
 }
 
 #stackLabelLayer {
