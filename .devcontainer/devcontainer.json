@@ -1,0 +1,12 @@
+{
+  "name": "game-engine-2",
+  "image": "mcr.microsoft.com/devcontainers/node:20",
+  "forwardPorts": [5173],
+  "portsAttributes": {
+    "5173": {
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "postCreateCommand": "cd client && npm install",
+  "postStartCommand": "cd client && npm run dev"
+}
