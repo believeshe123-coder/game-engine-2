@@ -21,7 +21,6 @@ const Table = () => {
   const tableFrameRef = useRef(null);
   const tableRef = useRef(null);
   const [tableRect, setTableRect] = useState({ width: 0, height: 0 });
-  const [tableFrameRect, setTableFrameRect] = useState({ width: 0, height: 0 });
   const pendingDragRef = useRef(null);
   const [settings, setSettings] = useState(() => loadSettings());
   const [appliedSettings, setAppliedSettings] = useState(() => loadSettings());
@@ -97,23 +96,70 @@ const Table = () => {
     });
   }, [seatCount]);
 
-  const seatPositions = useMemo(() => {
-    const count = seats.length;
-    if (!tableFrameRect.width || !tableFrameRect.height) {
-      return seats.map((seat) => ({ ...seat, x: 0, y: 0 }));
+  const [seatPositions, setSeatPositions] = useState(() =>
+    seats.map((seat) => ({ ...seat, x: 0, y: 0 }))
+  );
+
+  const layoutSeats = useCallback(() => {
+    const frameNode = tableFrameRef.current;
+    const tableNode = tableRef.current;
+    if (!frameNode || !tableNode) {
+      return;
     }
-    const tableCenterX = tableFrameRect.width / 2;
-    const tableCenterY = tableFrameRect.height / 2;
-    const ringRx =
-      tableFrameRect.width / 2 + SEAT_SIZE.width / 2 + SEAT_PADDING;
-    const ringRy =
-      tableFrameRect.height / 2 + SEAT_SIZE.height / 2 + SEAT_PADDING;
-    return seats.map((seat) => ({
-      ...seat,
-      x: tableCenterX + Math.cos(seat.angle) * ringRx,
-      y: tableCenterY + Math.sin(seat.angle) * ringRy
-    }));
-  }, [seats, tableFrameRect.height, tableFrameRect.width, tableShape]);
+    const frameRect = frameNode.getBoundingClientRect();
+    const tableBounds = tableNode.getBoundingClientRect();
+    if (
+      !frameRect.width ||
+      !frameRect.height ||
+      !tableBounds.width ||
+      !tableBounds.height
+    ) {
+      setSeatPositions(seats.map((seat) => ({ ...seat, x: 0, y: 0 })));
+      return;
+    }
+
+    const centerX =
+      tableBounds.left - frameRect.left + tableBounds.width / 2;
+    const centerY =
+      tableBounds.top - frameRect.top + tableBounds.height / 2;
+    const seatRadius = Math.max(SEAT_SIZE.width, SEAT_SIZE.height) / 2;
+    const seatPush = seatRadius + SEAT_PADDING;
+
+    setSeatPositions(
+      seats.map((seat) => {
+        const angle = seat.angle;
+        let edgeX = centerX;
+        let edgeY = centerY;
+
+        if (tableShape === 'oval') {
+          const rx = tableBounds.width / 2;
+          const ry = tableBounds.height / 2;
+          edgeX = centerX + Math.cos(angle) * rx;
+          edgeY = centerY + Math.sin(angle) * ry;
+          return {
+            ...seat,
+            x: edgeX + Math.cos(angle) * seatPush,
+            y: edgeY + Math.sin(angle) * seatPush
+          };
+        }
+
+        const dx = Math.cos(angle);
+        const dy = Math.sin(angle);
+        const hx = tableBounds.width / 2;
+        const hy = tableBounds.height / 2;
+        const tx = hx / Math.abs(dx || 1e-6);
+        const ty = hy / Math.abs(dy || 1e-6);
+        const t = Math.min(tx, ty);
+        edgeX = centerX + dx * t;
+        edgeY = centerY + dy * t;
+        return {
+          ...seat,
+          x: edgeX + dx * seatPush,
+          y: edgeY + dy * seatPush
+        };
+      })
+    );
+  }, [seats, tableShape]);
 
   useEffect(() => {
     if (!tableRef.current || !tableFrameRef.current) {
@@ -127,26 +173,32 @@ const Table = () => {
           width: entry.contentRect.width,
           height: entry.contentRect.height
         });
-      }
-    });
-
-    const frameObserver = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (entry?.contentRect) {
-        setTableFrameRect({
-          width: entry.contentRect.width,
-          height: entry.contentRect.height
-        });
+        layoutSeats();
       }
     });
 
     tableObserver.observe(tableRef.current);
+    const frameObserver = new ResizeObserver(() => {
+      layoutSeats();
+    });
     frameObserver.observe(tableFrameRef.current);
     return () => {
       tableObserver.disconnect();
       frameObserver.disconnect();
     };
-  }, []);
+  }, [layoutSeats]);
+
+  useEffect(() => {
+    layoutSeats();
+  }, [layoutSeats]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      layoutSeats();
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [layoutSeats]);
 
   const stacksById = useMemo(() => {
     return stacks.reduce((acc, stack) => {
@@ -793,7 +845,7 @@ const Table = () => {
       className={`table-frame table-frame--${tableStyle} table-frame--${tableShape}`}
       style={{ '--card-scale': CARD_SCALE }}
     >
-      <div className="table__seats" aria-label="Table seats">
+      <div id="seatLayer" className="table__seats" aria-label="Table seats">
         {seatPositions.map((seat) => {
           const occupied = occupiedSeats[seat.id];
           const seatStyle = {
