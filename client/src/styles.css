@@ -51,7 +51,7 @@ body,
   justify-content: center;
 }
 
-#tabletopViewport {
+#sceneRoot {
   transform: scale(var(--tableScale, 1));
   transform-origin: center center;
   will-change: transform;
@@ -578,14 +578,17 @@ body,
   background: rgba(24, 20, 16, 0.95);
   box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
   z-index: 15;
+  transform: translate(-50%, var(--stack-menu-offset, 0))
+    scale(calc(1 / var(--tableScale, 1)));
+  transform-origin: top center;
 }
 
 .stack-menu--above {
-  transform: translate(-50%, -100%);
+  --stack-menu-offset: -100%;
 }
 
 .stack-menu--below {
-  transform: translate(-50%, 0);
+  --stack-menu-offset: 0;
 }
 
 .stack-menu__button {
