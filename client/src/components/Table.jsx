@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Card from './Card.jsx';
+import { getFeltEllipseInTableSpace } from '../utils/geometry.js';
 import {
-  clampStackToFeltEllipse,
-  getFeltEllipseInTableSpace
-} from '../utils/geometry.js';
+  clampPointToFelt,
+  getFeltRect,
+  isPointInsideFelt
+} from '../geometry/feltBounds.js';
 import { useTableState } from '../state/useTableState.js';
 import { loadSettings, saveSettings } from '../state/tableSettings.js';
 
@@ -30,7 +33,7 @@ const Table = () => {
   const tableRef = useRef(null);
   const feltRef = useRef(null);
   const [tableRect, setTableRect] = useState({ width: 0, height: 0 });
-  const [tableOffset, setTableOffset] = useState({ x: 0, y: 0 });
+  const [tableScreenRect, setTableScreenRect] = useState(null);
   const [tableScale, setTableScale] = useState(1);
   const tableScaleRef = useRef(1);
   const pendingDragRef = useRef(null);
@@ -85,9 +88,11 @@ const Table = () => {
   const tableStyle = settings.roomSettings.tableStyle;
   const tableShape = settings.roomSettings.tableShape;
   const [feltEllipse, setFeltEllipse] = useState(null);
+  const [feltScreenRect, setFeltScreenRect] = useState(null);
+  const [debugClampPoint, setDebugClampPoint] = useState(null);
   const [showFeltDebug, setShowFeltDebug] = useState(false);
   const safeFeltEllipse = useMemo(() => {
-    if (!feltEllipse) {
+    if (!feltEllipse || tableShape !== 'oval') {
       return null;
     }
     const rxSafe = feltEllipse.rx - CARD_SIZE.width / 2;
@@ -100,7 +105,13 @@ const Table = () => {
       rx: rxSafe,
       ry: rySafe
     };
-  }, [feltEllipse]);
+  }, [feltEllipse, tableShape]);
+
+  useEffect(() => {
+    if (!showFeltDebug) {
+      setDebugClampPoint(null);
+    }
+  }, [showFeltDebug]);
 
   useEffect(() => {
     setOccupiedSeats((prev) => {
@@ -230,18 +241,11 @@ const Table = () => {
   const recomputeFeltGeometry = useCallback(() => {
     const tableNode = tableRef.current;
     const feltNode = feltRef.current;
-    const sceneRoot = sceneRootRef.current;
     const scale = tableScaleRef.current;
     if (tableNode && feltNode) {
       setFeltEllipse(getFeltEllipseInTableSpace(tableNode, feltNode, scale));
-    }
-    if (sceneRoot && tableNode) {
-      const sceneRect = sceneRoot.getBoundingClientRect();
-      const tableRectNode = tableNode.getBoundingClientRect();
-      setTableOffset({
-        x: (tableRectNode.left - sceneRect.left) / scale,
-        y: (tableRectNode.top - sceneRect.top) / scale
-      });
+      setFeltScreenRect(getFeltRect(feltNode));
+      setTableScreenRect(tableNode.getBoundingClientRect());
     }
   }, []);
 
@@ -331,33 +335,56 @@ const Table = () => {
     });
   }, [setStacks]);
 
-  const getHeldAnchorPosition = useCallback(
-    (pointerX, pointerY) => {
-      return {
-        x: pointerX - CARD_SIZE.width / 2,
-        y: pointerY - CARD_SIZE.height / 2
-      };
-    },
-    []
-  );
+  const getHeldTopLeft = useCallback((pointerX, pointerY, offset) => {
+    return {
+      x: pointerX - offset.dx,
+      y: pointerY - offset.dy
+    };
+  }, []);
 
   const clampTopLeftToFelt = useCallback(
-    (x, y) => {
-      const centerX = x + CARD_SIZE.width / 2;
-      const centerY = y + CARD_SIZE.height / 2;
-      const clampedCenter = clampStackToFeltEllipse(
-        centerX,
-        centerY,
-        CARD_SIZE.width,
-        CARD_SIZE.height,
-        feltEllipse
+    (topLeft) => {
+      if (!feltScreenRect || !tableScreenRect) {
+        return { position: topLeft, inside: true, clampedCenter: null };
+      }
+      const scale = tableScaleRef.current;
+      const cardSizePx = {
+        width: CARD_SIZE.width * scale,
+        height: CARD_SIZE.height * scale
+      };
+      const centerScreen = {
+        x: tableScreenRect.left + (topLeft.x + CARD_SIZE.width / 2) * scale,
+        y: tableScreenRect.top + (topLeft.y + CARD_SIZE.height / 2) * scale
+      };
+      const inside = isPointInsideFelt(
+        centerScreen.x,
+        centerScreen.y,
+        feltScreenRect,
+        tableShape,
+        cardSizePx
       );
+      const clampedCenter = clampPointToFelt(
+        centerScreen.x,
+        centerScreen.y,
+        feltScreenRect,
+        tableShape,
+        cardSizePx
+      );
+      const clampedTopLeft = {
+        x: (clampedCenter.x - cardSizePx.width / 2 - tableScreenRect.left) / scale,
+        y: (clampedCenter.y - cardSizePx.height / 2 - tableScreenRect.top) / scale
+      };
+      const clampedCenterLocal = {
+        x: (clampedCenter.x - tableScreenRect.left) / scale,
+        y: (clampedCenter.y - tableScreenRect.top) / scale
+      };
       return {
-        x: clampedCenter.x - CARD_SIZE.width / 2,
-        y: clampedCenter.y - CARD_SIZE.height / 2
+        position: inside ? topLeft : clampedTopLeft,
+        inside,
+        clampedCenter: clampedCenterLocal
       };
     },
-    [feltEllipse]
+    [feltScreenRect, tableScreenRect, tableShape]
   );
 
   const getTablePointerPosition = useCallback((event) => {
@@ -442,7 +469,7 @@ const Table = () => {
       if (!position) {
         return;
       }
-      const clamped = getHeldAnchorPosition(position.x, position.y);
+      const clamped = getHeldTopLeft(position.x, position.y, heldStack.offset);
 
       latestPoint.current = clamped;
       if (!rafRef.current) {
@@ -458,8 +485,9 @@ const Table = () => {
   }, [
     flushAnimation,
     getTablePointerPosition,
-    getHeldAnchorPosition,
-    heldStack.active
+    getHeldTopLeft,
+    heldStack.active,
+    heldStack.offset
   ]);
 
   const placeHeldStack = useCallback(
@@ -467,8 +495,14 @@ const Table = () => {
       if (!heldStack.active || !heldStack.stackId) {
         return;
       }
-      const rawPosition = getHeldAnchorPosition(pointerX, pointerY);
-      const finalPosition = clampTopLeftToFelt(rawPosition.x, rawPosition.y);
+      const rawPosition = getHeldTopLeft(pointerX, pointerY, heldStack.offset);
+      const { position: finalPosition, inside, clampedCenter } =
+        clampTopLeftToFelt(rawPosition);
+      if (showFeltDebug && !inside && clampedCenter) {
+        setDebugClampPoint(clampedCenter);
+      } else if (showFeltDebug) {
+        setDebugClampPoint(null);
+      }
 
       const draggedStack = stacksById[heldStack.stackId];
       if (draggedStack) {
@@ -529,7 +563,15 @@ const Table = () => {
         mode: 'stack'
       });
     },
-    [clampTopLeftToFelt, getHeldAnchorPosition, heldStack, setStacks, stacks, stacksById]
+    [
+      clampTopLeftToFelt,
+      getHeldTopLeft,
+      heldStack,
+      setStacks,
+      showFeltDebug,
+      stacks,
+      stacksById
+    ]
   );
 
   const dealOneFromHeld = useCallback(
@@ -550,8 +592,14 @@ const Table = () => {
         return;
       }
 
-      const rawPlacement = getHeldAnchorPosition(pointerX, pointerY);
-      const placement = clampTopLeftToFelt(rawPlacement.x, rawPlacement.y);
+      const rawPlacement = getHeldTopLeft(pointerX, pointerY, heldStack.offset);
+      const { position: placement, inside, clampedCenter } =
+        clampTopLeftToFelt(rawPlacement);
+      if (showFeltDebug && !inside && clampedCenter) {
+        setDebugClampPoint(clampedCenter);
+      } else if (showFeltDebug) {
+        setDebugClampPoint(null);
+      }
       const newStackId = createStackId();
       let removedCardId = null;
       let remainingCardIds = [];
@@ -642,7 +690,7 @@ const Table = () => {
         }));
       }
     },
-    [clampTopLeftToFelt, createStackId, getHeldAnchorPosition, heldStack, setStacks]
+    [clampTopLeftToFelt, createStackId, getHeldTopLeft, heldStack, setStacks, showFeltDebug]
   );
 
   const startHeldFullStack = useCallback(
@@ -651,26 +699,22 @@ const Table = () => {
       if (!stack) {
         return;
       }
-      const heldPosition = getHeldAnchorPosition(pointerX, pointerY);
-      latestPoint.current = heldPosition;
-      setStacks((prev) =>
-        prev.map((item) =>
-          item.id === stackId
-            ? { ...item, x: heldPosition.x, y: heldPosition.y }
-            : item
-        )
-      );
+      const offset = {
+        dx: pointerX - stack.x,
+        dy: pointerY - stack.y
+      };
+      latestPoint.current = { x: stack.x, y: stack.y };
       setHeldStack({
         active: true,
         stackId,
         cardIds: stack.cardIds,
         sourceStackId: stackId,
-        offset: { dx: 0, dy: 0 },
+        offset,
         origin: { x: stack.x, y: stack.y },
         mode: 'stack'
       });
     },
-    [getHeldAnchorPosition, setStacks, stacksById]
+    [stacksById]
   );
 
   useEffect(() => {
@@ -888,8 +932,9 @@ const Table = () => {
       let origin = null;
       let heldPosition = null;
       const position = getTablePointerPosition(event);
+      const offset = { dx: CARD_SIZE.width / 2, dy: CARD_SIZE.height / 2 };
       if (position) {
-        heldPosition = getHeldAnchorPosition(position.x, position.y);
+        heldPosition = getHeldTopLeft(position.x, position.y, offset);
       }
 
       setStacks((prev) => {
@@ -929,14 +974,14 @@ const Table = () => {
         stackId: newStackId,
         cardIds: pickedCardIds,
         sourceStackId: stackId,
-        offset: { dx: 0, dy: 0 },
+        offset,
         origin,
         mode: 'stack'
       });
       setSelectedStackId(null);
       setPickCountOpen(false);
     },
-    [createStackId, getHeldAnchorPosition, getTablePointerPosition, setStacks, stacksById]
+    [createStackId, getHeldTopLeft, getTablePointerPosition, setStacks, stacksById]
   );
 
   const handleFlipSelected = useCallback(() => {
@@ -956,15 +1001,30 @@ const Table = () => {
   const heldTopCardId = heldStackData?.cardIds[heldStackData.cardIds.length - 1];
   const heldTopCard = heldTopCardId ? cardsById[heldTopCardId] : null;
   const menuBelow = selectedStack ? selectedStack.y < 140 : false;
-  const menuPosition = selectedStack
-    ? {
-        left: selectedStack.x + CARD_SIZE.width / 2,
-        top: menuBelow
-          ? selectedStack.y + CARD_SIZE.height + 10
-          : selectedStack.y - 10
-      }
-    : null;
+  const menuPosition =
+    selectedStack && tableScreenRect
+      ? {
+          left:
+            tableScreenRect.left +
+            (selectedStack.x + CARD_SIZE.width / 2) * tableScale,
+          top:
+            tableScreenRect.top +
+            (menuBelow
+              ? selectedStack.y + CARD_SIZE.height + 10
+              : selectedStack.y - 10) *
+              tableScale
+        }
+      : null;
   const menuStackCount = selectedStack ? selectedStack.cardIds.length : 0;
+  const uiOverlayRoot =
+    typeof document !== 'undefined' ? document.getElementById('ui-overlay') : null;
+  const dragCardPosition =
+    heldStackData && tableScreenRect
+      ? {
+          x: tableScreenRect.left + heldStackData.x * tableScale,
+          y: tableScreenRect.top + heldStackData.y * tableScale
+        }
+      : null;
   return (
     <div className="tabletop">
       <div
@@ -1022,27 +1082,40 @@ const Table = () => {
                   viewBox={`0 0 ${tableRect.width} ${tableRect.height}`}
                   aria-hidden="true"
                 >
-                  <rect
-                    className="table__felt-debug-rect"
-                    x={feltEllipse.bounds?.left ?? 0}
-                    y={feltEllipse.bounds?.top ?? 0}
-                    width={feltEllipse.w}
-                    height={feltEllipse.h}
-                  />
-                  <ellipse
-                    className="table__felt-debug-ellipse"
-                    cx={feltEllipse.cx}
-                    cy={feltEllipse.cy}
-                    rx={feltEllipse.rx}
-                    ry={feltEllipse.ry}
-                  />
-                  {safeFeltEllipse ? (
-                    <ellipse
-                      className="table__felt-debug-safe-ellipse"
-                      cx={safeFeltEllipse.cx}
-                      cy={safeFeltEllipse.cy}
-                      rx={safeFeltEllipse.rx}
-                      ry={safeFeltEllipse.ry}
+                  {tableShape === 'rectangle' ? (
+                    <rect
+                      className="table__felt-debug-rect"
+                      x={feltEllipse.bounds?.left ?? 0}
+                      y={feltEllipse.bounds?.top ?? 0}
+                      width={feltEllipse.w}
+                      height={feltEllipse.h}
+                    />
+                  ) : (
+                    <>
+                      <ellipse
+                        className="table__felt-debug-ellipse"
+                        cx={feltEllipse.cx}
+                        cy={feltEllipse.cy}
+                        rx={feltEllipse.rx}
+                        ry={feltEllipse.ry}
+                      />
+                      {safeFeltEllipse ? (
+                        <ellipse
+                          className="table__felt-debug-safe-ellipse"
+                          cx={safeFeltEllipse.cx}
+                          cy={safeFeltEllipse.cy}
+                          rx={safeFeltEllipse.rx}
+                          ry={safeFeltEllipse.ry}
+                        />
+                      ) : null}
+                    </>
+                  )}
+                  {debugClampPoint ? (
+                    <circle
+                      className="table__felt-debug-clamp"
+                      cx={debugClampPoint.x}
+                      cy={debugClampPoint.y}
+                      r="8"
                     />
                   ) : null}
                 </svg>
@@ -1074,103 +1147,6 @@ const Table = () => {
                   />
                 );
               })}
-              {selectedStack && menuPosition ? (
-                <div
-                  className={`stack-menu ${menuBelow ? 'stack-menu--below' : 'stack-menu--above'}`}
-                  style={menuPosition}
-                  onPointerDown={(event) => event.stopPropagation()}
-                >
-                  <button
-                    type="button"
-                    className="stack-menu__button"
-                    onPointerDown={(event) =>
-                      pickUpFromStack(event, selectedStack.id, selectedStack.cardIds.length)
-                    }
-                  >
-                    Pick up full stack
-                  </button>
-                  <button
-                    type="button"
-                    className="stack-menu__button"
-                    onPointerDown={(event) => {
-                      const halfCount = Math.floor(selectedStack.cardIds.length / 2);
-                      if (halfCount < 1) {
-                        return;
-                      }
-                      pickUpFromStack(event, selectedStack.id, halfCount);
-                    }}
-                  >
-                    Pick up half stack
-                  </button>
-                  <button
-                    type="button"
-                    className="stack-menu__button"
-                    onPointerDown={(event) => pickUpFromStack(event, selectedStack.id, 1)}
-                  >
-                    Pick up 1 card
-                  </button>
-                  <button
-                    type="button"
-                    className="stack-menu__button"
-                    onClick={() => {
-                      setPickCountOpen(true);
-                      setPickCountValue('1');
-                    }}
-                  >
-                    Pick up N cards...
-                  </button>
-                  {pickCountOpen ? (
-                    <div className="stack-menu__picker">
-                      <label className="stack-menu__label" htmlFor="pick-count-input">
-                        Cards to pick up
-                      </label>
-                      <input
-                        id="pick-count-input"
-                        className="stack-menu__input"
-                        type="number"
-                        min="1"
-                        max={menuStackCount}
-                        value={pickCountValue}
-                        onChange={(event) => setPickCountValue(event.target.value)}
-                      />
-                      <div className="stack-menu__actions">
-                        <button
-                          type="button"
-                          className="stack-menu__button stack-menu__button--primary"
-                          onPointerDown={(event) => {
-                            const parsed = Number.parseInt(pickCountValue, 10);
-                            const count = Number.isNaN(parsed) ? 1 : parsed;
-                            pickUpFromStack(event, selectedStack.id, count);
-                          }}
-                        >
-                          Pick up
-                        </button>
-                        <button
-                          type="button"
-                          className="stack-menu__button stack-menu__button--secondary"
-                          onClick={() => setPickCountOpen(false)}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="stack-menu__button"
-                    onClick={handleFlipSelected}
-                  >
-                    Flip
-                  </button>
-                  <button
-                    type="button"
-                    className="stack-menu__button"
-                    onClick={handleShuffleSelected}
-                  >
-                    Shuffle
-                  </button>
-                </div>
-              ) : null}
             </div>
             <div id="stackLabelLayer" className="stack-label-layer" aria-hidden="true">
               {stacks.map((stack) => {
@@ -1200,30 +1176,32 @@ const Table = () => {
             </div>
           </div>
         </div>
-        {heldStackData ? (
-          <div className="drag-layer" aria-hidden="true">
-            <div
-              className="drag-layer__inner"
-              style={{ left: tableOffset.x, top: tableOffset.y }}
-            >
-              <Card
-                id={heldStackData.id}
-                x={heldStackData.x}
-                y={heldStackData.y}
-                rotation={heldStackData.rotation}
-                faceUp={heldStackData.faceUp}
-                cardStyle={appliedSettings.cardStyle}
-                zIndex={2000}
-                rank={heldTopCard?.rank}
-                suit={heldTopCard?.suit}
-                color={heldTopCard?.color}
-                isHeld
-                isSelected={false}
-                onPointerDown={handleStackPointerDown}
-              />
-            </div>
-          </div>
-        ) : null}
+        {heldStackData && uiOverlayRoot && dragCardPosition
+          ? createPortal(
+              <div
+                className="drag-layer"
+                aria-hidden="true"
+                style={{ '--card-scale': CARD_SCALE * tableScale }}
+              >
+                <Card
+                  id={heldStackData.id}
+                  x={dragCardPosition.x}
+                  y={dragCardPosition.y}
+                  rotation={heldStackData.rotation}
+                  faceUp={heldStackData.faceUp}
+                  cardStyle={appliedSettings.cardStyle}
+                  zIndex={2000}
+                  rank={heldTopCard?.rank}
+                  suit={heldTopCard?.suit}
+                  color={heldTopCard?.color}
+                  isHeld
+                  isSelected={false}
+                  onPointerDown={handleStackPointerDown}
+                />
+              </div>,
+              uiOverlayRoot
+            )
+          : null}
       </div>
       <div id="uiLayer">
         <div className="table-settings">
@@ -1454,6 +1432,106 @@ const Table = () => {
           ) : null}
         </div>
       </div>
+      {selectedStack && menuPosition && uiOverlayRoot
+        ? createPortal(
+            <div
+              className={`stack-menu ${menuBelow ? 'stack-menu--below' : 'stack-menu--above'}`}
+              style={menuPosition}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <button
+                type="button"
+                className="stack-menu__button"
+                onPointerDown={(event) =>
+                  pickUpFromStack(event, selectedStack.id, selectedStack.cardIds.length)
+                }
+              >
+                Pick up full stack
+              </button>
+              <button
+                type="button"
+                className="stack-menu__button"
+                onPointerDown={(event) => {
+                  const halfCount = Math.floor(selectedStack.cardIds.length / 2);
+                  if (halfCount < 1) {
+                    return;
+                  }
+                  pickUpFromStack(event, selectedStack.id, halfCount);
+                }}
+              >
+                Pick up half stack
+              </button>
+              <button
+                type="button"
+                className="stack-menu__button"
+                onPointerDown={(event) => pickUpFromStack(event, selectedStack.id, 1)}
+              >
+                Pick up 1 card
+              </button>
+              <button
+                type="button"
+                className="stack-menu__button"
+                onClick={() => {
+                  setPickCountOpen(true);
+                  setPickCountValue('1');
+                }}
+              >
+                Pick up N cards...
+              </button>
+              {pickCountOpen ? (
+                <div className="stack-menu__picker">
+                  <label className="stack-menu__label" htmlFor="pick-count-input">
+                    Cards to pick up
+                  </label>
+                  <input
+                    id="pick-count-input"
+                    className="stack-menu__input"
+                    type="number"
+                    min="1"
+                    max={menuStackCount}
+                    value={pickCountValue}
+                    onChange={(event) => setPickCountValue(event.target.value)}
+                  />
+                  <div className="stack-menu__actions">
+                    <button
+                      type="button"
+                      className="stack-menu__button stack-menu__button--primary"
+                      onPointerDown={(event) => {
+                        const parsed = Number.parseInt(pickCountValue, 10);
+                        const count = Number.isNaN(parsed) ? 1 : parsed;
+                        pickUpFromStack(event, selectedStack.id, count);
+                      }}
+                    >
+                      Pick up
+                    </button>
+                    <button
+                      type="button"
+                      className="stack-menu__button stack-menu__button--secondary"
+                      onClick={() => setPickCountOpen(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              <button
+                type="button"
+                className="stack-menu__button"
+                onClick={handleFlipSelected}
+              >
+                Flip
+              </button>
+              <button
+                type="button"
+                className="stack-menu__button"
+                onClick={handleShuffleSelected}
+              >
+                Shuffle
+              </button>
+            </div>,
+            uiOverlayRoot
+          )
+        : null}
     </div>
   );
 };

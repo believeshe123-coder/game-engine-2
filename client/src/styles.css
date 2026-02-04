@@ -63,6 +63,13 @@ body,
   z-index: 10;
 }
 
+#ui-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 999990;
+}
+
 .table-frame {
   --table-width: min(1100px, 90vw);
   --table-height: min(680px, 70vh);
@@ -207,19 +214,17 @@ body,
   stroke-dasharray: 8 6;
 }
 
-.drag-layer {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 30;
+.table__felt-debug-clamp {
+  fill: rgba(255, 120, 120, 0.9);
+  stroke: rgba(40, 20, 20, 0.7);
+  stroke-width: 2;
 }
 
-.drag-layer__inner {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 0;
-  height: 0;
+.drag-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 999998;
 }
 
 #stackLabelLayer {
@@ -625,7 +630,7 @@ body,
 }
 
 .stack-menu {
-  position: absolute;
+  position: fixed;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -634,9 +639,9 @@ body,
   border-radius: 12px;
   background: rgba(24, 20, 16, 0.95);
   box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
-  z-index: 15;
-  transform: translate(-50%, var(--stack-menu-offset, 0))
-    scale(calc(1 / var(--tableScale, 1)));
+  z-index: 999999;
+  pointer-events: auto;
+  transform: translate(-50%, var(--stack-menu-offset, 0));
   transform-origin: top center;
 }
 

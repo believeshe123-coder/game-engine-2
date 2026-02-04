@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { clampStackToFeltEllipse } from '../utils/geometry.js';
+import { clampStackToFelt, getFeltShape } from '../utils/geometry.js';
 import { DEFAULT_SETTINGS, normalizeSettings } from './tableSettings.js';
 
 const SUITS = [
@@ -83,6 +83,160 @@ const validateUniqueCardIds = (stacks) => {
   }
 };
 
+const applyRectangleLayout = ({
+  preset,
+  feltBounds,
+  cardSize,
+  deckCardIds,
+  allCardIds,
+  settings,
+  pushStack
+}) => {
+  const boundsWidth = feltBounds.width;
+  const boundsHeight = feltBounds.height;
+  if (preset === 'solitaire') {
+    const columnCount = 7;
+    const columnGap = 22;
+    const totalWidth =
+      columnCount * cardSize.width + (columnCount - 1) * columnGap;
+    const startX = (boundsWidth - totalWidth) / 2;
+    const startY = Math.max(140, boundsHeight * 0.32);
+    let remaining = [...allCardIds];
+
+    for (let col = 0; col < columnCount; col += 1) {
+      const cardCount = col + 1;
+      const columnCards = remaining.slice(0, cardCount);
+      remaining = remaining.slice(cardCount);
+      const x = startX + col * (cardSize.width + columnGap);
+      const y = startY;
+      pushStack(x, y, columnCards, true);
+    }
+
+    const stockX = Math.max(24, boundsWidth * 0.12);
+    const stockY = Math.max(24, boundsHeight * 0.12);
+    if (remaining.length > 0) {
+      pushStack(stockX, stockY, remaining, false);
+    }
+    return;
+  }
+
+  if (preset === 'grid') {
+    const padding = 24;
+    const gap = 12;
+    const cols = Math.max(
+      1,
+      Math.floor((boundsWidth - padding * 2 + gap) / (cardSize.width + gap))
+    );
+    const startX = padding;
+    const startY = padding;
+    allCardIds.forEach((cardId, index) => {
+      const col = index % cols;
+      const row = Math.floor(index / cols);
+      const x = startX + col * (cardSize.width + gap);
+      const y = startY + row * (cardSize.height + gap);
+      pushStack(x, y, [cardId], true);
+    });
+    return;
+  }
+
+  const deckGap = 18;
+  const totalWidth =
+    settings.deckCount * cardSize.width + (settings.deckCount - 1) * deckGap;
+  const startX = (boundsWidth - totalWidth) / 2;
+  const startY = boundsHeight / 2 - cardSize.height / 2;
+  const faceUp = !settings.resetFaceDown;
+  deckCardIds.forEach((deckIds, index) => {
+    const x = startX + index * (cardSize.width + deckGap);
+    const y = startY;
+    pushStack(x, y, deckIds, faceUp);
+  });
+};
+
+const applyOvalLayout = ({
+  preset,
+  feltBounds,
+  cardSize,
+  deckCardIds,
+  allCardIds,
+  settings,
+  pushStack
+}) => {
+  const boundsWidth = feltBounds.width;
+  const boundsHeight = feltBounds.height;
+  if (preset === 'solitaire') {
+    const columnCount = 7;
+    const columnGap = 22;
+    const totalWidth =
+      columnCount * cardSize.width + (columnCount - 1) * columnGap;
+    const startX = (boundsWidth - totalWidth) / 2;
+    const startY = Math.max(140, boundsHeight * 0.32);
+    let remaining = [...allCardIds];
+
+    for (let col = 0; col < columnCount; col += 1) {
+      const cardCount = col + 1;
+      const columnCards = remaining.slice(0, cardCount);
+      remaining = remaining.slice(cardCount);
+      const x = startX + col * (cardSize.width + columnGap);
+      const y = startY;
+      pushStack(x, y, columnCards, true);
+    }
+
+    const stockX = Math.max(24, boundsWidth * 0.12);
+    const stockY = Math.max(24, boundsHeight * 0.12);
+    if (remaining.length > 0) {
+      pushStack(stockX, stockY, remaining, false);
+    }
+    return;
+  }
+
+  if (preset === 'grid') {
+    const padding = 24;
+    const gap = 12;
+    const cols = Math.max(
+      1,
+      Math.floor((boundsWidth - padding * 2 + gap) / (cardSize.width + gap))
+    );
+    const startX = padding;
+    const startY = padding;
+    allCardIds.forEach((cardId, index) => {
+      const col = index % cols;
+      const row = Math.floor(index / cols);
+      const x = startX + col * (cardSize.width + gap);
+      const y = startY + row * (cardSize.height + gap);
+      pushStack(x, y, [cardId], true);
+    });
+    return;
+  }
+
+  const deckGap = 18;
+  const totalWidth =
+    settings.deckCount * cardSize.width + (settings.deckCount - 1) * deckGap;
+  const startX = (boundsWidth - totalWidth) / 2;
+  const startY = boundsHeight / 2 - cardSize.height / 2;
+  const faceUp = !settings.resetFaceDown;
+  deckCardIds.forEach((deckIds, index) => {
+    const x = startX + index * (cardSize.width + deckGap);
+    const y = startY;
+    pushStack(x, y, deckIds, faceUp);
+  });
+};
+
+const applyPresetLayout = (preset, tableShape, feltBounds, layout) => {
+  if (tableShape === 'rectangle') {
+    applyRectangleLayout({
+      preset,
+      feltBounds,
+      ...layout
+    });
+    return;
+  }
+  applyOvalLayout({
+    preset,
+    feltBounds,
+    ...layout
+  });
+};
+
 export const useTableState = (tableRect, cardSize, initialSettings) => {
   const [cardsById, setCardsById] = useState({});
   const [stacks, setStacks] = useState([]);
@@ -101,6 +255,7 @@ export const useTableState = (tableRect, cardSize, initialSettings) => {
         return;
       }
       const settings = normalizeSettings(settingsInput ?? DEFAULT_SETTINGS);
+      const tableShape = settings.roomSettings?.tableShape ?? 'rectangle';
       const {
         cardsById: nextCardsById,
         deckCardIds,
@@ -108,27 +263,23 @@ export const useTableState = (tableRect, cardSize, initialSettings) => {
       } = buildDecks(settings);
       const boundsWidth = tableRect.width;
       const boundsHeight = tableRect.height;
-      const feltEllipse = {
-        cx: boundsWidth / 2,
-        cy: boundsHeight / 2,
-        rx: boundsWidth / 2,
-        ry: boundsHeight / 2,
-        w: boundsWidth,
-        h: boundsHeight
-      };
-      const deckGap = 18;
+      const feltShape = getFeltShape({
+        width: boundsWidth,
+        height: boundsHeight,
+        shape: tableShape
+      });
       const nextStacks = [];
       nextStackIdRef.current = 1;
 
       const pushStack = (x, y, cardIds, faceUp) => {
         const centerX = x + cardSize.width / 2;
         const centerY = y + cardSize.height / 2;
-        const clampedCenter = clampStackToFeltEllipse(
+        const clampedCenter = clampStackToFelt(
           centerX,
           centerY,
           cardSize.width,
           cardSize.height,
-          feltEllipse
+          feltShape
         );
         const clamped = {
           x: clampedCenter.x - cardSize.width / 2,
@@ -144,59 +295,16 @@ export const useTableState = (tableRect, cardSize, initialSettings) => {
         });
       };
 
-      if (settings.presetLayout === 'solitaire') {
-        const columnCount = 7;
-        const columnGap = 22;
-        const totalWidth =
-          columnCount * cardSize.width + (columnCount - 1) * columnGap;
-        const startX = (boundsWidth - totalWidth) / 2;
-        const startY = Math.max(140, boundsHeight * 0.32);
-        let remaining = [...allCardIds];
-
-        for (let col = 0; col < columnCount; col += 1) {
-          const cardCount = col + 1;
-          const columnCards = remaining.slice(0, cardCount);
-          remaining = remaining.slice(cardCount);
-          const x = startX + col * (cardSize.width + columnGap);
-          const y = startY;
-          pushStack(x, y, columnCards, true);
-        }
-
-        const stockX = Math.max(24, boundsWidth * 0.12);
-        const stockY = Math.max(24, boundsHeight * 0.12);
-        if (remaining.length > 0) {
-          pushStack(stockX, stockY, remaining, false);
-        }
-      } else if (settings.presetLayout === 'grid') {
-        const padding = 24;
-        const gap = 12;
-        const cols = Math.max(
-          1,
-          Math.floor(
-            (boundsWidth - padding * 2 + gap) / (cardSize.width + gap)
-          )
-        );
-        const startX = padding;
-        const startY = padding;
-        allCardIds.forEach((cardId, index) => {
-          const col = index % cols;
-          const row = Math.floor(index / cols);
-          const x = startX + col * (cardSize.width + gap);
-          const y = startY + row * (cardSize.height + gap);
-          pushStack(x, y, [cardId], true);
-        });
-      } else {
-        const totalWidth =
-          settings.deckCount * cardSize.width + (settings.deckCount - 1) * deckGap;
-        const startX = (boundsWidth - totalWidth) / 2;
-        const startY = boundsHeight / 2 - cardSize.height / 2;
-        const faceUp = !settings.resetFaceDown;
-        deckCardIds.forEach((deckIds, index) => {
-          const x = startX + index * (cardSize.width + deckGap);
-          const y = startY;
-          pushStack(x, y, deckIds, faceUp);
-        });
-      }
+      applyPresetLayout(settings.presetLayout, tableShape, {
+        width: boundsWidth,
+        height: boundsHeight
+      }, {
+        cardSize,
+        deckCardIds,
+        allCardIds,
+        settings,
+        pushStack
+      });
 
       setCardsById(nextCardsById);
       setStacks(nextStacks);
