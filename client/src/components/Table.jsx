@@ -5,7 +5,10 @@ import { useTableState } from '../state/useTableState.js';
 import { loadSettings, saveSettings } from '../state/tableSettings.js';
 
 const CARD_SCALE = 0.8;
-const TABLETOP_SCALE = 0.9;
+const RIGHT_PANEL_SAFE_WIDTH = 340;
+const TABLETOP_MARGIN = 24;
+const MIN_TABLETOP_SCALE = 0.65;
+const MAX_TABLETOP_SCALE = 1;
 const BASE_CARD_SIZE = { width: 72, height: 104 };
 const CARD_SIZE = {
   width: BASE_CARD_SIZE.width * CARD_SCALE,
@@ -19,9 +22,12 @@ const SEAT_SIZE = { width: 120, height: 48 };
 const SEAT_PADDING = 24;
 
 const Table = () => {
+  const tabletopViewportRef = useRef(null);
   const tableFrameRef = useRef(null);
   const tableRef = useRef(null);
   const [tableRect, setTableRect] = useState({ width: 0, height: 0 });
+  const [tableScale, setTableScale] = useState(1);
+  const tableScaleRef = useRef(1);
   const pendingDragRef = useRef(null);
   const [settings, setSettings] = useState(() => loadSettings());
   const [appliedSettings, setAppliedSettings] = useState(() => loadSettings());
@@ -109,7 +115,7 @@ const Table = () => {
     }
     const frameRect = frameNode.getBoundingClientRect();
     const tableBounds = tableNode.getBoundingClientRect();
-    const scale = TABLETOP_SCALE;
+    const scale = tableScaleRef.current;
     const frameWidth = frameRect.width / scale;
     const frameHeight = frameRect.height / scale;
     const tableWidth = tableBounds.width / scale;
@@ -167,6 +173,39 @@ const Table = () => {
     );
   }, [seats, tableShape]);
 
+  const updateTabletopScale = useCallback(() => {
+    const frameNode = tableFrameRef.current;
+    const viewportNode = tabletopViewportRef.current;
+    if (!frameNode || !viewportNode) {
+      return;
+    }
+    const baseWidth = frameNode.offsetWidth;
+    const baseHeight = frameNode.offsetHeight;
+    if (!baseWidth || !baseHeight) {
+      return;
+    }
+
+    const availableWidth = Math.max(
+      0,
+      window.innerWidth - RIGHT_PANEL_SAFE_WIDTH - TABLETOP_MARGIN * 2
+    );
+    const availableHeight = Math.max(
+      0,
+      window.innerHeight - TABLETOP_MARGIN * 2
+    );
+    const nextScale = Math.max(
+      MIN_TABLETOP_SCALE,
+      Math.min(
+        MAX_TABLETOP_SCALE,
+        Math.min(availableWidth / baseWidth, availableHeight / baseHeight)
+      )
+    );
+
+    tableScaleRef.current = nextScale;
+    setTableScale(nextScale);
+    viewportNode.style.setProperty('--tableScale', nextScale.toString());
+  }, []);
+
   useEffect(() => {
     if (!tableRef.current || !tableFrameRef.current) {
       return;
@@ -180,12 +219,14 @@ const Table = () => {
           height: entry.contentRect.height
         });
         layoutSeats();
+        updateTabletopScale();
       }
     });
 
     tableObserver.observe(tableRef.current);
     const frameObserver = new ResizeObserver(() => {
       layoutSeats();
+      updateTabletopScale();
     });
     frameObserver.observe(tableFrameRef.current);
     return () => {
@@ -196,15 +237,21 @@ const Table = () => {
 
   useEffect(() => {
     layoutSeats();
-  }, [layoutSeats]);
+    updateTabletopScale();
+  }, [layoutSeats, updateTabletopScale]);
 
   useEffect(() => {
     const handleResize = () => {
       layoutSeats();
+      updateTabletopScale();
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [layoutSeats]);
+  }, [layoutSeats, updateTabletopScale]);
+
+  useEffect(() => {
+    updateTabletopScale();
+  }, [seatCount, tableShape, updateTabletopScale]);
 
   const stacksById = useMemo(() => {
     return stacks.reduce((acc, stack) => {
@@ -248,9 +295,9 @@ const Table = () => {
       const table = tableRef.current;
       const rect = table?.getBoundingClientRect();
       const boundsWidth =
-        tableRect.width || (rect?.width ? rect.width / TABLETOP_SCALE : 0);
+        tableRect.width || (rect?.width ? rect.width / tableScaleRef.current : 0);
       const boundsHeight =
-        tableRect.height || (rect?.height ? rect.height / TABLETOP_SCALE : 0);
+        tableRect.height || (rect?.height ? rect.height / tableScaleRef.current : 0);
       return clampCardToTable(
         nextX,
         nextY,
@@ -269,9 +316,10 @@ const Table = () => {
       return null;
     }
     const rect = table.getBoundingClientRect();
+    const scale = tableScaleRef.current;
     return {
-      x: (event.clientX - rect.left) / TABLETOP_SCALE,
-      y: (event.clientY - rect.top) / TABLETOP_SCALE
+      x: (event.clientX - rect.left) / scale,
+      y: (event.clientY - rect.top) / scale
     };
   }, []);
 
@@ -742,7 +790,8 @@ const Table = () => {
     setAppliedSettings(settings);
     rebuildTableFromSettings(settings);
     resetInteractionStates();
-  }, [rebuildTableFromSettings, resetInteractionStates, settings]);
+    updateTabletopScale();
+  }, [rebuildTableFromSettings, resetInteractionStates, settings, updateTabletopScale]);
 
   const toggleSeat = useCallback((seatId) => {
     setOccupiedSeats((prev) => ({
@@ -858,7 +907,11 @@ const Table = () => {
   const menuStackCount = selectedStack ? selectedStack.cardIds.length : 0;
   return (
     <div className="tabletop">
-      <div id="tabletopViewport">
+      <div
+        id="tabletopViewport"
+        ref={tabletopViewportRef}
+        style={{ '--tableScale': tableScale }}
+      >
         <div
           ref={tableFrameRef}
           className={`table-frame table-frame--${tableStyle} table-frame--${tableShape}`}

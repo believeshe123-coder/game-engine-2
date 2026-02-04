@@ -52,8 +52,9 @@ body,
 }
 
 #tabletopViewport {
-  transform: scale(0.9);
+  transform: scale(var(--tableScale, 1));
   transform-origin: center center;
+  will-change: transform;
 }
 
 #uiLayer {
