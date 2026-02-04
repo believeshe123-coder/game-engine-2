@@ -83,6 +83,7 @@ const Table = () => {
   });
   const rafRef = useRef(null);
   const latestPoint = useRef(null);
+  const latestPointerRef = useRef(null);
   const rightSweepRef = useRef({
     isRightDown: false,
     sweepActive: false,
@@ -504,6 +505,40 @@ const Table = () => {
     rafRef.current = null;
   }, [heldStack.active, heldStack.stackId, setStacks]);
 
+  const computeHeldPlacement = useCallback(
+    (pointerX, pointerY, options = {}) => {
+      const {
+        useCursorPlacement = false,
+        sweepDirection = null,
+        applySweepSpacing = false
+      } = options;
+      const rawPlacement = useCursorPlacement
+        ? { x: pointerX, y: pointerY }
+        : getHeldTopLeft(pointerX, pointerY, heldStack.offset);
+      const clampedInitial = clampTopLeftToFelt(rawPlacement);
+      let placement = clampedInitial.position ?? rawPlacement;
+      let clampedFinal = clampedInitial;
+      if (applySweepSpacing) {
+        placement = applySweepJitter(placement, sweepDirection);
+        const clampedJitter = clampTopLeftToFelt(placement);
+        placement = clampedJitter.position ?? placement;
+        placement = pushOutOfStackEps(placement, sweepDirection, stacks, heldStack.stackId);
+        clampedFinal = clampTopLeftToFelt(placement);
+        placement = clampedFinal.position ?? placement;
+      }
+      return { placement, clampedInitial, clampedFinal };
+    },
+    [
+      applySweepJitter,
+      clampTopLeftToFelt,
+      getHeldTopLeft,
+      heldStack.offset,
+      heldStack.stackId,
+      pushOutOfStackEps,
+      stacks
+    ]
+  );
+
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.repeat) {
@@ -543,9 +578,11 @@ const Table = () => {
       if (!heldStack.active || !heldStack.stackId) {
         return;
       }
-      const rawPosition = getHeldTopLeft(pointerX, pointerY, heldStack.offset);
-      const { position: finalPosition, inside, clampedCenter } =
-        clampTopLeftToFelt(rawPosition);
+      const { placement: finalPosition, clampedInitial } = computeHeldPlacement(
+        pointerX,
+        pointerY
+      );
+      const { inside, clampedCenter } = clampedInitial;
       if (showFeltDebug && !inside && clampedCenter) {
         setDebugClampPoint(clampedCenter);
       } else if (showFeltDebug) {
@@ -612,8 +649,7 @@ const Table = () => {
       });
     },
     [
-      clampTopLeftToFelt,
-      getHeldTopLeft,
+      computeHeldPlacement,
       heldStack,
       setStacks,
       showFeltDebug,
@@ -646,18 +682,16 @@ const Table = () => {
         applySweepSpacing = false,
         skipMerge = false
       } = options;
-      const rawPlacement = useCursorPlacement
-        ? { x: pointerX, y: pointerY }
-        : getHeldTopLeft(pointerX, pointerY, heldStack.offset);
-      const clampedInitial = clampTopLeftToFelt(rawPlacement);
-      let placement = clampedInitial.position ?? rawPlacement;
+      const { placement, clampedInitial, clampedFinal } = computeHeldPlacement(
+        pointerX,
+        pointerY,
+        {
+          useCursorPlacement,
+          sweepDirection,
+          applySweepSpacing
+        }
+      );
       if (applySweepSpacing) {
-        placement = applySweepJitter(placement, sweepDirection);
-        const clampedJitter = clampTopLeftToFelt(placement);
-        placement = clampedJitter.position ?? placement;
-        placement = pushOutOfStackEps(placement, sweepDirection, stacks, heldStack.stackId);
-        const clampedFinal = clampTopLeftToFelt(placement);
-        placement = clampedFinal.position ?? placement;
         if (showFeltDebug && !clampedFinal.inside && clampedFinal.clampedCenter) {
           setDebugClampPoint(clampedFinal.clampedCenter);
         } else if (showFeltDebug) {
@@ -763,12 +797,9 @@ const Table = () => {
       }
     },
     [
-      applySweepJitter,
-      clampTopLeftToFelt,
+      computeHeldPlacement,
       createStackId,
-      getHeldTopLeft,
       heldStack,
-      pushOutOfStackEps,
       setStacks,
       showFeltDebug,
       stacks
@@ -778,6 +809,7 @@ const Table = () => {
   useEffect(() => {
     if (!heldStack.active) {
       latestPoint.current = null;
+      latestPointerRef.current = null;
       if (rafRef.current) {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
@@ -794,6 +826,7 @@ const Table = () => {
       const clamped = getHeldTopLeft(position.x, position.y, heldStack.offset);
 
       latestPoint.current = clamped;
+      latestPointerRef.current = position;
       if (rightSweepRef.current.isRightDown && heldStack.cardIds.length > 0) {
         const now = performance.now();
         const sweep = rightSweepRef.current;
@@ -879,6 +912,7 @@ const Table = () => {
         dy: pointerY - stack.y
       };
       latestPoint.current = { x: stack.x, y: stack.y };
+      latestPointerRef.current = { x: pointerX, y: pointerY };
       setHeldStack({
         active: true,
         stackId,
@@ -1134,6 +1168,7 @@ const Table = () => {
       const offset = { dx: CARD_SIZE.width / 2, dy: CARD_SIZE.height / 2 };
       if (position) {
         heldPosition = getHeldTopLeft(position.x, position.y, offset);
+        latestPointerRef.current = position;
       }
 
       setStacks((prev) => {
@@ -1199,6 +1234,33 @@ const Table = () => {
     heldStack.active && heldStack.stackId ? stacksById[heldStack.stackId] : null;
   const heldTopCardId = heldStackData?.cardIds[heldStackData.cardIds.length - 1];
   const heldTopCard = heldTopCardId ? cardsById[heldTopCardId] : null;
+  const placementPointer =
+    latestPointerRef.current && heldStackData
+      ? latestPointerRef.current
+      : heldStackData
+        ? {
+            x: heldStackData.x + heldStack.offset.dx,
+            y: heldStackData.y + heldStack.offset.dy
+          }
+        : null;
+  const placementSweep = rightSweepRef.current;
+  const placementIsCursor = placementSweep.isRightDown;
+  const placementIsSweep = placementSweep.sweepActive;
+  const placementDirection =
+    placementIsSweep && placementPointer
+      ? getSweepDirection(
+          placementSweep.lastDropPos ?? placementSweep.downPos ?? placementPointer,
+          placementPointer
+        )
+      : null;
+  const placementGhost =
+    heldStack.active && heldStackData && placementPointer
+      ? computeHeldPlacement(placementPointer.x, placementPointer.y, {
+          useCursorPlacement: placementIsCursor,
+          sweepDirection: placementDirection,
+          applySweepSpacing: placementIsSweep
+        }).placement
+      : null;
   const menuBelow = selectedStack ? selectedStack.y < 140 : false;
   const menuPosition =
     selectedStack && tableScreenRect
@@ -1318,6 +1380,16 @@ const Table = () => {
                     />
                   ) : null}
                 </svg>
+              ) : null}
+              {placementGhost ? (
+                <div
+                  className="placement-ghost"
+                  aria-hidden="true"
+                  style={{
+                    transform: `translate(${placementGhost.x}px, ${placementGhost.y}px) rotate(${heldStackData.rotation}deg)`,
+                    zIndex: 0
+                  }}
+                />
               ) : null}
               {stacks.map((stack, index) => {
                 const topCardId = stack.cardIds[stack.cardIds.length - 1];
