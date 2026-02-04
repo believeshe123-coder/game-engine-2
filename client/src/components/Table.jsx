@@ -27,8 +27,10 @@ const SEAT_POSITION = {
 const SEAT_SIZE = { width: 120, height: 48 };
 const SEAT_PADDING = 24;
 const RIGHT_SWEEP_HOLD_MS = 120;
-const DROP_INTERVAL_MS = 80;
-const DROP_SPACING_FACTOR = 0.35;
+const SWEEP_MIN_INTERVAL_MS = 40;
+const SWEEP_MIN_DIST = 30;
+const STACK_EPS = 10;
+const SWEEP_JITTER = 6;
 
 const Table = () => {
   const sceneRootRef = useRef(null);
@@ -90,7 +92,66 @@ const Table = () => {
     lastDropPos: null
   });
   const DRAG_THRESHOLD = 8;
-  const dropSpacingPx = CARD_SIZE.width * DROP_SPACING_FACTOR;
+  const getSweepDirection = useCallback((from, to) => {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const magnitude = Math.hypot(dx, dy);
+    if (magnitude < 1e-3) {
+      return { x: 1, y: 0 };
+    }
+    return { x: dx / magnitude, y: dy / magnitude };
+  }, []);
+
+  const applySweepJitter = useCallback((position, direction) => {
+    if (!direction) {
+      return position;
+    }
+    const jitter = (Math.random() * 2 - 1) * SWEEP_JITTER;
+    const perpX = -direction.y;
+    const perpY = direction.x;
+    return {
+      x: position.x + perpX * jitter,
+      y: position.y + perpY * jitter
+    };
+  }, []);
+
+  const pushOutOfStackEps = useCallback(
+    (position, direction, stackList, excludedId) => {
+      if (!direction) {
+        return position;
+      }
+      let adjusted = { ...position };
+      const maxAttempts = 12;
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        const centerX = adjusted.x + CARD_SIZE.width / 2;
+        const centerY = adjusted.y + CARD_SIZE.height / 2;
+        const blocking = stackList.find((stack) => {
+          if (stack.id === excludedId) {
+            return false;
+          }
+          const stackCenterX = stack.x + CARD_SIZE.width / 2;
+          const stackCenterY = stack.y + CARD_SIZE.height / 2;
+          return Math.hypot(centerX - stackCenterX, centerY - stackCenterY) < STACK_EPS;
+        });
+        if (!blocking) {
+          break;
+        }
+        const blockingCenterX = blocking.x + CARD_SIZE.width / 2;
+        const blockingCenterY = blocking.y + CARD_SIZE.height / 2;
+        const distance = Math.hypot(
+          centerX - blockingCenterX,
+          centerY - blockingCenterY
+        );
+        const push = STACK_EPS - distance + 1;
+        adjusted = {
+          x: adjusted.x + direction.x * push,
+          y: adjusted.y + direction.y * push
+        };
+      }
+      return adjusted;
+    },
+    []
+  );
 
   const resetRightSweep = useCallback(() => {
     rightSweepRef.current = {
@@ -562,7 +623,7 @@ const Table = () => {
   );
 
   const dealOneFromHeld = useCallback(
-    (pointerX, pointerY) => {
+    (pointerX, pointerY, options = {}) => {
       if (!heldStack.active || !heldStack.stackId) {
         return;
       }
@@ -579,13 +640,35 @@ const Table = () => {
         return;
       }
 
-      const rawPlacement = getHeldTopLeft(pointerX, pointerY, heldStack.offset);
-      const { position: placement, inside, clampedCenter } =
-        clampTopLeftToFelt(rawPlacement);
-      if (showFeltDebug && !inside && clampedCenter) {
-        setDebugClampPoint(clampedCenter);
+      const {
+        useCursorPlacement = false,
+        sweepDirection = null,
+        applySweepSpacing = false,
+        skipMerge = false
+      } = options;
+      const rawPlacement = useCursorPlacement
+        ? { x: pointerX, y: pointerY }
+        : getHeldTopLeft(pointerX, pointerY, heldStack.offset);
+      const clampedInitial = clampTopLeftToFelt(rawPlacement);
+      let placement = clampedInitial.position ?? rawPlacement;
+      if (applySweepSpacing) {
+        placement = applySweepJitter(placement, sweepDirection);
+        const clampedJitter = clampTopLeftToFelt(placement);
+        placement = clampedJitter.position ?? placement;
+        placement = pushOutOfStackEps(placement, sweepDirection, stacks, heldStack.stackId);
+        const clampedFinal = clampTopLeftToFelt(placement);
+        placement = clampedFinal.position ?? placement;
+        if (showFeltDebug && !clampedFinal.inside && clampedFinal.clampedCenter) {
+          setDebugClampPoint(clampedFinal.clampedCenter);
+        } else if (showFeltDebug) {
+          setDebugClampPoint(null);
+        }
       } else if (showFeltDebug) {
-        setDebugClampPoint(null);
+        if (!clampedInitial.inside && clampedInitial.clampedCenter) {
+          setDebugClampPoint(clampedInitial.clampedCenter);
+        } else {
+          setDebugClampPoint(null);
+        }
       }
       const newStackId = createStackId();
       let removedCardId = null;
@@ -619,37 +702,39 @@ const Table = () => {
           .filter((stack) => stack.id !== heldStack.stackId || nextCardIds.length > 0)
           .concat(newStack);
 
-        let overlapId = null;
-        for (let i = next.length - 1; i >= 0; i -= 1) {
-          const stack = next[i];
-          if (stack.id === newStackId || stack.id === heldStack.stackId) {
-            continue;
+        if (!skipMerge) {
+          let overlapId = null;
+          for (let i = next.length - 1; i >= 0; i -= 1) {
+            const stack = next[i];
+            if (stack.id === newStackId || stack.id === heldStack.stackId) {
+              continue;
+            }
+            const overlaps =
+              newStack.x < stack.x + CARD_SIZE.width &&
+              newStack.x + CARD_SIZE.width > stack.x &&
+              newStack.y < stack.y + CARD_SIZE.height &&
+              newStack.y + CARD_SIZE.height > stack.y;
+            if (overlaps) {
+              overlapId = stack.id;
+              break;
+            }
           }
-          const overlaps =
-            newStack.x < stack.x + CARD_SIZE.width &&
-            newStack.x + CARD_SIZE.width > stack.x &&
-            newStack.y < stack.y + CARD_SIZE.height &&
-            newStack.y + CARD_SIZE.height > stack.y;
-          if (overlaps) {
-            overlapId = stack.id;
-            break;
-          }
-        }
 
-        if (overlapId) {
-          const target = next.find((stack) => stack.id === overlapId);
-          const dealt = next.find((stack) => stack.id === newStackId);
-          if (!target || !dealt) {
-            return next;
+          if (overlapId) {
+            const target = next.find((stack) => stack.id === overlapId);
+            const dealt = next.find((stack) => stack.id === newStackId);
+            if (!target || !dealt) {
+              return next;
+            }
+            const merged = {
+              ...target,
+              faceUp: dealt.faceUp ?? target.faceUp,
+              cardIds: [...target.cardIds, ...dealt.cardIds]
+            };
+            next = next
+              .filter((stack) => stack.id !== overlapId && stack.id !== newStackId)
+              .concat(merged);
           }
-          const merged = {
-            ...target,
-            faceUp: dealt.faceUp ?? target.faceUp,
-            cardIds: [...target.cardIds, ...dealt.cardIds]
-          };
-          next = next
-            .filter((stack) => stack.id !== overlapId && stack.id !== newStackId)
-            .concat(merged);
         }
 
         return next;
@@ -677,7 +762,17 @@ const Table = () => {
         }));
       }
     },
-    [clampTopLeftToFelt, createStackId, getHeldTopLeft, heldStack, setStacks, showFeltDebug]
+    [
+      applySweepJitter,
+      clampTopLeftToFelt,
+      createStackId,
+      getHeldTopLeft,
+      heldStack,
+      pushOutOfStackEps,
+      setStacks,
+      showFeltDebug,
+      stacks
+    ]
   );
 
   useEffect(() => {
@@ -705,7 +800,7 @@ const Table = () => {
         if (!sweep.sweepActive) {
           const downPos = sweep.downPos ?? position;
           const moved = Math.hypot(position.x - downPos.x, position.y - downPos.y);
-          if (now - sweep.downAtMs >= RIGHT_SWEEP_HOLD_MS || moved >= dropSpacingPx) {
+          if (now - sweep.downAtMs >= RIGHT_SWEEP_HOLD_MS || moved >= SWEEP_MIN_DIST) {
             sweep.sweepActive = true;
           }
         }
@@ -713,8 +808,14 @@ const Table = () => {
           const lastPos = sweep.lastDropPos ?? sweep.downPos ?? position;
           const distance = Math.hypot(position.x - lastPos.x, position.y - lastPos.y);
           const elapsed = now - sweep.lastDropAtMs;
-          if (distance >= dropSpacingPx && elapsed >= DROP_INTERVAL_MS) {
-            dealOneFromHeld(position.x, position.y);
+          if (distance >= SWEEP_MIN_DIST && elapsed >= SWEEP_MIN_INTERVAL_MS) {
+            const direction = getSweepDirection(lastPos, position);
+            dealOneFromHeld(position.x, position.y, {
+              useCursorPlacement: true,
+              sweepDirection: direction,
+              applySweepSpacing: true,
+              skipMerge: true
+            });
             sweep.lastDropAtMs = now;
             sweep.lastDropPos = position;
           }
@@ -739,7 +840,7 @@ const Table = () => {
     heldStack.cardIds.length,
     heldStack.offset,
     resetRightSweep,
-    dropSpacingPx
+    getSweepDirection
   ]);
 
   useEffect(() => {
@@ -858,7 +959,10 @@ const Table = () => {
               lastDropAtMs: now,
               lastDropPos: position
             };
-            dealOneFromHeld(position.x, position.y);
+            dealOneFromHeld(position.x, position.y, {
+              useCursorPlacement: true,
+              skipMerge: true
+            });
           }
         }
         return;
@@ -906,7 +1010,10 @@ const Table = () => {
               lastDropAtMs: now,
               lastDropPos: position
             };
-            dealOneFromHeld(position.x, position.y);
+            dealOneFromHeld(position.x, position.y, {
+              useCursorPlacement: true,
+              skipMerge: true
+            });
           }
         }
         return;
