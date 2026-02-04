@@ -26,6 +26,9 @@ const SEAT_POSITION = {
 };
 const SEAT_SIZE = { width: 120, height: 48 };
 const SEAT_PADDING = 24;
+const RIGHT_SWEEP_HOLD_MS = 120;
+const DROP_INTERVAL_MS = 80;
+const DROP_SPACING_FACTOR = 0.35;
 
 const Table = () => {
   const sceneRootRef = useRef(null);
@@ -78,7 +81,27 @@ const Table = () => {
   });
   const rafRef = useRef(null);
   const latestPoint = useRef(null);
+  const rightSweepRef = useRef({
+    isRightDown: false,
+    sweepActive: false,
+    downAtMs: 0,
+    downPos: null,
+    lastDropAtMs: 0,
+    lastDropPos: null
+  });
   const DRAG_THRESHOLD = 8;
+  const dropSpacingPx = CARD_SIZE.width * DROP_SPACING_FACTOR;
+
+  const resetRightSweep = useCallback(() => {
+    rightSweepRef.current = {
+      isRightDown: false,
+      sweepActive: false,
+      downAtMs: 0,
+      downPos: null,
+      lastDropAtMs: 0,
+      lastDropPos: null
+    };
+  }, []);
 
   useEffect(() => {
     saveSettings(settings);
@@ -461,6 +484,7 @@ const Table = () => {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
+      resetRightSweep();
       return undefined;
     }
 
@@ -472,6 +496,27 @@ const Table = () => {
       const clamped = getHeldTopLeft(position.x, position.y, heldStack.offset);
 
       latestPoint.current = clamped;
+      if (rightSweepRef.current.isRightDown && heldStack.cardIds.length > 0) {
+        const now = performance.now();
+        const sweep = rightSweepRef.current;
+        if (!sweep.sweepActive) {
+          const downPos = sweep.downPos ?? position;
+          const moved = Math.hypot(position.x - downPos.x, position.y - downPos.y);
+          if (now - sweep.downAtMs >= RIGHT_SWEEP_HOLD_MS || moved >= dropSpacingPx) {
+            sweep.sweepActive = true;
+          }
+        }
+        if (sweep.sweepActive) {
+          const lastPos = sweep.lastDropPos ?? sweep.downPos ?? position;
+          const distance = Math.hypot(position.x - lastPos.x, position.y - lastPos.y);
+          const elapsed = now - sweep.lastDropAtMs;
+          if (distance >= dropSpacingPx && elapsed >= DROP_INTERVAL_MS) {
+            dealOneFromHeld(position.x, position.y);
+            sweep.lastDropAtMs = now;
+            sweep.lastDropPos = position;
+          }
+        }
+      }
       if (!rafRef.current) {
         rafRef.current = requestAnimationFrame(flushAnimation);
       }
@@ -483,12 +528,38 @@ const Table = () => {
       window.removeEventListener('pointermove', handleWindowPointerMove);
     };
   }, [
+    dealOneFromHeld,
     flushAnimation,
     getTablePointerPosition,
     getHeldTopLeft,
     heldStack.active,
-    heldStack.offset
+    heldStack.cardIds.length,
+    heldStack.offset,
+    resetRightSweep,
+    dropSpacingPx
   ]);
+
+  useEffect(() => {
+    const handlePointerUp = () => {
+      if (rightSweepRef.current.isRightDown) {
+        resetRightSweep();
+      }
+    };
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+    window.addEventListener('blur', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+      window.removeEventListener('blur', handlePointerUp);
+    };
+  }, [resetRightSweep]);
+
+  useEffect(() => {
+    if (pickCountOpen || settingsOpen || roomSettingsOpen) {
+      resetRightSweep();
+    }
+  }, [pickCountOpen, resetRightSweep, roomSettingsOpen, settingsOpen]);
 
   const placeHeldStack = useCallback(
     (pointerX, pointerY) => {
@@ -775,6 +846,15 @@ const Table = () => {
           event.stopPropagation();
           const position = getTablePointerPosition(event);
           if (position) {
+            const now = performance.now();
+            rightSweepRef.current = {
+              isRightDown: true,
+              sweepActive: false,
+              downAtMs: now,
+              downPos: position,
+              lastDropAtMs: now,
+              lastDropPos: position
+            };
             dealOneFromHeld(position.x, position.y);
           }
         }
@@ -814,6 +894,15 @@ const Table = () => {
           event.stopPropagation();
           const position = getTablePointerPosition(event);
           if (position) {
+            const now = performance.now();
+            rightSweepRef.current = {
+              isRightDown: true,
+              sweepActive: false,
+              downAtMs: now,
+              downPos: position,
+              lastDropAtMs: now,
+              lastDropPos: position
+            };
             dealOneFromHeld(position.x, position.y);
           }
         }
