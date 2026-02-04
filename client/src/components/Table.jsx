@@ -83,7 +83,7 @@ const Table = () => {
   });
   const rafRef = useRef(null);
   const latestPoint = useRef(null);
-  const latestPointerRef = useRef(null);
+  const lastPointerRef = useRef({ x: 0, y: 0 });
   const rightSweepRef = useRef({
     isRightDown: false,
     sweepActive: false,
@@ -93,16 +93,6 @@ const Table = () => {
     lastDropPos: null
   });
   const DRAG_THRESHOLD = 8;
-  const getSweepDirection = useCallback((from, to) => {
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
-    const magnitude = Math.hypot(dx, dy);
-    if (magnitude < 1e-3) {
-      return { x: 1, y: 0 };
-    }
-    return { x: dx / magnitude, y: dy / magnitude };
-  }, []);
-
   const applySweepJitter = useCallback((position, direction) => {
     if (!direction) {
       return position;
@@ -476,7 +466,7 @@ const Table = () => {
     [feltScreenRect, tableScreenRect, tableShape]
   );
 
-  const getTablePointerPosition = useCallback((event) => {
+  const getTablePointerPositionFromClient = useCallback((clientX, clientY) => {
     const sceneRoot = sceneRootRef.current;
     const table = tableRef.current;
     if (!sceneRoot || !table) {
@@ -488,10 +478,16 @@ const Table = () => {
     const offsetX = (tableRect.left - sceneRect.left) / scale;
     const offsetY = (tableRect.top - sceneRect.top) / scale;
     return {
-      x: (event.clientX - sceneRect.left) / scale - offsetX,
-      y: (event.clientY - sceneRect.top) / scale - offsetY
+      x: (clientX - sceneRect.left) / scale - offsetX,
+      y: (clientY - sceneRect.top) / scale - offsetY
     };
   }, []);
+
+  const getTablePointerPosition = useCallback(
+    (event) =>
+      getTablePointerPositionFromClient(event.clientX, event.clientY),
+    [getTablePointerPositionFromClient]
+  );
 
   const flushAnimation = useCallback(() => {
     if (!heldStack.active || !heldStack.stackId || !latestPoint.current) {
@@ -509,23 +505,25 @@ const Table = () => {
     rafRef.current = null;
   }, [heldStack.active, heldStack.stackId, setStacks]);
 
-  const computeNextDropTransform = useCallback(
-    ({
-      pointerX,
-      pointerY,
-      useCursorPlacement = false,
-      sweepDirection = null,
-      applySweepSpacing = false
-    }) => {
+  const getDropTransformFromPointer = useCallback(
+    (clientX, clientY, heldStackState, options = {}) => {
+      const { sweepDirection = null, applySweepSpacing = false } = options;
+      if (!heldStackState?.active || !heldStackState?.stackId) {
+        return null;
+      }
+      const pointerPosition = getTablePointerPositionFromClient(clientX, clientY);
+      if (!pointerPosition) {
+        return null;
+      }
       const {
         rotation = 0,
         scale = 1
-      } = heldStack.active && heldStack.stackId
-        ? stacksById[heldStack.stackId] ?? {}
-        : {};
-      const rawPlacement = useCursorPlacement
-        ? { x: pointerX, y: pointerY }
-        : getHeldTopLeft(pointerX, pointerY, heldStack.offset);
+      } = stacksById[heldStackState.stackId] ?? {};
+      const rawPlacement = getHeldTopLeft(
+        pointerPosition.x,
+        pointerPosition.y,
+        heldStackState.offset
+      );
       const clampedInitial = clampTopLeftToFelt(rawPlacement);
       let placement = clampedInitial.position ?? rawPlacement;
       let clampedFinal = clampedInitial;
@@ -533,25 +531,29 @@ const Table = () => {
         placement = applySweepJitter(placement, sweepDirection);
         const clampedJitter = clampTopLeftToFelt(placement);
         placement = clampedJitter.position ?? placement;
-        placement = pushOutOfStackEps(placement, sweepDirection, stacks, heldStack.stackId);
+        placement = pushOutOfStackEps(
+          placement,
+          sweepDirection,
+          stacks,
+          heldStackState.stackId
+        );
         clampedFinal = clampTopLeftToFelt(placement);
         placement = clampedFinal.position ?? placement;
       }
       return {
-        placement,
+        x: placement.x,
+        y: placement.y,
+        rot: rotation,
+        scale,
         clampedInitial,
-        clampedFinal,
-        rotation,
-        scale
+        clampedFinal
       };
     },
     [
       applySweepJitter,
       clampTopLeftToFelt,
       getHeldTopLeft,
-      heldStack.offset,
-      heldStack.stackId,
-      heldStack.active,
+      getTablePointerPositionFromClient,
       pushOutOfStackEps,
       stacks,
       stacksById
@@ -611,15 +613,19 @@ const Table = () => {
   }, [heldStack.active, heldStack.origin, heldStack.stackId, setStacks]);
 
   const placeHeldStack = useCallback(
-    (pointerX, pointerY) => {
+    (clientX, clientY) => {
       if (!heldStack.active || !heldStack.stackId) {
         return;
       }
-      const placementResult = computeNextDropTransform({
-        pointerX,
-        pointerY
-      });
-      const { placement: finalPosition, clampedInitial, rotation } = placementResult;
+      const placementResult = getDropTransformFromPointer(
+        clientX,
+        clientY,
+        heldStack
+      );
+      if (!placementResult) {
+        return;
+      }
+      const { x: finalX, y: finalY, clampedInitial, rot } = placementResult;
       const { inside, clampedCenter } = clampedInitial;
       if (showFeltDebug && !inside && clampedCenter) {
         setDebugClampPoint(clampedCenter);
@@ -629,19 +635,19 @@ const Table = () => {
 
       const draggedStack = stacksById[heldStack.stackId];
       if (draggedStack) {
-        const draggedX = finalPosition?.x ?? draggedStack?.x;
-        const draggedY = finalPosition?.y ?? draggedStack?.y;
+        const draggedX = finalX ?? draggedStack?.x;
+        const draggedY = finalY ?? draggedStack?.y;
         logPlacementDebug(
           'placeStack',
           {
-            x: finalPosition?.x ?? draggedStack?.x,
-            y: finalPosition?.y ?? draggedStack?.y,
-            rotation
+            x: finalX ?? draggedStack?.x,
+            y: finalY ?? draggedStack?.y,
+            rotation: rot
           },
           {
             x: draggedX,
             y: draggedY,
-            rotation
+            rotation: rot
           }
         );
 
@@ -678,11 +684,11 @@ const Table = () => {
               .filter((stack) => stack.id !== heldStack.stackId && stack.id !== overlapId)
               .concat(merged);
           });
-        } else if (finalPosition) {
+        } else if (finalX !== null && finalX !== undefined) {
           setStacks((prev) =>
             prev.map((stack) =>
               stack.id === heldStack.stackId
-                ? { ...stack, x: finalPosition.x, y: finalPosition.y }
+                ? { ...stack, x: finalX, y: finalY }
                 : stack
             )
           );
@@ -700,7 +706,7 @@ const Table = () => {
       });
     },
     [
-      computeNextDropTransform,
+      getDropTransformFromPointer,
       heldStack,
       logPlacementDebug,
       setStacks,
@@ -711,7 +717,7 @@ const Table = () => {
   );
 
   const dealOneFromHeld = useCallback(
-    (pointerX, pointerY, options = {}) => {
+    (clientX, clientY, options = {}) => {
       if (!heldStack.active || !heldStack.stackId) {
         return;
       }
@@ -728,24 +734,19 @@ const Table = () => {
         return;
       }
 
-      const {
-        useCursorPlacement = false,
-        sweepDirection = null,
-        applySweepSpacing = false,
-        skipMerge = false
-      } = options;
-      const {
-        placement,
-        clampedInitial,
-        clampedFinal,
-        rotation
-      } = computeNextDropTransform({
-        pointerX,
-        pointerY,
-        useCursorPlacement,
-        sweepDirection,
-        applySweepSpacing
-      });
+      const { sweepDirection = null, applySweepSpacing = false, skipMerge = false } =
+        options;
+      const dropResult = getDropTransformFromPointer(
+        clientX,
+        clientY,
+        heldStack,
+        { sweepDirection, applySweepSpacing }
+      );
+      if (!dropResult) {
+        return;
+      }
+      const { x: placementX, y: placementY, clampedInitial, clampedFinal, rot } =
+        dropResult;
       if (applySweepSpacing) {
         if (showFeltDebug && !clampedFinal.inside && clampedFinal.clampedCenter) {
           setDebugClampPoint(clampedFinal.clampedCenter);
@@ -777,8 +778,8 @@ const Table = () => {
 
         const newStack = {
           id: newStackId,
-          x: placement?.x ?? currentHeld.x,
-          y: placement?.y ?? currentHeld.y,
+          x: placementX ?? currentHeld.x,
+          y: placementY ?? currentHeld.y,
           rotation: currentHeld.rotation,
           faceUp: currentHeld.faceUp,
           cardIds: [removedCardId]
@@ -787,9 +788,9 @@ const Table = () => {
         logPlacementDebug(
           'dealOne',
           {
-            x: placement?.x ?? currentHeld.x,
-            y: placement?.y ?? currentHeld.y,
-            rotation
+            x: placementX ?? currentHeld.x,
+            y: placementY ?? currentHeld.y,
+            rotation: rot
           },
           {
             x: newStack.x,
@@ -866,7 +867,7 @@ const Table = () => {
       }
     },
     [
-      computeNextDropTransform,
+      getDropTransformFromPointer,
       createStackId,
       heldStack,
       logPlacementDebug,
@@ -879,7 +880,6 @@ const Table = () => {
   useEffect(() => {
     if (!heldStack.active) {
       latestPoint.current = null;
-      latestPointerRef.current = null;
       if (rafRef.current) {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
@@ -893,34 +893,45 @@ const Table = () => {
       if (!position) {
         return;
       }
+      lastPointerRef.current = { x: event.clientX, y: event.clientY };
       const clamped = getHeldTopLeft(position.x, position.y, heldStack.offset);
 
       latestPoint.current = clamped;
-      latestPointerRef.current = position;
       if (rightSweepRef.current.isRightDown && heldStack.cardIds.length > 0) {
         const now = performance.now();
         const sweep = rightSweepRef.current;
+        const sweepPointer = lastPointerRef.current
+          ? getTablePointerPositionFromClient(
+              lastPointerRef.current.x,
+              lastPointerRef.current.y
+            )
+          : null;
+        if (!sweepPointer) {
+          return;
+        }
         if (!sweep.sweepActive) {
-          const downPos = sweep.downPos ?? position;
-          const moved = Math.hypot(position.x - downPos.x, position.y - downPos.y);
+          const downPos = sweep.downPos ?? sweepPointer;
+          const moved = Math.hypot(
+            sweepPointer.x - downPos.x,
+            sweepPointer.y - downPos.y
+          );
           if (now - sweep.downAtMs >= RIGHT_SWEEP_HOLD_MS || moved >= SWEEP_MIN_DIST) {
             sweep.sweepActive = true;
           }
         }
         if (sweep.sweepActive) {
-          const lastPos = sweep.lastDropPos ?? sweep.downPos ?? position;
-          const distance = Math.hypot(position.x - lastPos.x, position.y - lastPos.y);
+          const lastPos = sweep.lastDropPos ?? sweep.downPos ?? sweepPointer;
+          const distance = Math.hypot(
+            sweepPointer.x - lastPos.x,
+            sweepPointer.y - lastPos.y
+          );
           const elapsed = now - sweep.lastDropAtMs;
           if (distance >= SWEEP_MIN_DIST && elapsed >= SWEEP_MIN_INTERVAL_MS) {
-            const direction = getSweepDirection(lastPos, position);
-            dealOneFromHeld(position.x, position.y, {
-              useCursorPlacement: true,
-              sweepDirection: direction,
-              applySweepSpacing: true,
+            dealOneFromHeld(lastPointerRef.current.x, lastPointerRef.current.y, {
               skipMerge: true
             });
             sweep.lastDropAtMs = now;
-            sweep.lastDropPos = position;
+            sweep.lastDropPos = sweepPointer;
           }
         }
       }
@@ -938,12 +949,12 @@ const Table = () => {
     dealOneFromHeld,
     flushAnimation,
     getTablePointerPosition,
+    getTablePointerPositionFromClient,
     getHeldTopLeft,
     heldStack.active,
     heldStack.cardIds.length,
     heldStack.offset,
-    resetRightSweep,
-    getSweepDirection
+    resetRightSweep
   ]);
 
   useEffect(() => {
@@ -982,7 +993,6 @@ const Table = () => {
         dy: pointerY - stack.y
       };
       latestPoint.current = { x: stack.x, y: stack.y };
-      latestPointerRef.current = { x: pointerX, y: pointerY };
       setHeldStack({
         active: true,
         stackId,
@@ -1048,6 +1058,7 @@ const Table = () => {
 
   const handleStackPointerDown = useCallback(
     (event, stackIdOverride = null) => {
+      lastPointerRef.current = { x: event.clientX, y: event.clientY };
       if (event.button === 2) {
         if (heldStack.active) {
           event.preventDefault();
@@ -1063,8 +1074,7 @@ const Table = () => {
               lastDropAtMs: now,
               lastDropPos: position
             };
-            dealOneFromHeld(position.x, position.y, {
-              useCursorPlacement: true,
+            dealOneFromHeld(lastPointerRef.current.x, lastPointerRef.current.y, {
               skipMerge: true
             });
           }
@@ -1082,7 +1092,7 @@ const Table = () => {
       const pointerX = position.x;
       const pointerY = position.y;
       if (heldStack.active) {
-        placeHeldStack(pointerX, pointerY);
+        placeHeldStack(lastPointerRef.current.x, lastPointerRef.current.y);
         setSelectedStackId(null);
         setPickCountOpen(false);
         return;
@@ -1099,6 +1109,7 @@ const Table = () => {
 
   const handleSurfacePointerDown = useCallback(
     (event) => {
+      lastPointerRef.current = { x: event.clientX, y: event.clientY };
       if (event.button === 2) {
         if (heldStack.active) {
           event.preventDefault();
@@ -1114,8 +1125,7 @@ const Table = () => {
               lastDropAtMs: now,
               lastDropPos: position
             };
-            dealOneFromHeld(position.x, position.y, {
-              useCursorPlacement: true,
+            dealOneFromHeld(lastPointerRef.current.x, lastPointerRef.current.y, {
               skipMerge: true
             });
           }
@@ -1129,7 +1139,7 @@ const Table = () => {
       const pointerX = position.x;
       const pointerY = position.y;
       if (heldStack.active) {
-        placeHeldStack(pointerX, pointerY);
+        placeHeldStack(lastPointerRef.current.x, lastPointerRef.current.y);
         setSelectedStackId(null);
         setPickCountOpen(false);
         return;
@@ -1154,11 +1164,11 @@ const Table = () => {
 
   const handlePointerMoveHover = useCallback(
     (event) => {
-      if (heldStack.active) {
-        return;
-      }
       const position = getTablePointerPosition(event);
       if (!position) {
+        return;
+      }
+      if (heldStack.active) {
         return;
       }
       const pointerX = position.x;
@@ -1167,6 +1177,14 @@ const Table = () => {
       setHoveredStackId(stackId);
     },
     [getTablePointerPosition, heldStack.active, hitTestStack]
+  );
+
+  const handleSurfacePointerMove = useCallback(
+    (event) => {
+      lastPointerRef.current = { x: event.clientX, y: event.clientY };
+      handlePointerMoveHover(event);
+    },
+    [handlePointerMoveHover]
   );
 
   const badgeOffset = 24;
@@ -1238,7 +1256,6 @@ const Table = () => {
       const offset = { dx: CARD_SIZE.width / 2, dy: CARD_SIZE.height / 2 };
       if (position) {
         heldPosition = getHeldTopLeft(position.x, position.y, offset);
-        latestPointerRef.current = position;
       }
 
       setStacks((prev) => {
@@ -1304,34 +1321,14 @@ const Table = () => {
     heldStack.active && heldStack.stackId ? stacksById[heldStack.stackId] : null;
   const heldTopCardId = heldStackData?.cardIds[heldStackData.cardIds.length - 1];
   const heldTopCard = heldTopCardId ? cardsById[heldTopCardId] : null;
-  const placementPointer =
-    latestPointerRef.current && heldStackData
-      ? latestPointerRef.current
-      : heldStackData
-        ? {
-            x: heldStackData.x + heldStack.offset.dx,
-            y: heldStackData.y + heldStack.offset.dy
-          }
-        : null;
-  const placementSweep = rightSweepRef.current;
-  const placementIsCursor = placementSweep.isRightDown;
-  const placementIsSweep = placementSweep.sweepActive;
-  const placementDirection =
-    placementIsSweep && placementPointer
-      ? getSweepDirection(
-          placementSweep.lastDropPos ?? placementSweep.downPos ?? placementPointer,
-          placementPointer
-        )
-      : null;
+  const placementPointer = heldStackData ? lastPointerRef.current : null;
   const placementGhost =
     heldStack.active && heldStackData && placementPointer
-      ? computeNextDropTransform({
-          pointerX: placementPointer.x,
-          pointerY: placementPointer.y,
-          useCursorPlacement: placementIsCursor,
-          sweepDirection: placementDirection,
-          applySweepSpacing: placementIsSweep
-        })
+      ? getDropTransformFromPointer(
+          placementPointer.x,
+          placementPointer.y,
+          heldStack
+        )
       : null;
   const menuBelow = selectedStack ? selectedStack.y < 140 : false;
   const menuPosition =
@@ -1397,12 +1394,8 @@ const Table = () => {
               ref={tableRef}
               className={`table__surface table__surface--${tableStyle} table__surface--${tableShape}`}
               onPointerDown={handleSurfacePointerDown}
-              onPointerMove={handlePointerMoveHover}
-              onContextMenu={(event) => {
-                if (heldStack.active) {
-                  event.preventDefault();
-                }
-              }}
+              onPointerMove={handleSurfacePointerMove}
+              onContextMenu={(event) => event.preventDefault()}
             >
               <div
                 ref={feltRef}
@@ -1453,12 +1446,12 @@ const Table = () => {
                   ) : null}
                 </svg>
               ) : null}
-              {placementGhost?.placement ? (
+              {placementGhost ? (
                 <div
                   className="placement-ghost"
                   aria-hidden="true"
                   style={{
-                    transform: `translate(${placementGhost.placement.x}px, ${placementGhost.placement.y}px) rotate(${placementGhost.rotation}deg)`,
+                    transform: `translate(${placementGhost.x}px, ${placementGhost.y}px) rotate(${placementGhost.rot}deg)`,
                     zIndex: 0
                   }}
                 />
