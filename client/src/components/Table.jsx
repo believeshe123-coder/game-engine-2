@@ -4,15 +4,20 @@ import { clampCardToTable } from '../utils/geometry.js';
 import { useTableState } from '../state/useTableState.js';
 import { loadSettings, saveSettings } from '../state/tableSettings.js';
 
-const CARD_SIZE = { width: 72, height: 104 };
-const SEAT_POSITION = {
-  radiusX: 46,
-  radiusY: 38
+const CARD_SCALE = 0.8;
+const BASE_CARD_SIZE = { width: 72, height: 104 };
+const CARD_SIZE = {
+  width: BASE_CARD_SIZE.width * CARD_SCALE,
+  height: BASE_CARD_SIZE.height * CARD_SCALE
 };
+const SEAT_SIZE = { width: 120, height: 48 };
+const SEAT_PADDING = 24;
 
 const Table = () => {
+  const tableFrameRef = useRef(null);
   const tableRef = useRef(null);
   const [tableRect, setTableRect] = useState({ width: 0, height: 0 });
+  const [tableFrameRect, setTableFrameRect] = useState({ width: 0, height: 0 });
   const pendingDragRef = useRef(null);
   const [settings, setSettings] = useState(() => loadSettings());
   const [appliedSettings, setAppliedSettings] = useState(() => loadSettings());
@@ -62,6 +67,9 @@ const Table = () => {
   }, [settings]);
 
   const seatCount = settings.roomSettings.seatCount;
+  const tableStyle = settings.roomSettings.tableStyle;
+  // Table shape is visual-only for now; clamp logic remains rectangular.
+  const tableShape = settings.roomSettings.tableShape;
 
   useEffect(() => {
     setOccupiedSeats((prev) => {
@@ -75,18 +83,6 @@ const Table = () => {
 
   const seats = useMemo(() => {
     const count = Math.max(2, seatCount);
-    if (count === 8) {
-      return [
-        { id: 1, label: 'Seat 1', position: { left: '30%', top: '6%' } },
-        { id: 2, label: 'Seat 2', position: { left: '70%', top: '6%' } },
-        { id: 3, label: 'Seat 3', position: { left: '94%', top: '30%' } },
-        { id: 4, label: 'Seat 4', position: { left: '94%', top: '70%' } },
-        { id: 5, label: 'Seat 5', position: { left: '70%', top: '94%' } },
-        { id: 6, label: 'Seat 6', position: { left: '30%', top: '94%' } },
-        { id: 7, label: 'Seat 7', position: { left: '6%', top: '70%' } },
-        { id: 8, label: 'Seat 8', position: { left: '6%', top: '30%' } }
-      ];
-    }
     return Array.from({ length: count }, (_, index) => {
       const angle = (index / count) * Math.PI * 2 - Math.PI / 2;
       return {
@@ -97,12 +93,30 @@ const Table = () => {
     });
   }, [seatCount]);
 
+  const seatPositions = useMemo(() => {
+    const count = seats.length;
+    if (!tableFrameRect.width || !tableFrameRect.height) {
+      return seats.map((seat) => ({ ...seat, x: 0, y: 0 }));
+    }
+    const tableCenterX = tableFrameRect.width / 2;
+    const tableCenterY = tableFrameRect.height / 2;
+    const ringRx =
+      tableFrameRect.width / 2 + SEAT_SIZE.width / 2 + SEAT_PADDING;
+    const ringRy =
+      tableFrameRect.height / 2 + SEAT_SIZE.height / 2 + SEAT_PADDING;
+    return seats.map((seat) => ({
+      ...seat,
+      x: tableCenterX + Math.cos(seat.angle) * ringRx,
+      y: tableCenterY + Math.sin(seat.angle) * ringRy
+    }));
+  }, [seats, tableFrameRect.height, tableFrameRect.width, tableShape]);
+
   useEffect(() => {
-    if (!tableRef.current) {
+    if (!tableRef.current || !tableFrameRef.current) {
       return;
     }
 
-    const observer = new ResizeObserver((entries) => {
+    const tableObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (entry?.contentRect) {
         setTableRect({
@@ -112,8 +126,22 @@ const Table = () => {
       }
     });
 
-    observer.observe(tableRef.current);
-    return () => observer.disconnect();
+    const frameObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry?.contentRect) {
+        setTableFrameRect({
+          width: entry.contentRect.width,
+          height: entry.contentRect.height
+        });
+      }
+    });
+
+    tableObserver.observe(tableRef.current);
+    frameObserver.observe(tableFrameRef.current);
+    return () => {
+      tableObserver.disconnect();
+      frameObserver.disconnect();
+    };
   }, []);
 
   const stacksById = useMemo(() => {
@@ -755,23 +783,19 @@ const Table = () => {
       }
     : null;
   const menuStackCount = selectedStack ? selectedStack.cardIds.length : 0;
-  const tableStyle = settings.roomSettings.tableStyle;
-  // Table shape is visual-only for now; clamp logic remains rectangular.
-  const tableShape = settings.roomSettings.tableShape;
-
   return (
     <div
+      ref={tableFrameRef}
       className={`table-frame table-frame--${tableStyle} table-frame--${tableShape}`}
+      style={{ '--card-scale': CARD_SCALE }}
     >
       <div className="table__seats" aria-label="Table seats">
-        {seats.map((seat) => {
+        {seatPositions.map((seat) => {
           const occupied = occupiedSeats[seat.id];
-          const seatStyle = seat.position
-            ? seat.position
-            : {
-                left: `${50 + Math.cos(seat.angle) * SEAT_POSITION.radiusX}%`,
-                top: `${50 + Math.sin(seat.angle) * SEAT_POSITION.radiusY}%`
-              };
+          const seatStyle = {
+            left: `${seat.x}px`,
+            top: `${seat.y}px`
+          };
           return (
             <button
               key={seat.id}

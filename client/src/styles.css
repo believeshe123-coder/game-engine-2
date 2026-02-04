@@ -2,6 +2,9 @@
   font-family: 'Inter', system-ui, sans-serif;
   color: #f5f4f0;
   background-color: #1f1f1f;
+  --card-base-width: 72px;
+  --card-base-height: 104px;
+  --card-scale: 1;
 }
 
 * {
@@ -225,9 +228,9 @@ body,
 
 .card {
   position: absolute;
-  width: 72px;
-  height: 104px;
-  border-radius: 10px;
+  width: calc(var(--card-base-width) * var(--card-scale));
+  height: calc(var(--card-base-height) * var(--card-scale));
+  border-radius: calc(10px * var(--card-scale));
   background: transparent;
   border: 1px solid rgba(48, 34, 20, 0.65);
   box-shadow:
@@ -248,12 +251,22 @@ body,
 }
 
 .card--held {
-  filter: drop-shadow(4px 6px 8px rgba(0, 0, 0, 0.45));
+  filter: drop-shadow(
+    calc(4px * var(--card-scale))
+    calc(6px * var(--card-scale))
+    calc(8px * var(--card-scale))
+    rgba(0, 0, 0, 0.45)
+  );
 }
 
 .card__surface {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+  width: var(--card-base-width);
+  height: var(--card-base-height);
+  transform: scale(var(--card-scale));
+  transform-origin: top left;
   border-radius: 10px;
 }
 
