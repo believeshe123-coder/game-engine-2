@@ -10,6 +10,10 @@ const CARD_SIZE = {
   width: BASE_CARD_SIZE.width * CARD_SCALE,
   height: BASE_CARD_SIZE.height * CARD_SCALE
 };
+const SEAT_POSITION = {
+  radiusX: 46,
+  radiusY: 38
+};
 const SEAT_SIZE = { width: 120, height: 48 };
 const SEAT_PADDING = 24;
 
