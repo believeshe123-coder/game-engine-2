@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Card from './Card.jsx';
-import { clampCardToTable } from '../utils/geometry.js';
+import { clampStackToFelt, getFeltShape } from '../utils/geometry.js';
 import { useTableState } from '../state/useTableState.js';
 import { loadSettings, saveSettings } from '../state/tableSettings.js';
 
@@ -78,8 +78,10 @@ const Table = () => {
 
   const seatCount = settings.roomSettings.seatCount;
   const tableStyle = settings.roomSettings.tableStyle;
-  // Table shape is visual-only for now; clamp logic remains rectangular.
   const tableShape = settings.roomSettings.tableShape;
+  const [feltGeometry, setFeltGeometry] = useState(() =>
+    getFeltShape({ width: tableRect.width, height: tableRect.height, shape: tableShape })
+  );
 
   useEffect(() => {
     setOccupiedSeats((prev) => {
@@ -206,6 +208,15 @@ const Table = () => {
     sceneRootNode.style.setProperty('--tableScale', nextScale.toString());
   }, []);
 
+  const recomputeFeltGeometry = useCallback(() => {
+    const tableNode = tableRef.current;
+    const rect = tableNode?.getBoundingClientRect();
+    const scale = tableScaleRef.current;
+    const width = tableRect.width || (rect?.width ? rect.width / scale : 0);
+    const height = tableRect.height || (rect?.height ? rect.height / scale : 0);
+    setFeltGeometry(getFeltShape({ width, height, shape: tableShape }));
+  }, [tableRect.height, tableRect.width, tableShape]);
+
   useEffect(() => {
     if (!tableRef.current || !tableFrameRef.current) {
       return;
@@ -253,6 +264,10 @@ const Table = () => {
     updateTabletopScale();
   }, [seatCount, tableShape, updateTabletopScale]);
 
+  useEffect(() => {
+    recomputeFeltGeometry();
+  }, [recomputeFeltGeometry, tableRect.height, tableRect.width, tableScale, tableShape]);
+
   const stacksById = useMemo(() => {
     return stacks.reduce((acc, stack) => {
       acc[stack.id] = stack;
@@ -290,24 +305,12 @@ const Table = () => {
 
   const getHeldAnchorPosition = useCallback(
     (pointerX, pointerY) => {
-      const nextX = pointerX - CARD_SIZE.width / 2;
-      const nextY = pointerY - CARD_SIZE.height / 2;
-      const table = tableRef.current;
-      const rect = table?.getBoundingClientRect();
-      const boundsWidth =
-        tableRect.width || (rect?.width ? rect.width / tableScaleRef.current : 0);
-      const boundsHeight =
-        tableRect.height || (rect?.height ? rect.height / tableScaleRef.current : 0);
-      return clampCardToTable(
-        nextX,
-        nextY,
-        CARD_SIZE.width,
-        CARD_SIZE.height,
-        boundsWidth,
-        boundsHeight
-      );
+      return {
+        x: pointerX - CARD_SIZE.width / 2,
+        y: pointerY - CARD_SIZE.height / 2
+      };
     },
-    [tableRect.height, tableRect.width]
+    []
   );
 
   const getTablePointerPosition = useCallback((event) => {
@@ -417,7 +420,14 @@ const Table = () => {
       if (!heldStack.active || !heldStack.stackId) {
         return;
       }
-      const finalPosition = getHeldAnchorPosition(pointerX, pointerY);
+      const rawPosition = getHeldAnchorPosition(pointerX, pointerY);
+      const finalPosition = clampStackToFelt(
+        rawPosition.x,
+        rawPosition.y,
+        CARD_SIZE.width,
+        CARD_SIZE.height,
+        feltGeometry
+      );
 
       const draggedStack = stacksById[heldStack.stackId];
       if (draggedStack) {
@@ -478,7 +488,7 @@ const Table = () => {
         mode: 'stack'
       });
     },
-    [getHeldAnchorPosition, heldStack, setStacks, stacks, stacksById]
+    [feltGeometry, getHeldAnchorPosition, heldStack, setStacks, stacks, stacksById]
   );
 
   const dealOneFromHeld = useCallback(
@@ -499,7 +509,14 @@ const Table = () => {
         return;
       }
 
-      const placement = getHeldAnchorPosition(pointerX, pointerY);
+      const rawPlacement = getHeldAnchorPosition(pointerX, pointerY);
+      const placement = clampStackToFelt(
+        rawPlacement.x,
+        rawPlacement.y,
+        CARD_SIZE.width,
+        CARD_SIZE.height,
+        feltGeometry
+      );
       const newStackId = createStackId();
       let removedCardId = null;
       let remainingCardIds = [];
@@ -590,7 +607,7 @@ const Table = () => {
         }));
       }
     },
-    [createStackId, getHeldAnchorPosition, heldStack, setStacks]
+    [createStackId, feltGeometry, getHeldAnchorPosition, heldStack, setStacks]
   );
 
   const startHeldFullStack = useCallback(
