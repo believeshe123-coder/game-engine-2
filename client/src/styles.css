@@ -168,11 +168,17 @@ body,
   user-select: none;
 }
 
+#seatLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 7;
+}
+
 .table__seats {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 3;
 }
 
 .seat {
