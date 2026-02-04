@@ -477,90 +477,6 @@ const Table = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [heldStack.active, heldStack.origin, heldStack.stackId, setStacks]);
 
-  useEffect(() => {
-    if (!heldStack.active) {
-      latestPoint.current = null;
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-      resetRightSweep();
-      return undefined;
-    }
-
-    const handleWindowPointerMove = (event) => {
-      const position = getTablePointerPosition(event);
-      if (!position) {
-        return;
-      }
-      const clamped = getHeldTopLeft(position.x, position.y, heldStack.offset);
-
-      latestPoint.current = clamped;
-      if (rightSweepRef.current.isRightDown && heldStack.cardIds.length > 0) {
-        const now = performance.now();
-        const sweep = rightSweepRef.current;
-        if (!sweep.sweepActive) {
-          const downPos = sweep.downPos ?? position;
-          const moved = Math.hypot(position.x - downPos.x, position.y - downPos.y);
-          if (now - sweep.downAtMs >= RIGHT_SWEEP_HOLD_MS || moved >= dropSpacingPx) {
-            sweep.sweepActive = true;
-          }
-        }
-        if (sweep.sweepActive) {
-          const lastPos = sweep.lastDropPos ?? sweep.downPos ?? position;
-          const distance = Math.hypot(position.x - lastPos.x, position.y - lastPos.y);
-          const elapsed = now - sweep.lastDropAtMs;
-          if (distance >= dropSpacingPx && elapsed >= DROP_INTERVAL_MS) {
-            dealOneFromHeld(position.x, position.y);
-            sweep.lastDropAtMs = now;
-            sweep.lastDropPos = position;
-          }
-        }
-      }
-      if (!rafRef.current) {
-        rafRef.current = requestAnimationFrame(flushAnimation);
-      }
-    };
-
-    window.addEventListener('pointermove', handleWindowPointerMove);
-
-    return () => {
-      window.removeEventListener('pointermove', handleWindowPointerMove);
-    };
-  }, [
-    dealOneFromHeld,
-    flushAnimation,
-    getTablePointerPosition,
-    getHeldTopLeft,
-    heldStack.active,
-    heldStack.cardIds.length,
-    heldStack.offset,
-    resetRightSweep,
-    dropSpacingPx
-  ]);
-
-  useEffect(() => {
-    const handlePointerUp = () => {
-      if (rightSweepRef.current.isRightDown) {
-        resetRightSweep();
-      }
-    };
-    window.addEventListener('pointerup', handlePointerUp);
-    window.addEventListener('pointercancel', handlePointerUp);
-    window.addEventListener('blur', handlePointerUp);
-    return () => {
-      window.removeEventListener('pointerup', handlePointerUp);
-      window.removeEventListener('pointercancel', handlePointerUp);
-      window.removeEventListener('blur', handlePointerUp);
-    };
-  }, [resetRightSweep]);
-
-  useEffect(() => {
-    if (pickCountOpen || settingsOpen || roomSettingsOpen) {
-      resetRightSweep();
-    }
-  }, [pickCountOpen, resetRightSweep, roomSettingsOpen, settingsOpen]);
-
   const placeHeldStack = useCallback(
     (pointerX, pointerY) => {
       if (!heldStack.active || !heldStack.stackId) {
@@ -763,6 +679,93 @@ const Table = () => {
     },
     [clampTopLeftToFelt, createStackId, getHeldTopLeft, heldStack, setStacks, showFeltDebug]
   );
+
+  useEffect(() => {
+    if (!heldStack.active) {
+      latestPoint.current = null;
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      resetRightSweep();
+      return undefined;
+    }
+
+    const handleWindowPointerMove = (event) => {
+      const position = getTablePointerPosition(event);
+      if (!position) {
+        return;
+      }
+      const clamped = getHeldTopLeft(position.x, position.y, heldStack.offset);
+
+      latestPoint.current = clamped;
+      if (rightSweepRef.current.isRightDown && heldStack.cardIds.length > 0) {
+        const now = performance.now();
+        const sweep = rightSweepRef.current;
+        if (!sweep.sweepActive) {
+          const downPos = sweep.downPos ?? position;
+          const moved = Math.hypot(position.x - downPos.x, position.y - downPos.y);
+          if (now - sweep.downAtMs >= RIGHT_SWEEP_HOLD_MS || moved >= dropSpacingPx) {
+            sweep.sweepActive = true;
+          }
+        }
+        if (sweep.sweepActive) {
+          const lastPos = sweep.lastDropPos ?? sweep.downPos ?? position;
+          const distance = Math.hypot(position.x - lastPos.x, position.y - lastPos.y);
+          const elapsed = now - sweep.lastDropAtMs;
+          if (distance >= dropSpacingPx && elapsed >= DROP_INTERVAL_MS) {
+            dealOneFromHeld(position.x, position.y);
+            sweep.lastDropAtMs = now;
+            sweep.lastDropPos = position;
+          }
+        }
+      }
+      if (!rafRef.current) {
+        rafRef.current = requestAnimationFrame(flushAnimation);
+      }
+    };
+
+    window.addEventListener('pointermove', handleWindowPointerMove);
+
+    return () => {
+      window.removeEventListener('pointermove', handleWindowPointerMove);
+    };
+  }, [
+    dealOneFromHeld,
+    flushAnimation,
+    getTablePointerPosition,
+    getHeldTopLeft,
+    heldStack.active,
+    heldStack.cardIds.length,
+    heldStack.offset,
+    resetRightSweep,
+    dropSpacingPx
+  ]);
+
+  useEffect(() => {
+    if (!heldStack.active) {
+      return undefined;
+    }
+    const handlePointerUp = () => {
+      if (rightSweepRef.current.isRightDown) {
+        resetRightSweep();
+      }
+    };
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+    window.addEventListener('blur', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+      window.removeEventListener('blur', handlePointerUp);
+    };
+  }, [heldStack.active, resetRightSweep]);
+
+  useEffect(() => {
+    if (pickCountOpen || settingsOpen || roomSettingsOpen) {
+      resetRightSweep();
+    }
+  }, [pickCountOpen, resetRightSweep, roomSettingsOpen, settingsOpen]);
 
   const startHeldFullStack = useCallback(
     (stackId, pointerX, pointerY) => {
