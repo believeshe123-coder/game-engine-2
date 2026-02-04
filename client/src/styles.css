@@ -220,6 +220,18 @@ body,
   stroke-width: 2;
 }
 
+.placement-ghost {
+  position: absolute;
+  width: calc(var(--card-base-width) * var(--card-scale));
+  height: calc(var(--card-base-height) * var(--card-scale));
+  border-radius: calc(10px * var(--card-scale));
+  background: rgba(0, 0, 0, 0.18);
+  box-shadow:
+    0 10px 16px rgba(0, 0, 0, 0.25),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
 .drag-layer {
   position: fixed;
   inset: 0;
