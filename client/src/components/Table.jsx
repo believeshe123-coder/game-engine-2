@@ -5,6 +5,7 @@ import { useTableState } from '../state/useTableState.js';
 import { loadSettings, saveSettings } from '../state/tableSettings.js';
 
 const CARD_SCALE = 0.8;
+const TABLETOP_SCALE = 0.9;
 const BASE_CARD_SIZE = { width: 72, height: 104 };
 const CARD_SIZE = {
   width: BASE_CARD_SIZE.width * CARD_SCALE,
@@ -108,20 +109,25 @@ const Table = () => {
     }
     const frameRect = frameNode.getBoundingClientRect();
     const tableBounds = tableNode.getBoundingClientRect();
+    const scale = TABLETOP_SCALE;
+    const frameWidth = frameRect.width / scale;
+    const frameHeight = frameRect.height / scale;
+    const tableWidth = tableBounds.width / scale;
+    const tableHeight = tableBounds.height / scale;
+    const tableOffsetX = (tableBounds.left - frameRect.left) / scale;
+    const tableOffsetY = (tableBounds.top - frameRect.top) / scale;
     if (
-      !frameRect.width ||
-      !frameRect.height ||
-      !tableBounds.width ||
-      !tableBounds.height
+      !frameWidth ||
+      !frameHeight ||
+      !tableWidth ||
+      !tableHeight
     ) {
       setSeatPositions(seats.map((seat) => ({ ...seat, x: 0, y: 0 })));
       return;
     }
 
-    const centerX =
-      tableBounds.left - frameRect.left + tableBounds.width / 2;
-    const centerY =
-      tableBounds.top - frameRect.top + tableBounds.height / 2;
+    const centerX = tableOffsetX + tableWidth / 2;
+    const centerY = tableOffsetY + tableHeight / 2;
     const seatRadius = Math.max(SEAT_SIZE.width, SEAT_SIZE.height) / 2;
     const seatPush = seatRadius + SEAT_PADDING;
 
@@ -132,8 +138,8 @@ const Table = () => {
         let edgeY = centerY;
 
         if (tableShape === 'oval') {
-          const rx = tableBounds.width / 2;
-          const ry = tableBounds.height / 2;
+          const rx = tableWidth / 2;
+          const ry = tableHeight / 2;
           edgeX = centerX + Math.cos(angle) * rx;
           edgeY = centerY + Math.sin(angle) * ry;
           return {
@@ -145,8 +151,8 @@ const Table = () => {
 
         const dx = Math.cos(angle);
         const dy = Math.sin(angle);
-        const hx = tableBounds.width / 2;
-        const hy = tableBounds.height / 2;
+        const hx = tableWidth / 2;
+        const hy = tableHeight / 2;
         const tx = hx / Math.abs(dx || 1e-6);
         const ty = hy / Math.abs(dy || 1e-6);
         const t = Math.min(tx, ty);
@@ -241,8 +247,10 @@ const Table = () => {
       const nextY = pointerY - CARD_SIZE.height / 2;
       const table = tableRef.current;
       const rect = table?.getBoundingClientRect();
-      const boundsWidth = tableRect.width || rect?.width || 0;
-      const boundsHeight = tableRect.height || rect?.height || 0;
+      const boundsWidth =
+        tableRect.width || (rect?.width ? rect.width / TABLETOP_SCALE : 0);
+      const boundsHeight =
+        tableRect.height || (rect?.height ? rect.height / TABLETOP_SCALE : 0);
       return clampCardToTable(
         nextX,
         nextY,
@@ -254,6 +262,18 @@ const Table = () => {
     },
     [tableRect.height, tableRect.width]
   );
+
+  const getTablePointerPosition = useCallback((event) => {
+    const table = tableRef.current;
+    if (!table) {
+      return null;
+    }
+    const rect = table.getBoundingClientRect();
+    return {
+      x: (event.clientX - rect.left) / TABLETOP_SCALE,
+      y: (event.clientY - rect.top) / TABLETOP_SCALE
+    };
+  }, []);
 
   const flushAnimation = useCallback(() => {
     if (!heldStack.active || !heldStack.stackId || !latestPoint.current) {
@@ -316,14 +336,11 @@ const Table = () => {
     }
 
     const handleWindowPointerMove = (event) => {
-      const table = tableRef.current;
-      if (!table) {
+      const position = getTablePointerPosition(event);
+      if (!position) {
         return;
       }
-      const rect = table.getBoundingClientRect();
-      const pointerX = event.clientX - rect.left;
-      const pointerY = event.clientY - rect.top;
-      const clamped = getHeldAnchorPosition(pointerX, pointerY);
+      const clamped = getHeldAnchorPosition(position.x, position.y);
 
       latestPoint.current = clamped;
       if (!rafRef.current) {
@@ -338,6 +355,7 @@ const Table = () => {
     };
   }, [
     flushAnimation,
+    getTablePointerPosition,
     getHeldAnchorPosition,
     heldStack.active
   ]);
@@ -561,13 +579,12 @@ const Table = () => {
       if (!pending) {
         return;
       }
-      const table = tableRef.current;
-      if (!table) {
+      const position = getTablePointerPosition(event);
+      if (!position) {
         return;
       }
-      const rect = table.getBoundingClientRect();
-      const pointerX = event.clientX - rect.left;
-      const pointerY = event.clientY - rect.top;
+      const pointerX = position.x;
+      const pointerY = position.y;
       const deltaX = pointerX - pending.startX;
       const deltaY = pointerY - pending.startY;
       const distance = Math.hypot(deltaX, deltaY);
@@ -600,23 +617,18 @@ const Table = () => {
       window.removeEventListener('pointermove', handlePendingPointerMove);
       window.removeEventListener('pointerup', handlePendingPointerUp);
     };
-  }, [bringStackToFront, pendingDragActive, startHeldFullStack]);
+  }, [bringStackToFront, getTablePointerPosition, pendingDragActive, startHeldFullStack]);
 
   const handleStackPointerDown = useCallback(
     (event, stackIdOverride = null) => {
-      const table = tableRef.current;
-      if (!table) {
-        return;
-      }
-
       if (event.button === 2) {
         if (heldStack.active) {
           event.preventDefault();
           event.stopPropagation();
-          const rect = table.getBoundingClientRect();
-          const pointerX = event.clientX - rect.left;
-          const pointerY = event.clientY - rect.top;
-          dealOneFromHeld(pointerX, pointerY);
+          const position = getTablePointerPosition(event);
+          if (position) {
+            dealOneFromHeld(position.x, position.y);
+          }
         }
         return;
       }
@@ -624,9 +636,12 @@ const Table = () => {
       event.preventDefault();
       event.stopPropagation();
 
-      const rect = table.getBoundingClientRect();
-      const pointerX = event.clientX - rect.left;
-      const pointerY = event.clientY - rect.top;
+      const position = getTablePointerPosition(event);
+      if (!position) {
+        return;
+      }
+      const pointerX = position.x;
+      const pointerY = position.y;
       if (heldStack.active) {
         placeHeldStack(pointerX, pointerY);
         setSelectedStackId(null);
@@ -640,29 +655,28 @@ const Table = () => {
       pendingDragRef.current = { stackId, startX: pointerX, startY: pointerY };
       setPendingDragActive(true);
     },
-    [dealOneFromHeld, heldStack.active, hitTestStack, placeHeldStack]
+    [dealOneFromHeld, getTablePointerPosition, heldStack.active, hitTestStack, placeHeldStack]
   );
 
   const handleSurfacePointerDown = useCallback(
     (event) => {
-      const table = tableRef.current;
-      if (!table) {
-        return;
-      }
       if (event.button === 2) {
         if (heldStack.active) {
           event.preventDefault();
           event.stopPropagation();
-          const rect = table.getBoundingClientRect();
-          const pointerX = event.clientX - rect.left;
-          const pointerY = event.clientY - rect.top;
-          dealOneFromHeld(pointerX, pointerY);
+          const position = getTablePointerPosition(event);
+          if (position) {
+            dealOneFromHeld(position.x, position.y);
+          }
         }
         return;
       }
-      const rect = table.getBoundingClientRect();
-      const pointerX = event.clientX - rect.left;
-      const pointerY = event.clientY - rect.top;
+      const position = getTablePointerPosition(event);
+      if (!position) {
+        return;
+      }
+      const pointerX = position.x;
+      const pointerY = position.y;
       if (heldStack.active) {
         placeHeldStack(pointerX, pointerY);
         setSelectedStackId(null);
@@ -677,7 +691,14 @@ const Table = () => {
       setSelectedStackId(null);
       setPickCountOpen(false);
     },
-    [dealOneFromHeld, handleStackPointerDown, heldStack.active, hitTestStack, placeHeldStack]
+    [
+      dealOneFromHeld,
+      getTablePointerPosition,
+      handleStackPointerDown,
+      heldStack.active,
+      hitTestStack,
+      placeHeldStack
+    ]
   );
 
   const handlePointerMoveHover = useCallback(
@@ -685,17 +706,16 @@ const Table = () => {
       if (heldStack.active) {
         return;
       }
-      const table = tableRef.current;
-      if (!table) {
+      const position = getTablePointerPosition(event);
+      if (!position) {
         return;
       }
-      const rect = table.getBoundingClientRect();
-      const pointerX = event.clientX - rect.left;
-      const pointerY = event.clientY - rect.top;
+      const pointerX = position.x;
+      const pointerY = position.y;
       const stackId = hitTestStack(pointerX, pointerY);
       setHoveredStackId(stackId);
     },
-    [heldStack.active, hitTestStack]
+    [getTablePointerPosition, heldStack.active, hitTestStack]
   );
 
   const badgeOffset = 24;
@@ -762,12 +782,9 @@ const Table = () => {
       let pickedCardIds = [];
       let origin = null;
       let heldPosition = null;
-      const table = tableRef.current;
-      if (table) {
-        const rect = table.getBoundingClientRect();
-        const pointerX = event.clientX - rect.left;
-        const pointerY = event.clientY - rect.top;
-        heldPosition = getHeldAnchorPosition(pointerX, pointerY);
+      const position = getTablePointerPosition(event);
+      if (position) {
+        heldPosition = getHeldAnchorPosition(position.x, position.y);
       }
 
       setStacks((prev) => {
@@ -814,7 +831,7 @@ const Table = () => {
       setSelectedStackId(null);
       setPickCountOpen(false);
     },
-    [createStackId, getHeldAnchorPosition, setStacks, stacksById]
+    [createStackId, getHeldAnchorPosition, getTablePointerPosition, setStacks, stacksById]
   );
 
   const handleFlipSelected = useCallback(() => {
@@ -840,195 +857,200 @@ const Table = () => {
     : null;
   const menuStackCount = selectedStack ? selectedStack.cardIds.length : 0;
   return (
-    <div
-      ref={tableFrameRef}
-      className={`table-frame table-frame--${tableStyle} table-frame--${tableShape}`}
-      style={{ '--card-scale': CARD_SCALE }}
-    >
-      <div id="seatLayer" className="table__seats" aria-label="Table seats">
-        {seatPositions.map((seat) => {
-          const occupied = occupiedSeats[seat.id];
-          const seatStyle = {
-            left: `${seat.x}px`,
-            top: `${seat.y}px`
-          };
-          return (
-            <button
-              key={seat.id}
-              type="button"
-              className={`seat ${occupied ? 'seat--occupied' : ''}`}
-              style={seatStyle}
-              onClick={() => toggleSeat(seat.id)}
-            >
-              <span className="seat__label">
-                {occupied ? 'You' : seat.label}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-      <div className="table__surface-wrapper">
+    <div className="tabletop">
+      <div id="tabletopViewport">
         <div
-          ref={tableRef}
-          className={`table__surface table__surface--${tableStyle} table__surface--${tableShape}`}
-          onPointerDown={handleSurfacePointerDown}
-          onPointerMove={handlePointerMoveHover}
-          onContextMenu={(event) => {
-            if (heldStack.active) {
-              event.preventDefault();
-            }
-          }}
+          ref={tableFrameRef}
+          className={`table-frame table-frame--${tableStyle} table-frame--${tableShape}`}
+          style={{ '--card-scale': CARD_SCALE }}
         >
-          {stacks.map((stack, index) => {
-            const topCardId = stack.cardIds[stack.cardIds.length - 1];
-            const topCard = cardsById[topCardId];
-            const isHeld = heldStack.active && stack.id === heldStack.stackId;
-            const zIndex = isHeld ? stacks.length + 20 : index + 1;
-            return (
-              <Card
-                key={stack.id}
-                id={stack.id}
-                x={stack.x}
-                y={stack.y}
-                rotation={stack.rotation}
-                faceUp={stack.faceUp}
-                cardStyle={appliedSettings.cardStyle}
-                zIndex={zIndex}
-                rank={topCard?.rank}
-                suit={topCard?.suit}
-                color={topCard?.color}
-                isHeld={isHeld}
-                isSelected={stack.id === selectedStackId}
-                onPointerDown={handleStackPointerDown}
-              />
-            );
-          })}
-          {selectedStack && menuPosition ? (
+          <div id="seatLayer" className="table__seats" aria-label="Table seats">
+            {seatPositions.map((seat) => {
+              const occupied = occupiedSeats[seat.id];
+              const seatStyle = {
+                left: `${seat.x}px`,
+                top: `${seat.y}px`
+              };
+              return (
+                <button
+                  key={seat.id}
+                  type="button"
+                  className={`seat ${occupied ? 'seat--occupied' : ''}`}
+                  style={seatStyle}
+                  onClick={() => toggleSeat(seat.id)}
+                >
+                  <span className="seat__label">
+                    {occupied ? 'You' : seat.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="table__surface-wrapper">
             <div
-              className={`stack-menu ${menuBelow ? 'stack-menu--below' : 'stack-menu--above'}`}
-              style={menuPosition}
-              onPointerDown={(event) => event.stopPropagation()}
-            >
-              <button
-                type="button"
-                className="stack-menu__button"
-                onPointerDown={(event) =>
-                  pickUpFromStack(event, selectedStack.id, selectedStack.cardIds.length)
+              ref={tableRef}
+              className={`table__surface table__surface--${tableStyle} table__surface--${tableShape}`}
+              onPointerDown={handleSurfacePointerDown}
+              onPointerMove={handlePointerMoveHover}
+              onContextMenu={(event) => {
+                if (heldStack.active) {
+                  event.preventDefault();
                 }
-              >
-                Pick up full stack
-              </button>
-              <button
-                type="button"
-                className="stack-menu__button"
-                onPointerDown={(event) => {
-                  const halfCount = Math.floor(selectedStack.cardIds.length / 2);
-                  if (halfCount < 1) {
-                    return;
-                  }
-                  pickUpFromStack(event, selectedStack.id, halfCount);
-                }}
-              >
-                Pick up half stack
-              </button>
-              <button
-                type="button"
-                className="stack-menu__button"
-                onPointerDown={(event) => pickUpFromStack(event, selectedStack.id, 1)}
-              >
-                Pick up 1 card
-              </button>
-              <button
-                type="button"
-                className="stack-menu__button"
-                onClick={() => {
-                  setPickCountOpen(true);
-                  setPickCountValue('1');
-                }}
-              >
-                Pick up N cards...
-              </button>
-              {pickCountOpen ? (
-                <div className="stack-menu__picker">
-                  <label className="stack-menu__label" htmlFor="pick-count-input">
-                    Cards to pick up
-                  </label>
-                  <input
-                    id="pick-count-input"
-                    className="stack-menu__input"
-                    type="number"
-                    min="1"
-                    max={menuStackCount}
-                    value={pickCountValue}
-                    onChange={(event) => setPickCountValue(event.target.value)}
+              }}
+            >
+              {stacks.map((stack, index) => {
+                const topCardId = stack.cardIds[stack.cardIds.length - 1];
+                const topCard = cardsById[topCardId];
+                const isHeld = heldStack.active && stack.id === heldStack.stackId;
+                const zIndex = isHeld ? stacks.length + 20 : index + 1;
+                return (
+                  <Card
+                    key={stack.id}
+                    id={stack.id}
+                    x={stack.x}
+                    y={stack.y}
+                    rotation={stack.rotation}
+                    faceUp={stack.faceUp}
+                    cardStyle={appliedSettings.cardStyle}
+                    zIndex={zIndex}
+                    rank={topCard?.rank}
+                    suit={topCard?.suit}
+                    color={topCard?.color}
+                    isHeld={isHeld}
+                    isSelected={stack.id === selectedStackId}
+                    onPointerDown={handleStackPointerDown}
                   />
-                  <div className="stack-menu__actions">
-                    <button
-                      type="button"
-                      className="stack-menu__button stack-menu__button--primary"
-                      onPointerDown={(event) => {
-                        const parsed = Number.parseInt(pickCountValue, 10);
-                        const count = Number.isNaN(parsed) ? 1 : parsed;
-                        pickUpFromStack(event, selectedStack.id, count);
-                      }}
-                    >
-                      Pick up
-                    </button>
-                    <button
-                      type="button"
-                      className="stack-menu__button stack-menu__button--secondary"
-                      onClick={() => setPickCountOpen(false)}
-                    >
-                      Cancel
-                    </button>
-                  </div>
+                );
+              })}
+              {selectedStack && menuPosition ? (
+                <div
+                  className={`stack-menu ${menuBelow ? 'stack-menu--below' : 'stack-menu--above'}`}
+                  style={menuPosition}
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className="stack-menu__button"
+                    onPointerDown={(event) =>
+                      pickUpFromStack(event, selectedStack.id, selectedStack.cardIds.length)
+                    }
+                  >
+                    Pick up full stack
+                  </button>
+                  <button
+                    type="button"
+                    className="stack-menu__button"
+                    onPointerDown={(event) => {
+                      const halfCount = Math.floor(selectedStack.cardIds.length / 2);
+                      if (halfCount < 1) {
+                        return;
+                      }
+                      pickUpFromStack(event, selectedStack.id, halfCount);
+                    }}
+                  >
+                    Pick up half stack
+                  </button>
+                  <button
+                    type="button"
+                    className="stack-menu__button"
+                    onPointerDown={(event) => pickUpFromStack(event, selectedStack.id, 1)}
+                  >
+                    Pick up 1 card
+                  </button>
+                  <button
+                    type="button"
+                    className="stack-menu__button"
+                    onClick={() => {
+                      setPickCountOpen(true);
+                      setPickCountValue('1');
+                    }}
+                  >
+                    Pick up N cards...
+                  </button>
+                  {pickCountOpen ? (
+                    <div className="stack-menu__picker">
+                      <label className="stack-menu__label" htmlFor="pick-count-input">
+                        Cards to pick up
+                      </label>
+                      <input
+                        id="pick-count-input"
+                        className="stack-menu__input"
+                        type="number"
+                        min="1"
+                        max={menuStackCount}
+                        value={pickCountValue}
+                        onChange={(event) => setPickCountValue(event.target.value)}
+                      />
+                      <div className="stack-menu__actions">
+                        <button
+                          type="button"
+                          className="stack-menu__button stack-menu__button--primary"
+                          onPointerDown={(event) => {
+                            const parsed = Number.parseInt(pickCountValue, 10);
+                            const count = Number.isNaN(parsed) ? 1 : parsed;
+                            pickUpFromStack(event, selectedStack.id, count);
+                          }}
+                        >
+                          Pick up
+                        </button>
+                        <button
+                          type="button"
+                          className="stack-menu__button stack-menu__button--secondary"
+                          onClick={() => setPickCountOpen(false)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="stack-menu__button"
+                    onClick={handleFlipSelected}
+                  >
+                    Flip
+                  </button>
+                  <button
+                    type="button"
+                    className="stack-menu__button"
+                    onClick={handleShuffleSelected}
+                  >
+                    Shuffle
+                  </button>
                 </div>
               ) : null}
-              <button
-                type="button"
-                className="stack-menu__button"
-                onClick={handleFlipSelected}
-              >
-                Flip
-              </button>
-              <button
-                type="button"
-                className="stack-menu__button"
-                onClick={handleShuffleSelected}
-              >
-                Shuffle
-              </button>
             </div>
-          ) : null}
-        </div>
-        <div id="stackLabelLayer" className="stack-label-layer" aria-hidden="true">
-          {stacks.map((stack) => {
-            if (stack.cardIds.length <= 1) {
-              return null;
-            }
-            const showBadge =
-              settings.stackCountDisplayMode === 'always' ||
-              (settings.stackCountDisplayMode === 'hover' &&
-                stack.id === visibleBadgeStackId);
-            if (!showBadge) {
-              return null;
-            }
-            return (
-              <div
-                key={stack.id}
-                className="stackCountBadge"
-                style={{
-                  left: stack.x + CARD_SIZE.width / 2,
-                  top: stack.y - badgeOffset
-                }}
-              >
-                Stack: {stack.cardIds.length}
-              </div>
-            );
-          })}
+            <div id="stackLabelLayer" className="stack-label-layer" aria-hidden="true">
+              {stacks.map((stack) => {
+                if (stack.cardIds.length <= 1) {
+                  return null;
+                }
+                const showBadge =
+                  settings.stackCountDisplayMode === 'always' ||
+                  (settings.stackCountDisplayMode === 'hover' &&
+                    stack.id === visibleBadgeStackId);
+                if (!showBadge) {
+                  return null;
+                }
+                return (
+                  <div
+                    key={stack.id}
+                    className="stackCountBadge"
+                    style={{
+                      left: stack.x + CARD_SIZE.width / 2,
+                      top: stack.y - badgeOffset
+                    }}
+                  >
+                    Stack: {stack.cardIds.length}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
-      <div className="table-settings">
+      <div id="uiLayer">
+        <div className="table-settings">
         <button
           className="table-settings__toggle"
           type="button"
@@ -1244,6 +1266,7 @@ const Table = () => {
           </div>
         ) : null}
       </div>
+    </div>
     </div>
   );
 };
