@@ -22,7 +22,7 @@ const SEAT_SIZE = { width: 120, height: 48 };
 const SEAT_PADDING = 24;
 
 const Table = () => {
-  const tabletopViewportRef = useRef(null);
+  const sceneRootRef = useRef(null);
   const tableFrameRef = useRef(null);
   const tableRef = useRef(null);
   const [tableRect, setTableRect] = useState({ width: 0, height: 0 });
@@ -175,8 +175,8 @@ const Table = () => {
 
   const updateTabletopScale = useCallback(() => {
     const frameNode = tableFrameRef.current;
-    const viewportNode = tabletopViewportRef.current;
-    if (!frameNode || !viewportNode) {
+    const sceneRootNode = sceneRootRef.current;
+    if (!frameNode || !sceneRootNode) {
       return;
     }
     const baseWidth = frameNode.offsetWidth;
@@ -203,7 +203,7 @@ const Table = () => {
 
     tableScaleRef.current = nextScale;
     setTableScale(nextScale);
-    viewportNode.style.setProperty('--tableScale', nextScale.toString());
+    sceneRootNode.style.setProperty('--tableScale', nextScale.toString());
   }, []);
 
   useEffect(() => {
@@ -311,15 +311,19 @@ const Table = () => {
   );
 
   const getTablePointerPosition = useCallback((event) => {
+    const sceneRoot = sceneRootRef.current;
     const table = tableRef.current;
-    if (!table) {
+    if (!sceneRoot || !table) {
       return null;
     }
-    const rect = table.getBoundingClientRect();
     const scale = tableScaleRef.current;
+    const sceneRect = sceneRoot.getBoundingClientRect();
+    const tableRect = table.getBoundingClientRect();
+    const offsetX = (tableRect.left - sceneRect.left) / scale;
+    const offsetY = (tableRect.top - sceneRect.top) / scale;
     return {
-      x: (event.clientX - rect.left) / scale,
-      y: (event.clientY - rect.top) / scale
+      x: (event.clientX - sceneRect.left) / scale - offsetX,
+      y: (event.clientY - sceneRect.top) / scale - offsetY
     };
   }, []);
 
@@ -908,8 +912,8 @@ const Table = () => {
   return (
     <div className="tabletop">
       <div
-        id="tabletopViewport"
-        ref={tabletopViewportRef}
+        id="sceneRoot"
+        ref={sceneRootRef}
         style={{ '--tableScale': tableScale }}
       >
         <div
