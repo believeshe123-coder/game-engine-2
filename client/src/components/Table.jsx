@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Card from './Card.jsx';
-import { clampStackToFelt, getFeltShape } from '../utils/geometry.js';
+import {
+  clampStackToFeltEllipse,
+  getFeltEllipseInTableSpace
+} from '../utils/geometry.js';
 import { useTableState } from '../state/useTableState.js';
 import { loadSettings, saveSettings } from '../state/tableSettings.js';
 
@@ -25,7 +28,9 @@ const Table = () => {
   const sceneRootRef = useRef(null);
   const tableFrameRef = useRef(null);
   const tableRef = useRef(null);
+  const feltRef = useRef(null);
   const [tableRect, setTableRect] = useState({ width: 0, height: 0 });
+  const [tableOffset, setTableOffset] = useState({ x: 0, y: 0 });
   const [tableScale, setTableScale] = useState(1);
   const tableScaleRef = useRef(1);
   const pendingDragRef = useRef(null);
@@ -79,9 +84,8 @@ const Table = () => {
   const seatCount = settings.roomSettings.seatCount;
   const tableStyle = settings.roomSettings.tableStyle;
   const tableShape = settings.roomSettings.tableShape;
-  const [feltGeometry, setFeltGeometry] = useState(() =>
-    getFeltShape({ width: tableRect.width, height: tableRect.height, shape: tableShape })
-  );
+  const [feltEllipse, setFeltEllipse] = useState(null);
+  const [showFeltDebug, setShowFeltDebug] = useState(false);
 
   useEffect(() => {
     setOccupiedSeats((prev) => {
@@ -210,12 +214,21 @@ const Table = () => {
 
   const recomputeFeltGeometry = useCallback(() => {
     const tableNode = tableRef.current;
-    const rect = tableNode?.getBoundingClientRect();
+    const feltNode = feltRef.current;
+    const sceneRoot = sceneRootRef.current;
     const scale = tableScaleRef.current;
-    const width = tableRect.width || (rect?.width ? rect.width / scale : 0);
-    const height = tableRect.height || (rect?.height ? rect.height / scale : 0);
-    setFeltGeometry(getFeltShape({ width, height, shape: tableShape }));
-  }, [tableRect.height, tableRect.width, tableShape]);
+    if (tableNode && feltNode) {
+      setFeltEllipse(getFeltEllipseInTableSpace(tableNode, feltNode, scale));
+    }
+    if (sceneRoot && tableNode) {
+      const sceneRect = sceneRoot.getBoundingClientRect();
+      const tableRectNode = tableNode.getBoundingClientRect();
+      setTableOffset({
+        x: (tableRectNode.left - sceneRect.left) / scale,
+        y: (tableRectNode.top - sceneRect.top) / scale
+      });
+    }
+  }, []);
 
   useEffect(() => {
     if (!tableRef.current || !tableFrameRef.current) {
@@ -421,12 +434,12 @@ const Table = () => {
         return;
       }
       const rawPosition = getHeldAnchorPosition(pointerX, pointerY);
-      const finalPosition = clampStackToFelt(
+      const finalPosition = clampStackToFeltEllipse(
         rawPosition.x,
         rawPosition.y,
         CARD_SIZE.width,
         CARD_SIZE.height,
-        feltGeometry
+        feltEllipse
       );
 
       const draggedStack = stacksById[heldStack.stackId];
@@ -488,7 +501,7 @@ const Table = () => {
         mode: 'stack'
       });
     },
-    [feltGeometry, getHeldAnchorPosition, heldStack, setStacks, stacks, stacksById]
+    [feltEllipse, getHeldAnchorPosition, heldStack, setStacks, stacks, stacksById]
   );
 
   const dealOneFromHeld = useCallback(
@@ -510,12 +523,12 @@ const Table = () => {
       }
 
       const rawPlacement = getHeldAnchorPosition(pointerX, pointerY);
-      const placement = clampStackToFelt(
+      const placement = clampStackToFeltEllipse(
         rawPlacement.x,
         rawPlacement.y,
         CARD_SIZE.width,
         CARD_SIZE.height,
-        feltGeometry
+        feltEllipse
       );
       const newStackId = createStackId();
       let removedCardId = null;
@@ -607,7 +620,7 @@ const Table = () => {
         }));
       }
     },
-    [createStackId, feltGeometry, getHeldAnchorPosition, heldStack, setStacks]
+    [createStackId, feltEllipse, getHeldAnchorPosition, heldStack, setStacks]
   );
 
   const startHeldFullStack = useCallback(
@@ -916,6 +929,10 @@ const Table = () => {
   }, [selectedStackId, setStacks]);
 
   const selectedStack = selectedStackId ? stacksById[selectedStackId] : null;
+  const heldStackData =
+    heldStack.active && heldStack.stackId ? stacksById[heldStack.stackId] : null;
+  const heldTopCardId = heldStackData?.cardIds[heldStackData.cardIds.length - 1];
+  const heldTopCard = heldTopCardId ? cardsById[heldTopCardId] : null;
   const menuBelow = selectedStack ? selectedStack.y < 140 : false;
   const menuPosition = selectedStack
     ? {
@@ -972,11 +989,33 @@ const Table = () => {
                 }
               }}
             >
+              <div
+                ref={feltRef}
+                className={`table__felt ${showFeltDebug ? 'table__felt--debug' : ''}`}
+                aria-hidden="true"
+              />
+              {showFeltDebug && feltEllipse && tableRect.width && tableRect.height ? (
+                <svg
+                  className="table__felt-debug"
+                  viewBox={`0 0 ${tableRect.width} ${tableRect.height}`}
+                  aria-hidden="true"
+                >
+                  <ellipse
+                    cx={feltEllipse.cx}
+                    cy={feltEllipse.cy}
+                    rx={feltEllipse.rx}
+                    ry={feltEllipse.ry}
+                  />
+                </svg>
+              ) : null}
               {stacks.map((stack, index) => {
                 const topCardId = stack.cardIds[stack.cardIds.length - 1];
                 const topCard = cardsById[topCardId];
                 const isHeld = heldStack.active && stack.id === heldStack.stackId;
-                const zIndex = isHeld ? stacks.length + 20 : index + 1;
+                if (isHeld && heldStackData) {
+                  return null;
+                }
+                const zIndex = index + 1;
                 return (
                   <Card
                     key={stack.id}
@@ -1122,18 +1161,42 @@ const Table = () => {
             </div>
           </div>
         </div>
+        {heldStackData ? (
+          <div className="drag-layer" aria-hidden="true">
+            <div
+              className="drag-layer__inner"
+              style={{ left: tableOffset.x, top: tableOffset.y }}
+            >
+              <Card
+                id={heldStackData.id}
+                x={heldStackData.x}
+                y={heldStackData.y}
+                rotation={heldStackData.rotation}
+                faceUp={heldStackData.faceUp}
+                cardStyle={appliedSettings.cardStyle}
+                zIndex={2000}
+                rank={heldTopCard?.rank}
+                suit={heldTopCard?.suit}
+                color={heldTopCard?.color}
+                isHeld
+                isSelected={false}
+                onPointerDown={handleStackPointerDown}
+              />
+            </div>
+          </div>
+        ) : null}
       </div>
       <div id="uiLayer">
         <div className="table-settings">
-        <button
-          className="table-settings__toggle"
-          type="button"
-          onClick={() => setSettingsOpen((prev) => !prev)}
-        >
-          Table Settings
-        </button>
-        {settingsOpen ? (
-          <div className="table-settings__panel">
+          <button
+            className="table-settings__toggle"
+            type="button"
+            onClick={() => setSettingsOpen((prev) => !prev)}
+          >
+            Table Settings
+          </button>
+          {settingsOpen ? (
+            <div className="table-settings__panel">
             <div className="table-settings__row">
               <span className="table-settings__label">Reset spawns face down</span>
               <label className="table-settings__switch">
@@ -1249,6 +1312,17 @@ const Table = () => {
                 <option value="hover">Hover Only</option>
               </select>
             </label>
+            <div className="table-settings__row">
+              <span className="table-settings__label">Show felt debug</span>
+              <label className="table-settings__switch">
+                <input
+                  type="checkbox"
+                  checked={showFeltDebug}
+                  onChange={(event) => setShowFeltDebug(event.target.checked)}
+                />
+                <span>Felt Debug</span>
+              </label>
+            </div>
             <button
               className="table-settings__button"
               type="button"
@@ -1263,84 +1337,84 @@ const Table = () => {
             >
               Reset Table
             </button>
-          </div>
-        ) : null}
-        <button
-          className="table-settings__toggle"
-          type="button"
-          onClick={() => setRoomSettingsOpen((prev) => !prev)}
-        >
-          Room Settings
-        </button>
-        {roomSettingsOpen ? (
-          <div className="table-settings__panel">
-            <label className="table-settings__row">
-              <span className="table-settings__label">Table Style</span>
-              <select
-                className="table-settings__select"
-                value={settings.roomSettings.tableStyle}
-                onChange={(event) =>
-                  setSettings((prev) => ({
-                    ...prev,
-                    roomSettings: {
-                      ...prev.roomSettings,
-                      tableStyle: event.target.value
-                    }
-                  }))
-                }
-              >
-                <option value="medieval">Medieval</option>
-                <option value="plain">Plain</option>
-              </select>
-            </label>
-            <label className="table-settings__row">
-              <span className="table-settings__label">Table Shape</span>
-              <select
-                className="table-settings__select"
-                value={settings.roomSettings.tableShape}
-                onChange={(event) =>
-                  setSettings((prev) => ({
-                    ...prev,
-                    roomSettings: {
-                      ...prev.roomSettings,
-                      tableShape: event.target.value
-                    }
-                  }))
-                }
-              >
-                <option value="rectangle">Rectangle</option>
-                <option value="oval">Oval</option>
-              </select>
-            </label>
-            <label className="table-settings__row">
-              <span className="table-settings__label"># of Seats</span>
-              <input
-                className="table-settings__input"
-                type="number"
-                min="2"
-                max="12"
-                value={settings.roomSettings.seatCount}
-                onChange={(event) =>
-                  setSettings((prev) => ({
-                    ...prev,
-                    roomSettings: {
-                      ...prev.roomSettings,
-                      seatCount: (() => {
-                        const parsed = Number.parseInt(event.target.value, 10);
-                        if (Number.isNaN(parsed)) {
-                          return 2;
-                        }
-                        return Math.min(12, Math.max(2, parsed));
-                      })()
-                    }
-                  }))
-                }
-              />
-            </label>
-          </div>
-        ) : null}
+            </div>
+          ) : null}
+          <button
+            className="table-settings__toggle"
+            type="button"
+            onClick={() => setRoomSettingsOpen((prev) => !prev)}
+          >
+            Room Settings
+          </button>
+          {roomSettingsOpen ? (
+            <div className="table-settings__panel">
+              <label className="table-settings__row">
+                <span className="table-settings__label">Table Style</span>
+                <select
+                  className="table-settings__select"
+                  value={settings.roomSettings.tableStyle}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      roomSettings: {
+                        ...prev.roomSettings,
+                        tableStyle: event.target.value
+                      }
+                    }))
+                  }
+                >
+                  <option value="medieval">Medieval</option>
+                  <option value="plain">Plain</option>
+                </select>
+              </label>
+              <label className="table-settings__row">
+                <span className="table-settings__label">Table Shape</span>
+                <select
+                  className="table-settings__select"
+                  value={settings.roomSettings.tableShape}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      roomSettings: {
+                        ...prev.roomSettings,
+                        tableShape: event.target.value
+                      }
+                    }))
+                  }
+                >
+                  <option value="rectangle">Rectangle</option>
+                  <option value="oval">Oval</option>
+                </select>
+              </label>
+              <label className="table-settings__row">
+                <span className="table-settings__label"># of Seats</span>
+                <input
+                  className="table-settings__input"
+                  type="number"
+                  min="2"
+                  max="12"
+                  value={settings.roomSettings.seatCount}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      roomSettings: {
+                        ...prev.roomSettings,
+                        seatCount: (() => {
+                          const parsed = Number.parseInt(event.target.value, 10);
+                          if (Number.isNaN(parsed)) {
+                            return 2;
+                          }
+                          return Math.min(12, Math.max(2, parsed));
+                        })()
+                      }
+                    }))
+                  }
+                />
+              </label>
+            </div>
+          ) : null}
+        </div>
       </div>
-    </div>
     </div>
   );
 };

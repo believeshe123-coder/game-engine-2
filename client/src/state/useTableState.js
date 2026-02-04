@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { clampStackToFelt, getFeltShape } from '../utils/geometry.js';
+import { clampStackToFeltEllipse } from '../utils/geometry.js';
 import { DEFAULT_SETTINGS, normalizeSettings } from './tableSettings.js';
 
 const SUITS = [
@@ -108,22 +108,25 @@ export const useTableState = (tableRect, cardSize, initialSettings) => {
       } = buildDecks(settings);
       const boundsWidth = tableRect.width;
       const boundsHeight = tableRect.height;
-      const felt = getFeltShape({
-        width: boundsWidth,
-        height: boundsHeight,
-        shape: settings.roomSettings?.tableShape ?? 'rectangle'
-      });
+      const feltEllipse = {
+        cx: boundsWidth / 2,
+        cy: boundsHeight / 2,
+        rx: boundsWidth / 2,
+        ry: boundsHeight / 2,
+        w: boundsWidth,
+        h: boundsHeight
+      };
       const deckGap = 18;
       const nextStacks = [];
       nextStackIdRef.current = 1;
 
       const pushStack = (x, y, cardIds, faceUp) => {
-        const clamped = clampStackToFelt(
+        const clamped = clampStackToFeltEllipse(
           x,
           y,
           cardSize.width,
           cardSize.height,
-          felt
+          feltEllipse
         );
         nextStacks.push({
           id: createStackId(),
