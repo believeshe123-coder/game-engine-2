@@ -1739,8 +1739,8 @@ const Table = () => {
   }, [applyOwnMovement, selectedStackId]);
 
   const pickUpFromStack = useCallback(
-    (event, stackId, requestedCount) => {
-      pickUpStack(stackId, requestedCount, event);
+    (stackId, requestedCount) => {
+      pickUpStack(stackId, requestedCount);
     },
     [pickUpStack]
   );
@@ -2397,21 +2397,19 @@ const Table = () => {
               <button
                 type="button"
                 className="stack-menu__button"
-                onPointerDown={(event) =>
-                  pickUpFromStack(event, selectedStack.id, selectedStack.cardIds.length)
-                }
+                onClick={() => pickUpFromStack(selectedStack.id, selectedStack.cardIds.length)}
               >
                 Pick up full stack
               </button>
               <button
                 type="button"
                 className="stack-menu__button"
-                onPointerDown={(event) => {
+                onClick={() => {
                   const halfCount = Math.floor(selectedStack.cardIds.length / 2);
                   if (halfCount < 1) {
                     return;
                   }
-                  pickUpFromStack(event, selectedStack.id, halfCount);
+                  pickUpFromStack(selectedStack.id, halfCount);
                 }}
               >
                 Pick up half stack
@@ -2419,7 +2417,7 @@ const Table = () => {
               <button
                 type="button"
                 className="stack-menu__button"
-                onPointerDown={(event) => pickUpFromStack(event, selectedStack.id, 1)}
+                onClick={() => pickUpFromStack(selectedStack.id, 1)}
               >
                 Pick up 1 card
               </button>
@@ -2451,10 +2449,10 @@ const Table = () => {
                     <button
                       type="button"
                       className="stack-menu__button stack-menu__button--primary"
-                      onPointerDown={(event) => {
+                      onClick={() => {
                         const parsed = Number.parseInt(pickCountValue, 10);
                         const count = Number.isNaN(parsed) ? 1 : parsed;
-                        pickUpFromStack(event, selectedStack.id, count);
+                        pickUpFromStack(selectedStack.id, count);
                       }}
                     >
                       Pick up
