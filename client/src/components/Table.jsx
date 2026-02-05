@@ -149,6 +149,7 @@ const Table = () => {
     CARD_SIZE,
     appliedSettings
   );
+  const [cardFaceOverrides, setCardFaceOverrides] = useState({});
   const [heldStack, setHeldStack] = useState({
     active: false,
     stackId: null,
@@ -497,6 +498,17 @@ const Table = () => {
   useEffect(() => {
     recomputeFeltGeometry();
   }, [recomputeFeltGeometry, tableRect.height, tableRect.width, tableScale, tableShape]);
+
+  const getCardFace = useCallback((stack, cardId) => {
+    if (!stack || !cardId) {
+      return true;
+    }
+    const override = cardFaceOverrides[cardId];
+    if (typeof override === 'boolean') {
+      return override;
+    }
+    return stack.faceUp;
+  }, [cardFaceOverrides]);
 
   const stacksById = useMemo(() => {
     return stacks.reduce((acc, stack) => {
@@ -979,7 +991,6 @@ const Table = () => {
             }
             const merged = {
               ...target,
-              faceUp: dragged.faceUp ?? target.faceUp,
               cardIds: [...target.cardIds, ...dragged.cardIds]
             };
             return prev
@@ -1143,7 +1154,6 @@ const Table = () => {
             }
             const merged = {
               ...target,
-              faceUp: dealt.faceUp ?? target.faceUp,
               cardIds: [...target.cardIds, ...dealt.cardIds]
             };
             next = next
@@ -1301,9 +1311,13 @@ const Table = () => {
   const startHeldFullStack = useCallback(
     (stackId, pointerX, pointerY) => {
       const stack = stacksById[stackId];
-      if (!stack) {
+      const topCardId = stack?.cardIds?.length
+        ? stack.cardIds[stack.cardIds.length - 1]
+        : null;
+      if (!stack || !topCardId) {
         return;
       }
+      const heldStackId = createStackId();
       const offset = {
         dx: pointerX - stack.x,
         dy: pointerY - stack.y
@@ -1312,17 +1326,40 @@ const Table = () => {
       const originX = visualStack?.x ?? stack.x ?? 0;
       const originY = visualStack?.y ?? stack.y ?? 0;
       latestPoint.current = { x: originX, y: originY };
+      applyOwnMovement((prev) => {
+        const current = prev.find((item) => item.id === stackId);
+        if (!current) {
+          return prev;
+        }
+        const nextCardIds = current.cardIds.slice(0, -1);
+        const next = prev
+          .map((item) =>
+            item.id === stackId ? { ...item, cardIds: nextCardIds } : item
+          )
+          .filter((item) => item.id !== stackId || item.cardIds.length > 0);
+        next.push({
+          id: heldStackId,
+          x: originX,
+          y: originY,
+          rotation: current.rotation,
+          faceUp: getCardFace(current, topCardId),
+          cardIds: [topCardId],
+          zone: 'table',
+          ownerSeatIndex: null
+        });
+        return next;
+      });
       setHeldStack({
         active: true,
-        stackId,
-        cardIds: stack.cardIds,
+        stackId: heldStackId,
+        cardIds: [topCardId],
         sourceStackId: stackId,
         offset,
         origin: { x: originX, y: originY },
         mode: 'stack'
       });
     },
-    [interactiveStackRects, stacksById]
+    [applyOwnMovement, createStackId, getCardFace, interactiveStackRects, stacksById]
   );
 
   useEffect(() => {
@@ -1582,6 +1619,7 @@ const Table = () => {
     setAppliedSettings(settings);
     rebuildTableFromSettings(settings);
     resetInteractionStates();
+    setCardFaceOverrides({});
     updateTabletopScale();
   }, [rebuildTableFromSettings, resetInteractionStates, settings, updateTabletopScale]);
 
@@ -1688,16 +1726,49 @@ const Table = () => {
     [pickUpStack]
   );
 
+  const handleStackDoubleClick = useCallback((event, stackId) => {
+    event.preventDefault();
+    event.stopPropagation();
+    applyOwnMovement((prev) =>
+      prev.map((stack) =>
+        stack.id === stackId ? { ...stack, faceUp: !stack.faceUp } : stack
+      )
+    );
+    setCardFaceOverrides((prev) => {
+      const stack = stacksById[stackId];
+      if (!stack) {
+        return prev;
+      }
+      const next = { ...prev };
+      stack.cardIds.forEach((cardId) => {
+        const currentFace = typeof next[cardId] === 'boolean' ? next[cardId] : stack.faceUp;
+        next[cardId] = !currentFace;
+      });
+      return next;
+    });
+  }, [applyOwnMovement, stacksById]);
+
   const handleFlipSelected = useCallback(() => {
     if (!selectedStackId) {
       return;
     }
+    const selected = stacksById[selectedStackId];
     applyOwnMovement((prev) =>
       prev.map((stack) =>
         stack.id === selectedStackId ? { ...stack, faceUp: !stack.faceUp } : stack
       )
     );
-  }, [applyOwnMovement, selectedStackId]);
+    if (selected) {
+      setCardFaceOverrides((prev) => {
+        const next = { ...prev };
+        selected.cardIds.forEach((cardId) => {
+          const currentFace = typeof next[cardId] === 'boolean' ? next[cardId] : selected.faceUp;
+          next[cardId] = !currentFace;
+        });
+        return next;
+      });
+    }
+  }, [applyOwnMovement, selectedStackId, stacksById]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -1950,7 +2021,7 @@ const Table = () => {
                       x={0}
                       y={0}
                       rotation={0}
-                      faceUp
+                      faceUp={getCardFace(stack, topCardId)}
                       cardStyle={appliedSettings.cardStyle}
                       zIndex={1}
                       rank={topCard?.rank}
@@ -1959,6 +2030,7 @@ const Table = () => {
                       isHeld={isHeld}
                       isSelected={stack.id === selectedStackId}
                       onPointerDown={handleStackPointerDown}
+                      onDoubleClick={handleStackDoubleClick}
                     />
                   </div>
                 );
@@ -2020,7 +2092,7 @@ const Table = () => {
                       x={0}
                       y={0}
                       rotation={0}
-                      faceUp={stack.faceUp}
+                      faceUp={getCardFace(stack, topCardId)}
                       cardStyle={appliedSettings.cardStyle}
                       zIndex={1}
                       rank={topCard?.rank}
@@ -2029,6 +2101,7 @@ const Table = () => {
                       isHeld={isHeld}
                       isSelected={stack.id === selectedStackId}
                       onPointerDown={handleStackPointerDown}
+                      onDoubleClick={handleStackDoubleClick}
                     />
                     {showBadge ? (
                       <div className="stackCountBadge">Stack: {stack.cardIds.length}</div>
@@ -2051,7 +2124,7 @@ const Table = () => {
                   x={dragCardPosition.x}
                   y={dragCardPosition.y}
                   rotation={heldStackData.rotation}
-                  faceUp={heldStackData.faceUp}
+                  faceUp={getCardFace(heldStackData, heldTopCardId)}
                   cardStyle={appliedSettings.cardStyle}
                   zIndex={2000}
                   rank={heldTopCard?.rank}
