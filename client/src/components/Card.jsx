@@ -98,6 +98,7 @@ const Card = ({
   zIndex,
   faceUp,
   onPointerDown,
+  onDoubleClick,
   rank,
   suit,
   color,
@@ -129,6 +130,7 @@ const Card = ({
         zIndex
       }}
       onPointerDown={(event) => onPointerDown(event, id)}
+      onDoubleClick={(event) => onDoubleClick?.(event, id)}
     >
       <div className="card__surface" aria-hidden="true">
         {faceUp ? (
