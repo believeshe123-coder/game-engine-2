@@ -297,6 +297,7 @@ body,
     0 10px 16px rgba(0, 0, 0, 0.35);
   --seat-rotation: 0deg;
   transform: translate(-50%, -50%) rotate(var(--seat-rotation));
+  transform-origin: center center;
   cursor: pointer;
   pointer-events: auto;
   transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
@@ -308,6 +309,7 @@ body,
   justify-content: center;
   width: 100%;
   height: 100%;
+  transform: rotate(calc(var(--seat-rotation) * -1));
 }
 
 .seat:hover {
@@ -803,4 +805,62 @@ body,
 
 .table-settings__button--secondary:hover {
   background: rgba(120, 102, 82, 0.45);
+}
+
+.hand-zone {
+  position: absolute;
+  transform: translate(-50%, -50%) rotate(var(--zone-rotation, 0deg));
+  border: 1px dashed rgba(248, 236, 202, 0.38);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(27, 20, 15, 0.45), rgba(18, 13, 10, 0.28));
+  box-shadow: inset 0 0 0 1px rgba(255, 230, 184, 0.08), 0 8px 18px rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+  z-index: 5;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.hand-zone--owner {
+  border-color: rgba(248, 236, 202, 0.75);
+  background: linear-gradient(180deg, rgba(74, 55, 35, 0.48), rgba(40, 29, 21, 0.38));
+}
+
+.hand-zone--hover {
+  background: linear-gradient(180deg, rgba(233, 197, 124, 0.3), rgba(107, 74, 32, 0.35));
+  border-color: rgba(233, 197, 124, 0.95);
+  box-shadow: inset 0 0 0 1px rgba(245, 219, 156, 0.3), 0 10px 20px rgba(0, 0, 0, 0.28);
+}
+
+.hand-proxy {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 8;
+}
+
+.hand-proxy__cards {
+  width: calc(var(--card-base-width) * var(--card-scale));
+  height: calc(var(--card-base-height) * var(--card-scale));
+  border-radius: calc(10px * var(--card-scale));
+  background:
+    radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.08), transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(255, 255, 255, 0.08), transparent 55%),
+    linear-gradient(135deg, #25304b, #1b2438 50%, #111728);
+  border: 1px solid rgba(214, 188, 132, 0.55);
+  box-shadow: 0 8px 14px rgba(0, 0, 0, 0.35);
+}
+
+.hand-proxy__count {
+  position: absolute;
+  right: -10px;
+  bottom: -10px;
+  min-width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  padding: 0 8px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
 }

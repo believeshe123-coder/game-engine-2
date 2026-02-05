@@ -9,6 +9,7 @@ import {
 } from '../geometry/feltBounds.js';
 import { useTableState } from '../state/useTableState.js';
 import { loadSettings, saveSettings } from '../state/tableSettings.js';
+import { MOVE_TO_HAND, MOVE_TO_TABLE } from '../state/protocol.js';
 
 const CARD_SCALE = 0.8;
 const RIGHT_PANEL_SAFE_WIDTH = 340;
@@ -32,6 +33,11 @@ const SWEEP_MIN_DIST = 30;
 const STACK_EPS = 10;
 const SWEEP_JITTER = 6;
 const DOUBLE_CLICK_MS = 225;
+const HAND_ZONE_SIZE = {
+  width: CARD_SIZE.width * 3.4,
+  height: CARD_SIZE.height * 1.5
+};
+const HAND_ZONE_SEAT_OFFSET = 52;
 
 const Table = () => {
   const sceneRootRef = useRef(null);
@@ -227,6 +233,36 @@ const Table = () => {
     seats.map((seat) => ({ ...seat, x: 0, y: 0 }))
   );
 
+
+  const playerSeatId = useMemo(() => {
+    const occupiedSeat = Object.entries(occupiedSeats)
+      .find(([, occupied]) => occupied)?.[0];
+    return occupiedSeat ? Number(occupiedSeat) : null;
+  }, [occupiedSeats]);
+
+  const handZones = useMemo(() => {
+    return seatPositions.map((seat) => ({
+      seatId: seat.id,
+      x: seat.x - Math.cos(seat.angle) * HAND_ZONE_SEAT_OFFSET,
+      y: seat.y - Math.sin(seat.angle) * HAND_ZONE_SEAT_OFFSET,
+      width: HAND_ZONE_SIZE.width,
+      height: HAND_ZONE_SIZE.height,
+      angle: seat.angle
+    }));
+  }, [seatPositions]);
+
+  const getHandZoneAtPoint = useCallback((x, y) => {
+    for (let i = 0; i < handZones.length; i += 1) {
+      const zone = handZones[i];
+      const left = zone.x - zone.width / 2;
+      const top = zone.y - zone.height / 2;
+      if (x >= left && x <= left + zone.width && y >= top && y <= top + zone.height) {
+        return zone.seatId;
+      }
+    }
+    return null;
+  }, [handZones]);
+
   const layoutSeats = useCallback(() => {
     const frameNode = tableFrameRef.current;
     const tableNode = tableRef.current;
@@ -395,9 +431,54 @@ const Table = () => {
     }, {});
   }, [stacks]);
 
+  const tableStacks = useMemo(
+    () => stacks.filter((stack) => (stack.zone ?? 'table') === 'table'),
+    [stacks]
+  );
+
+  const handStacksBySeat = useMemo(() => {
+    return stacks
+      .filter((stack) => stack.zone === 'hand' && stack.ownerSeatIndex)
+      .reduce((acc, stack) => {
+        const seatId = stack.ownerSeatIndex;
+        if (!acc[seatId]) {
+          acc[seatId] = [];
+        }
+        acc[seatId].push(stack);
+        return acc;
+      }, {});
+  }, [stacks]);
+
+  const ownerHandRenderStacks = useMemo(() => {
+    if (!playerSeatId) {
+      return [];
+    }
+    const ownerStacks = handStacksBySeat[playerSeatId] ?? [];
+    const zone = handZones.find((entry) => entry.seatId === playerSeatId);
+    if (!zone) {
+      return [];
+    }
+    const fanStep = Math.max(16, CARD_SIZE.width * 0.35);
+    const startX = zone.x - ((ownerStacks.length - 1) * fanStep) / 2;
+    const y = zone.y - CARD_SIZE.height / 2;
+    return ownerStacks.map((stack, index) => ({
+      ...stack,
+      renderX: startX + index * fanStep,
+      renderY: y
+    }));
+  }, [handStacksBySeat, handZones, playerSeatId]);
+
+  const interactiveStackRects = useMemo(() => {
+    const rects = tableStacks.map((stack) => ({ id: stack.id, x: stack.x, y: stack.y }));
+    ownerHandRenderStacks.forEach((stack) => {
+      rects.push({ id: stack.id, x: stack.renderX, y: stack.renderY });
+    });
+    return rects;
+  }, [ownerHandRenderStacks, tableStacks]);
+
   const hitTestStack = useCallback((pointerX, pointerY) => {
-    for (let i = stacks.length - 1; i >= 0; i -= 1) {
-      const stack = stacks[i];
+    for (let i = interactiveStackRects.length - 1; i >= 0; i -= 1) {
+      const stack = interactiveStackRects[i];
       if (
         pointerX >= stack.x &&
         pointerX <= stack.x + CARD_SIZE.width &&
@@ -408,7 +489,7 @@ const Table = () => {
       }
     }
     return null;
-  }, [stacks]);
+  }, [interactiveStackRects]);
 
   const bringStackToFront = useCallback((stackId) => {
     setStacks((prev) => {
@@ -644,8 +725,61 @@ const Table = () => {
 
       const draggedStack = stacksById[heldStack.stackId];
       if (draggedStack) {
-        const draggedX = finalX ?? draggedStack?.x;
-        const draggedY = finalY ?? draggedStack?.y;
+        const draggedX = finalX ?? draggedStack?.x ?? heldStack.origin?.x ?? 0;
+        const draggedY = finalY ?? draggedStack?.y ?? heldStack.origin?.y ?? 0;
+        const pointerPosition = getTablePointerPositionFromClient(clientX, clientY);
+        const handSeatId = pointerPosition
+          ? getHandZoneAtPoint(pointerPosition.x, pointerPosition.y)
+          : getHandZoneAtPoint(
+              draggedX + CARD_SIZE.width / 2,
+              draggedY + CARD_SIZE.height / 2
+            );
+        if (handSeatId && playerSeatId && handSeatId === playerSeatId) {
+          const moveIntent = { type: MOVE_TO_HAND, stackId: heldStack.stackId, seatIndex: handSeatId };
+          void moveIntent;
+          setStacks((prev) =>
+            prev.map((stack) =>
+              stack.id === heldStack.stackId
+                ? {
+                    ...stack,
+                    zone: 'hand',
+                    ownerSeatIndex: handSeatId,
+                    x: undefined,
+                    y: undefined
+                  }
+                : stack
+            )
+          );
+          setHeldStack({
+            active: false,
+            stackId: null,
+            cardIds: [],
+            sourceStackId: null,
+            offset: { dx: 0, dy: 0 },
+            origin: null,
+            mode: 'stack'
+          });
+          return;
+        }
+        if (handSeatId && handSeatId !== playerSeatId) {
+          setStacks((prev) =>
+            prev.map((stack) =>
+              stack.id === heldStack.stackId
+                ? { ...stack, x: heldStack.origin?.x ?? stack.x, y: heldStack.origin?.y ?? stack.y }
+                : stack
+            )
+          );
+          setHeldStack({
+            active: false,
+            stackId: null,
+            cardIds: [],
+            sourceStackId: null,
+            offset: { dx: 0, dy: 0 },
+            origin: null,
+            mode: 'stack'
+          });
+          return;
+        }
         logPlacementDebug(
           'placeStack',
           {
@@ -694,10 +828,12 @@ const Table = () => {
               .concat(merged);
           });
         } else if (finalX !== null && finalX !== undefined) {
+          const moveIntent = { type: MOVE_TO_TABLE, stackId: heldStack.stackId, dropX: finalX, dropY: finalY };
+          void moveIntent;
           setStacks((prev) =>
             prev.map((stack) =>
               stack.id === heldStack.stackId
-                ? { ...stack, x: finalX, y: finalY }
+                ? { ...stack, x: finalX, y: finalY, zone: 'table', ownerSeatIndex: null }
                 : stack
             )
           );
@@ -721,7 +857,10 @@ const Table = () => {
       setStacks,
       showFeltDebug,
       stacks,
-      stacksById
+      stacksById,
+      getHandZoneAtPoint,
+      getTablePointerPositionFromClient,
+      playerSeatId
     ]
   );
 
@@ -791,7 +930,9 @@ const Table = () => {
           y: placementY ?? currentHeld.y,
           rotation: currentHeld.rotation,
           faceUp: currentHeld.faceUp,
-          cardIds: [removedCardId]
+          cardIds: [removedCardId],
+          zone: 'table',
+          ownerSeatIndex: null
         };
 
         logPlacementDebug(
@@ -810,7 +951,9 @@ const Table = () => {
 
         let next = prev
           .map((stack) =>
-            stack.id === heldStack.stackId ? { ...stack, cardIds: nextCardIds } : stack
+            stack.id === heldStack.stackId
+              ? { ...stack, cardIds: nextCardIds, zone: 'table', ownerSeatIndex: null }
+              : stack
           )
           .filter((stack) => stack.id !== heldStack.stackId || nextCardIds.length > 0)
           .concat(newStack);
@@ -970,20 +1113,27 @@ const Table = () => {
     if (!heldStack.active) {
       return undefined;
     }
-    const handlePointerUp = () => {
+    const handlePointerUp = (event) => {
+      if (event.button === 2 || rightSweepRef.current.isRightDown) {
+        resetRightSweep();
+        return;
+      }
+      placeHeldStack(event.clientX, event.clientY);
+    };
+    const handlePointerCancel = () => {
       if (rightSweepRef.current.isRightDown) {
         resetRightSweep();
       }
     };
     window.addEventListener('pointerup', handlePointerUp);
-    window.addEventListener('pointercancel', handlePointerUp);
-    window.addEventListener('blur', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerCancel);
+    window.addEventListener('blur', handlePointerCancel);
     return () => {
       window.removeEventListener('pointerup', handlePointerUp);
-      window.removeEventListener('pointercancel', handlePointerUp);
-      window.removeEventListener('blur', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerCancel);
+      window.removeEventListener('blur', handlePointerCancel);
     };
-  }, [heldStack.active, resetRightSweep]);
+  }, [heldStack.active, placeHeldStack, resetRightSweep]);
 
   useEffect(() => {
     if (pickCountOpen || settingsOpen || roomSettingsOpen) {
@@ -1001,18 +1151,21 @@ const Table = () => {
         dx: pointerX - stack.x,
         dy: pointerY - stack.y
       };
-      latestPoint.current = { x: stack.x, y: stack.y };
+      const visualStack = interactiveStackRects.find((item) => item.id === stackId);
+      const originX = visualStack?.x ?? stack.x ?? 0;
+      const originY = visualStack?.y ?? stack.y ?? 0;
+      latestPoint.current = { x: originX, y: originY };
       setHeldStack({
         active: true,
         stackId,
         cardIds: stack.cardIds,
         sourceStackId: stackId,
         offset,
-        origin: { x: stack.x, y: stack.y },
+        origin: { x: originX, y: originY },
         mode: 'stack'
       });
     },
-    [stacksById]
+    [interactiveStackRects, stacksById]
   );
 
   useEffect(() => {
@@ -1341,7 +1494,9 @@ const Table = () => {
           y: heldPosition?.y ?? current.y,
           rotation: current.rotation,
           faceUp: current.faceUp,
-          cardIds: pickedCardIds
+          cardIds: pickedCardIds,
+          zone: 'table',
+          ownerSeatIndex: null
         });
         return next;
       });
@@ -1389,6 +1544,19 @@ const Table = () => {
           heldStack
         )
       : null;
+
+  const hoverHandSeatId =
+    heldStack.active && placementPointer
+      ? (() => {
+          const pointerPosition = getTablePointerPositionFromClient(
+            placementPointer.x,
+            placementPointer.y
+          );
+          return pointerPosition
+            ? getHandZoneAtPoint(pointerPosition.x, pointerPosition.y)
+            : null;
+        })()
+      : null;
   const menuBelow = selectedStack ? selectedStack.y < 140 : false;
   const menuPosition =
     selectedStack && tableScreenRect
@@ -1431,7 +1599,8 @@ const Table = () => {
               const occupied = occupiedSeats[seat.id];
               const seatStyle = {
                 left: `${seat.x}px`,
-                top: `${seat.y}px`
+                top: `${seat.y}px`,
+                '--seat-rotation': `${seat.angle + Math.PI / 2}rad`
               };
               return (
                 <button
@@ -1505,6 +1674,77 @@ const Table = () => {
                   ) : null}
                 </svg>
               ) : null}
+              {handZones.map((zone) => {
+                const isOwnerZone = playerSeatId === zone.seatId;
+                const isDragHover = heldStack.active && hoverHandSeatId === zone.seatId;
+                return (
+                  <div
+                    key={`hand-zone-${zone.seatId}`}
+                    className={`hand-zone ${isOwnerZone ? 'hand-zone--owner' : ''} ${isDragHover ? 'hand-zone--hover' : ''}`}
+                    style={{
+                      left: `${zone.x}px`,
+                      top: `${zone.y}px`,
+                      width: `${zone.width}px`,
+                      height: `${zone.height}px`,
+                      '--zone-rotation': `${zone.angle + Math.PI / 2}rad`
+                    }}
+                  />
+                );
+              })}
+              {(playerSeatId ? ownerHandRenderStacks : []).map((stack, index) => {
+                const topCardId = stack.cardIds[stack.cardIds.length - 1];
+                const topCard = cardsById[topCardId];
+                const isHeld = heldStack.active && stack.id === heldStack.stackId;
+                if (isHeld && heldStackData) {
+                  return null;
+                }
+                return (
+                  <div
+                    key={`hand-stack-${stack.id}`}
+                    className="stack-entity"
+                    style={{
+                      transform: `translate(${stack.renderX}px, ${stack.renderY}px) rotate(${stack.rotation}deg)`,
+                      zIndex: 120 + index
+                    }}
+                  >
+                    <Card
+                      id={stack.id}
+                      x={0}
+                      y={0}
+                      rotation={0}
+                      faceUp
+                      cardStyle={appliedSettings.cardStyle}
+                      zIndex={1}
+                      rank={topCard?.rank}
+                      suit={topCard?.suit}
+                      color={topCard?.color}
+                      isHeld={isHeld}
+                      isSelected={stack.id === selectedStackId}
+                      onPointerDown={handleStackPointerDown}
+                    />
+                  </div>
+                );
+              })}
+              {handZones
+                .filter((zone) => zone.seatId !== playerSeatId)
+                .map((zone) => {
+                  const seatStacks = handStacksBySeat[zone.seatId] ?? [];
+                  const count = seatStacks.reduce((acc, stack) => acc + stack.cardIds.length, 0);
+                  if (!count) {
+                    return null;
+                  }
+                  return (
+                    <div
+                      key={`hand-proxy-${zone.seatId}`}
+                      className="hand-proxy"
+                      style={{ left: `${zone.x}px`, top: `${zone.y}px` }}
+                    >
+                      <div className="hand-proxy__cards" />
+                      <div className="hand-proxy__count">{count}</div>
+                    </div>
+                  );
+                })}
+
               {placementGhost ? (
                 <div
                   className="placement-ghost"
@@ -1515,7 +1755,7 @@ const Table = () => {
                   }}
                 />
               ) : null}
-              {stacks.map((stack, index) => {
+              {tableStacks.map((stack, index) => {
                 const topCardId = stack.cardIds[stack.cardIds.length - 1];
                 const topCard = cardsById[topCardId];
                 const isHeld = heldStack.active && stack.id === heldStack.stackId;
