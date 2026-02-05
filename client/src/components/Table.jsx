@@ -1442,6 +1442,76 @@ const Table = () => {
     startHeldTopCard
   ]);
 
+  const pickUpStack = useCallback(
+    (stackId, requestedCount, pointerEvent = null) => {
+      if (pointerEvent) {
+        pointerEvent.preventDefault();
+        lastPointerRef.current = { x: pointerEvent.clientX, y: pointerEvent.clientY };
+      }
+      const source = stacksById[stackId];
+      if (!source) {
+        return;
+      }
+      const clampedCount = Math.max(1, Math.min(requestedCount, source.cardIds.length));
+      const newStackId = createStackId();
+      let pickedCardIds = [];
+      let origin = null;
+      let heldPosition = null;
+      const position = pointerEvent ? getTablePointerPosition(pointerEvent) : null;
+      const offset = { dx: CARD_SIZE.width / 2, dy: CARD_SIZE.height / 2 };
+      if (position) {
+        heldPosition = getHeldTopLeft(position.x, position.y, offset);
+      }
+
+      applyOwnMovement((prev) => {
+        const current = prev.find((stack) => stack.id === stackId);
+        if (!current) {
+          return prev;
+        }
+        const safeCount = Math.max(1, Math.min(clampedCount, current.cardIds.length));
+        const remainingCount = current.cardIds.length - safeCount;
+        const remainingCardIds = current.cardIds.slice(0, remainingCount);
+        pickedCardIds = current.cardIds.slice(remainingCount);
+        if (pickedCardIds.length === 0) {
+          return prev;
+        }
+        origin = { x: current.x, y: current.y };
+        const next = prev
+          .map((item) =>
+            item.id === stackId ? { ...item, cardIds: remainingCardIds } : item
+          )
+          .filter((item) => item.id !== stackId || item.cardIds.length > 0);
+        next.push({
+          id: newStackId,
+          x: heldPosition?.x ?? current.x,
+          y: heldPosition?.y ?? current.y,
+          rotation: current.rotation,
+          faceUp: current.faceUp,
+          cardIds: pickedCardIds,
+          zone: 'table',
+          ownerSeatIndex: null
+        });
+        return next;
+      });
+
+      if (pickedCardIds.length === 0) {
+        return;
+      }
+      setHeldStack({
+        active: true,
+        stackId: newStackId,
+        cardIds: pickedCardIds,
+        sourceStackId: stackId,
+        offset,
+        origin,
+        mode: 'stack'
+      });
+      setSelectedStackId(null);
+      setPickCountOpen(false);
+    },
+    [applyOwnMovement, createStackId, getHeldTopLeft, getTablePointerPosition, stacksById]
+  );
+
   const handleStackPointerDown = useCallback(
     (event, stackIdOverride = null) => {
       lastPointerRef.current = { x: event.clientX, y: event.clientY };
@@ -1667,76 +1737,6 @@ const Table = () => {
       })
     );
   }, [applyOwnMovement, selectedStackId]);
-
-  const pickUpStack = useCallback(
-    (stackId, requestedCount, pointerEvent = null) => {
-      if (pointerEvent) {
-        pointerEvent.preventDefault();
-        lastPointerRef.current = { x: pointerEvent.clientX, y: pointerEvent.clientY };
-      }
-      const source = stacksById[stackId];
-      if (!source) {
-        return;
-      }
-      const clampedCount = Math.max(1, Math.min(requestedCount, source.cardIds.length));
-      const newStackId = createStackId();
-      let pickedCardIds = [];
-      let origin = null;
-      let heldPosition = null;
-      const position = pointerEvent ? getTablePointerPosition(pointerEvent) : null;
-      const offset = { dx: CARD_SIZE.width / 2, dy: CARD_SIZE.height / 2 };
-      if (position) {
-        heldPosition = getHeldTopLeft(position.x, position.y, offset);
-      }
-
-      applyOwnMovement((prev) => {
-        const current = prev.find((stack) => stack.id === stackId);
-        if (!current) {
-          return prev;
-        }
-        const safeCount = Math.max(1, Math.min(clampedCount, current.cardIds.length));
-        const remainingCount = current.cardIds.length - safeCount;
-        const remainingCardIds = current.cardIds.slice(0, remainingCount);
-        pickedCardIds = current.cardIds.slice(remainingCount);
-        if (pickedCardIds.length === 0) {
-          return prev;
-        }
-        origin = { x: current.x, y: current.y };
-        const next = prev
-          .map((item) =>
-            item.id === stackId ? { ...item, cardIds: remainingCardIds } : item
-          )
-          .filter((item) => item.id !== stackId || item.cardIds.length > 0);
-        next.push({
-          id: newStackId,
-          x: heldPosition?.x ?? current.x,
-          y: heldPosition?.y ?? current.y,
-          rotation: current.rotation,
-          faceUp: current.faceUp,
-          cardIds: pickedCardIds,
-          zone: 'table',
-          ownerSeatIndex: null
-        });
-        return next;
-      });
-
-      if (pickedCardIds.length === 0) {
-        return;
-      }
-      setHeldStack({
-        active: true,
-        stackId: newStackId,
-        cardIds: pickedCardIds,
-        sourceStackId: stackId,
-        offset,
-        origin,
-        mode: 'stack'
-      });
-      setSelectedStackId(null);
-      setPickCountOpen(false);
-    },
-    [applyOwnMovement, createStackId, getHeldTopLeft, getTablePointerPosition, stacksById]
-  );
 
   const pickUpFromStack = useCallback(
     (event, stackId, requestedCount) => {
