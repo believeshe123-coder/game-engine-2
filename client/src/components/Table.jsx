@@ -134,6 +134,7 @@ const Table = () => {
   const [tableScale, setTableScale] = useState(1);
   const tableScaleRef = useRef(1);
   const pendingDragRef = useRef(null);
+  const lastOwnMovementRef = useRef(null);
   const capturedPointerRef = useRef({ pointerId: null, element: null });
   const [settings, setSettings] = useState(() => loadSettings());
   const [appliedSettings, setAppliedSettings] = useState(() => loadSettings());
@@ -509,6 +510,27 @@ const Table = () => {
     [stacks]
   );
 
+  const findTableOverlapStackId = useCallback(
+    (draggedX, draggedY, excludedId) => {
+      for (let i = tableStacks.length - 1; i >= 0; i -= 1) {
+        const stack = tableStacks[i];
+        if (stack.id === excludedId) {
+          continue;
+        }
+        const overlaps =
+          draggedX < stack.x + CARD_SIZE.width &&
+          draggedX + CARD_SIZE.width > stack.x &&
+          draggedY < stack.y + CARD_SIZE.height &&
+          draggedY + CARD_SIZE.height > stack.y;
+        if (overlaps) {
+          return stack.id;
+        }
+      }
+      return null;
+    },
+    [tableStacks]
+  );
+
   const handStacksBySeat = useMemo(() => {
     return stacks
       .filter((stack) => stack.zone === 'hand' && stack.ownerSeatIndex)
@@ -583,6 +605,76 @@ const Table = () => {
       y: pointerY - offset.dy
     };
   }, []);
+
+  const cloneStacksSnapshot = useCallback(
+    (stackList) => stackList.map((stack) => ({ ...stack, cardIds: [...stack.cardIds] })),
+    []
+  );
+
+  const stacksAreEqual = useCallback((a, b) => {
+    if (a === b) {
+      return true;
+    }
+    if (!a || !b || a.length !== b.length) {
+      return false;
+    }
+    for (let i = 0; i < a.length; i += 1) {
+      const left = a[i];
+      const right = b[i];
+      if (
+        left.id !== right.id ||
+        left.x !== right.x ||
+        left.y !== right.y ||
+        left.rotation !== right.rotation ||
+        left.faceUp !== right.faceUp ||
+        left.zone !== right.zone ||
+        left.ownerSeatIndex !== right.ownerSeatIndex ||
+        left.cardIds.length !== right.cardIds.length
+      ) {
+        return false;
+      }
+      for (let j = 0; j < left.cardIds.length; j += 1) {
+        if (left.cardIds[j] !== right.cardIds[j]) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }, []);
+
+  const applyOwnMovement = useCallback(
+    (updater) => {
+      setStacks((prev) => {
+        const next = updater(prev);
+        if (stacksAreEqual(prev, next)) {
+          return prev;
+        }
+        lastOwnMovementRef.current = cloneStacksSnapshot(prev);
+        return next;
+      });
+    },
+    [cloneStacksSnapshot, setStacks, stacksAreEqual]
+  );
+
+  const undoLastOwnMovement = useCallback(() => {
+    const snapshot = lastOwnMovementRef.current;
+    if (!snapshot) {
+      return;
+    }
+    setStacks(cloneStacksSnapshot(snapshot));
+    lastOwnMovementRef.current = null;
+    setHeldStack({
+      active: false,
+      stackId: null,
+      cardIds: [],
+      sourceStackId: null,
+      offset: { dx: 0, dy: 0 },
+      origin: null,
+      mode: 'stack'
+    });
+    setSelectedStackId(null);
+    setPickCountOpen(false);
+  }, [cloneStacksSnapshot, setStacks]);
 
   const clampTopLeftToFelt = useCallback(
     (topLeft) => {
@@ -746,6 +838,11 @@ const Table = () => {
       if (event.repeat) {
         return;
       }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        undoLastOwnMovement();
+        return;
+      }
       if (event.key !== 'Escape') {
         return;
       }
@@ -773,7 +870,7 @@ const Table = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [heldStack.active, heldStack.origin, heldStack.stackId, setStacks]);
+  }, [heldStack.active, heldStack.origin, heldStack.stackId, setStacks, undoLastOwnMovement]);
 
   const placeHeldStack = useCallback(
     (clientX, clientY) => {
@@ -810,7 +907,7 @@ const Table = () => {
         if (handSeatId && playerSeatId && handSeatId === playerSeatId) {
           const moveIntent = { type: MOVE_TO_HAND, stackId: heldStack.stackId, seatIndex: handSeatId };
           void moveIntent;
-          setStacks((prev) =>
+          applyOwnMovement((prev) =>
             prev.map((stack) =>
               stack.id === heldStack.stackId
                 ? {
@@ -867,25 +964,14 @@ const Table = () => {
           }
         );
 
-        let overlapId = null;
-        for (let i = stacks.length - 1; i >= 0; i -= 1) {
-          const stack = stacks[i];
-          if (stack.id === heldStack.stackId) {
-            continue;
-          }
-          const overlaps =
-            draggedX < stack.x + CARD_SIZE.width &&
-            draggedX + CARD_SIZE.width > stack.x &&
-            draggedY < stack.y + CARD_SIZE.height &&
-            draggedY + CARD_SIZE.height > stack.y;
-          if (overlaps) {
-            overlapId = stack.id;
-            break;
-          }
-        }
+        const overlapId = findTableOverlapStackId(
+          draggedX,
+          draggedY,
+          heldStack.stackId
+        );
 
         if (overlapId) {
-          setStacks((prev) => {
+          applyOwnMovement((prev) => {
             const target = prev.find((stack) => stack.id === overlapId);
             const dragged = prev.find((stack) => stack.id === heldStack.stackId);
             if (!target || !dragged) {
@@ -903,7 +989,7 @@ const Table = () => {
         } else if (finalX !== null && finalX !== undefined) {
           const moveIntent = { type: MOVE_TO_TABLE, stackId: heldStack.stackId, dropX: finalX, dropY: finalY };
           void moveIntent;
-          setStacks((prev) =>
+          applyOwnMovement((prev) =>
             prev.map((stack) =>
               stack.id === heldStack.stackId
                 ? { ...stack, x: finalX, y: finalY, zone: 'table', ownerSeatIndex: null }
@@ -985,7 +1071,7 @@ const Table = () => {
       let removedCardId = null;
       let remainingCardIds = [];
 
-      setStacks((prev) => {
+      applyOwnMovement((prev) => {
         const currentHeld = prev.find((stack) => stack.id === heldStack.stackId);
         if (!currentHeld || currentHeld.cardIds.length === 0) {
           return prev;
@@ -1485,6 +1571,7 @@ const Table = () => {
       origin: null,
       mode: 'stack'
     });
+    lastOwnMovementRef.current = null;
     setSelectedStackId(null);
     setHoveredStackId(null);
     setPickCountOpen(false);
@@ -1509,7 +1596,7 @@ const Table = () => {
     if (!selectedStackId) {
       return;
     }
-    setStacks((prev) =>
+    applyOwnMovement((prev) =>
       prev.map((stack) => {
         if (stack.id !== selectedStackId) {
           return stack;
@@ -1522,12 +1609,14 @@ const Table = () => {
         return { ...stack, cardIds: nextCardIds };
       })
     );
-  }, [selectedStackId, setStacks]);
+  }, [applyOwnMovement, selectedStackId]);
 
-  const pickUpFromStack = useCallback(
-    (event, stackId, requestedCount) => {
-      event.preventDefault();
-      lastPointerRef.current = { x: event.clientX, y: event.clientY };
+  const pickUpStack = useCallback(
+    (stackId, requestedCount, pointerEvent = null) => {
+      if (pointerEvent) {
+        pointerEvent.preventDefault();
+        lastPointerRef.current = { x: pointerEvent.clientX, y: pointerEvent.clientY };
+      }
       const source = stacksById[stackId];
       if (!source) {
         return;
@@ -1537,13 +1626,13 @@ const Table = () => {
       let pickedCardIds = [];
       let origin = null;
       let heldPosition = null;
-      const position = getTablePointerPosition(event);
+      const position = pointerEvent ? getTablePointerPosition(pointerEvent) : null;
       const offset = { dx: CARD_SIZE.width / 2, dy: CARD_SIZE.height / 2 };
       if (position) {
         heldPosition = getHeldTopLeft(position.x, position.y, offset);
       }
 
-      setStacks((prev) => {
+      applyOwnMovement((prev) => {
         const current = prev.find((stack) => stack.id === stackId);
         if (!current) {
           return prev;
@@ -1589,19 +1678,68 @@ const Table = () => {
       setSelectedStackId(null);
       setPickCountOpen(false);
     },
-    [createStackId, getHeldTopLeft, getTablePointerPosition, setStacks, stacksById]
+    [applyOwnMovement, createStackId, getHeldTopLeft, getTablePointerPosition, stacksById]
+  );
+
+  const pickUpFromStack = useCallback(
+    (event, stackId, requestedCount) => {
+      pickUpStack(stackId, requestedCount, event);
+    },
+    [pickUpStack]
   );
 
   const handleFlipSelected = useCallback(() => {
     if (!selectedStackId) {
       return;
     }
-    setStacks((prev) =>
+    applyOwnMovement((prev) =>
       prev.map((stack) =>
         stack.id === selectedStackId ? { ...stack, faceUp: !stack.faceUp } : stack
       )
     );
-  }, [selectedStackId, setStacks]);
+  }, [applyOwnMovement, selectedStackId]);
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.repeat) {
+        return;
+      }
+      const isFormElement =
+        event.target instanceof HTMLElement &&
+        (event.target.tagName === 'INPUT' ||
+          event.target.tagName === 'TEXTAREA' ||
+          event.target.tagName === 'SELECT' ||
+          event.target.isContentEditable);
+      if (isFormElement || !selectedStackId || heldStack.active) {
+        return;
+      }
+      const lowerKey = event.key.toLowerCase();
+      if (lowerKey === 'f') {
+        event.preventDefault();
+        handleFlipSelected();
+        return;
+      }
+      if (lowerKey === 's') {
+        event.preventDefault();
+        handleShuffleSelected();
+        return;
+      }
+      if (event.key === '1' || event.key === '5' || event.key === '0') {
+        event.preventDefault();
+        const pickCount = event.key === '0' ? 10 : Number(event.key);
+        pickUpStack(selectedStackId, pickCount);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    handleFlipSelected,
+    handleShuffleSelected,
+    heldStack.active,
+    pickUpStack,
+    selectedStackId
+  ]);
 
   const selectedStack = selectedStackId ? stacksById[selectedStackId] : null;
   const heldStackData =
@@ -1629,6 +1767,12 @@ const Table = () => {
             ? getHandZoneAtPoint(pointerPosition.x, pointerPosition.y)
             : null;
         })()
+      : null;
+  const mergeHighlightStackId =
+    heldStack.active &&
+    placementGhost &&
+    !hoverHandSeatId
+      ? findTableOverlapStackId(placementGhost.x, placementGhost.y, heldStack.stackId)
       : null;
   const menuBelow = selectedStack ? selectedStack.y < 140 : false;
   const menuPosition =
@@ -1768,10 +1912,13 @@ const Table = () => {
               {handZones.map((zone) => {
                 const isOwnerZone = playerSeatId === zone.seatId;
                 const isDragHover = heldStack.active && hoverHandSeatId === zone.seatId;
+                const isValidDropZone = isDragHover && isOwnerZone;
+                const isInvalidDropZone =
+                  isDragHover && playerSeatId !== null && zone.seatId !== playerSeatId;
                 return (
                   <div
                     key={`hand-zone-${zone.seatId}`}
-                    className={`hand-zone ${isOwnerZone ? 'hand-zone--owner' : ''} ${isDragHover ? 'hand-zone--hover' : ''}`}
+                    className={`hand-zone ${isOwnerZone ? 'hand-zone--owner' : ''} ${isDragHover ? 'hand-zone--hover' : ''} ${isValidDropZone ? 'hand-zone--valid' : ''} ${isInvalidDropZone ? 'hand-zone--invalid' : ''}`}
                     style={{
                       left: `${zone.x}px`,
                       top: `${zone.y}px`,
@@ -1862,7 +2009,7 @@ const Table = () => {
                 return (
                   <div
                     key={stack.id}
-                    className="stack-entity"
+                    className={`stack-entity ${stack.id === mergeHighlightStackId ? 'stack-entity--merge-target' : ''}`}
                     style={{
                       transform: `translate(${stack.x}px, ${stack.y}px) rotate(${stack.rotation}deg)`,
                       zIndex
