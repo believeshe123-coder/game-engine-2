@@ -25,7 +25,7 @@ const SEAT_POSITION = {
   radiusX: 46,
   radiusY: 38
 };
-const SEAT_SIZE = { width: 120, height: 48 };
+const SEAT_SIZE = { width: 208, height: 132 };
 const SEAT_PADDING = 24;
 const RIGHT_SWEEP_HOLD_MS = 120;
 const SWEEP_MIN_INTERVAL_MS = 40;
@@ -37,6 +37,57 @@ const HAND_ZONE_SIZE = {
   height: CARD_SIZE.height * 1.5
 };
 const HAND_ZONE_SEAT_OFFSET = 52;
+
+const getPresetSeatSlots = (count) => {
+  const presets = {
+    2: [
+      { px: 0, py: -1, nx: 0, ny: -1, side: 'top' },
+      { px: 0, py: 1, nx: 0, ny: 1, side: 'bottom' }
+    ],
+    3: [
+      { px: -0.38, py: -1, nx: 0, ny: -1, side: 'top' },
+      { px: 0.38, py: -1, nx: 0, ny: -1, side: 'top' },
+      { px: 0, py: 1, nx: 0, ny: 1, side: 'bottom' }
+    ],
+    4: [
+      { px: -0.38, py: -1, nx: 0, ny: -1, side: 'top' },
+      { px: 0.38, py: -1, nx: 0, ny: -1, side: 'top' },
+      { px: 0.38, py: 1, nx: 0, ny: 1, side: 'bottom' },
+      { px: -0.38, py: 1, nx: 0, ny: 1, side: 'bottom' }
+    ],
+    5: [
+      { px: -0.35, py: -1, nx: 0, ny: -1, side: 'top' },
+      { px: 0.35, py: -1, nx: 0, ny: -1, side: 'top' },
+      { px: 1, py: 0, nx: 1, ny: 0, side: 'right' },
+      { px: 0.35, py: 1, nx: 0, ny: 1, side: 'bottom' },
+      { px: -0.35, py: 1, nx: 0, ny: 1, side: 'bottom' }
+    ],
+    6: [
+      { px: -0.35, py: -1, nx: 0, ny: -1, side: 'top' },
+      { px: 0.35, py: -1, nx: 0, ny: -1, side: 'top' },
+      { px: 1, py: 0, nx: 1, ny: 0, side: 'right' },
+      { px: 0.35, py: 1, nx: 0, ny: 1, side: 'bottom' },
+      { px: -0.35, py: 1, nx: 0, ny: 1, side: 'bottom' },
+      { px: -1, py: 0, nx: -1, ny: 0, side: 'left' }
+    ]
+  };
+  return presets[count] ?? null;
+};
+
+const getPerimeterSeatSlot = (index, count) => {
+  const t = index / count;
+  const edge = t * 4;
+  if (edge < 1) {
+    return { px: edge * 2 - 1, py: -1, nx: 0, ny: -1, side: 'top' };
+  }
+  if (edge < 2) {
+    return { px: 1, py: (edge - 1) * 2 - 1, nx: 1, ny: 0, side: 'right' };
+  }
+  if (edge < 3) {
+    return { px: 1 - (edge - 2) * 2, py: 1, nx: 0, ny: 1, side: 'bottom' };
+  }
+  return { px: -1, py: 1 - (edge - 3) * 2, nx: -1, ny: 0, side: 'left' };
+};
 
 const Table = () => {
   const sceneRootRef = useRef(null);
@@ -220,11 +271,11 @@ const Table = () => {
   const seats = useMemo(() => {
     const count = Math.max(2, seatCount);
     return Array.from({ length: count }, (_, index) => {
-      const angle = (index / count) * Math.PI * 2 - Math.PI / 2;
       return {
         id: index + 1,
         label: `Seat ${index + 1}`,
-        angle
+        angle: -Math.PI / 2,
+        side: 'top'
       };
     });
   }, [seatCount]);
@@ -292,42 +343,24 @@ const Table = () => {
     const centerY = tableOffsetY + tableHeight / 2;
     const seatRadius = Math.max(SEAT_SIZE.width, SEAT_SIZE.height) / 2;
     const seatPush = seatRadius + SEAT_PADDING;
+    const presetSlots = getPresetSeatSlots(seats.length);
 
     setSeatPositions(
-      seats.map((seat) => {
-        const angle = seat.angle;
-        let edgeX = centerX;
-        let edgeY = centerY;
-
-        if (tableShape === 'oval') {
-          const rx = tableWidth / 2;
-          const ry = tableHeight / 2;
-          edgeX = centerX + Math.cos(angle) * rx;
-          edgeY = centerY + Math.sin(angle) * ry;
-          return {
-            ...seat,
-            x: edgeX + Math.cos(angle) * seatPush,
-            y: edgeY + Math.sin(angle) * seatPush
-          };
-        }
-
-        const dx = Math.cos(angle);
-        const dy = Math.sin(angle);
-        const hx = tableWidth / 2;
-        const hy = tableHeight / 2;
-        const tx = hx / Math.abs(dx || 1e-6);
-        const ty = hy / Math.abs(dy || 1e-6);
-        const t = Math.min(tx, ty);
-        edgeX = centerX + dx * t;
-        edgeY = centerY + dy * t;
+      seats.map((seat, index) => {
+        const slot = presetSlots?.[index] ?? getPerimeterSeatSlot(index, seats.length);
+        const edgeX = centerX + slot.px * (tableWidth / 2);
+        const edgeY = centerY + slot.py * (tableHeight / 2);
+        const angle = Math.atan2(slot.ny, slot.nx);
         return {
           ...seat,
-          x: edgeX + dx * seatPush,
-          y: edgeY + dy * seatPush
+          angle,
+          side: slot.side,
+          x: edgeX + slot.nx * seatPush,
+          y: edgeY + slot.ny * seatPush
         };
       })
     );
-  }, [seats, tableShape]);
+  }, [seats]);
 
   const updateTabletopScale = useCallback(() => {
     const frameNode = tableFrameRef.current;
@@ -1599,20 +1632,20 @@ const Table = () => {
               const occupied = occupiedSeats[seat.id];
               const seatStyle = {
                 left: `${seat.x}px`,
-                top: `${seat.y}px`,
-                '--seat-rotation': `${seat.angle + Math.PI / 2}rad`
+                top: `${seat.y}px`
               };
               return (
                 <button
                   key={seat.id}
                   type="button"
-                  className={`seat ${occupied ? 'seat--occupied' : ''}`}
+                  className={`seat seat--${seat.side} ${occupied ? 'seat--occupied' : ''}`}
                   style={seatStyle}
                   onClick={() => toggleSeat(seat.id)}
                 >
-                  <span className="seat__label">
-                    {occupied ? 'You' : seat.label}
+                  <span className="seat__plate">
+                    <span className="seat__label">{occupied ? 'You' : seat.label}</span>
                   </span>
+                  <span className="seat__bench" aria-hidden="true" />
                 </button>
               );
             })}
