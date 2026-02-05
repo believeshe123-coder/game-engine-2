@@ -1116,9 +1116,7 @@ const Table = () => {
     const handlePointerUp = (event) => {
       if (event.button === 2 || rightSweepRef.current.isRightDown) {
         resetRightSweep();
-        return;
       }
-      placeHeldStack(event.clientX, event.clientY);
     };
     const handlePointerCancel = () => {
       if (rightSweepRef.current.isRightDown) {
@@ -1133,7 +1131,7 @@ const Table = () => {
       window.removeEventListener('pointercancel', handlePointerCancel);
       window.removeEventListener('blur', handlePointerCancel);
     };
-  }, [heldStack.active, placeHeldStack, resetRightSweep]);
+  }, [heldStack.active, resetRightSweep]);
 
   useEffect(() => {
     if (pickCountOpen || settingsOpen || roomSettingsOpen) {
@@ -1456,6 +1454,7 @@ const Table = () => {
   const pickUpFromStack = useCallback(
     (event, stackId, requestedCount) => {
       event.preventDefault();
+      lastPointerRef.current = { x: event.clientX, y: event.clientY };
       const source = stacksById[stackId];
       if (!source) {
         return;
