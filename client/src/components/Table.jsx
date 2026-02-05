@@ -1308,7 +1308,7 @@ const Table = () => {
     }
   }, [pickCountOpen, resetRightSweep, roomSettingsOpen, settingsOpen]);
 
-  const startHeldFullStack = useCallback(
+  const startHeldTopCard = useCallback(
     (stackId, pointerX, pointerY) => {
       const stack = stacksById[stackId];
       const topCardId = stack?.cardIds?.length
@@ -1394,7 +1394,7 @@ const Table = () => {
       setSelectedStackId(null);
       setPickCountOpen(false);
       bringStackToFront(pending.stackId);
-      startHeldFullStack(pending.stackId, pointerX, pointerY);
+      startHeldTopCard(pending.stackId, pointerX, pointerY);
     };
 
     const handlePendingPointerUp = (event) => {
@@ -1439,7 +1439,7 @@ const Table = () => {
     getTablePointerPosition,
     pendingDragActive,
     releaseCapturedPointer,
-    startHeldFullStack
+    startHeldTopCard
   ]);
 
   const handleStackPointerDown = useCallback(
@@ -1464,7 +1464,24 @@ const Table = () => {
               skipMerge: true
             });
           }
+          return;
         }
+
+        event.preventDefault();
+        event.stopPropagation();
+        const position = getTablePointerPosition(event);
+        if (!position) {
+          return;
+        }
+        const stackId = stackIdOverride ?? hitTestStack(position.x, position.y);
+        if (!stackId) {
+          return;
+        }
+        const stack = stacksById[stackId];
+        if (!stack) {
+          return;
+        }
+        pickUpStack(stackId, stack.cardIds.length, event);
         return;
       }
 
@@ -1511,6 +1528,8 @@ const Table = () => {
       getTablePointerPosition,
       heldStack.active,
       hitTestStack,
+      pickUpStack,
+      stacksById,
       placeHeldStack
     ]
   );
