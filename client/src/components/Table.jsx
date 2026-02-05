@@ -27,6 +27,7 @@ const SEAT_POSITION = {
 };
 const SEAT_SIZE = { width: 208, height: 132 };
 const SEAT_PADDING = 24;
+const SEAT_GAP_PX = Math.max(0, Math.max(SEAT_SIZE.width, SEAT_SIZE.height) / 2 + SEAT_PADDING - 20);
 const RIGHT_SWEEP_HOLD_MS = 120;
 const SWEEP_MIN_INTERVAL_MS = 40;
 const SWEEP_MIN_DIST = 30;
@@ -38,55 +39,89 @@ const HAND_ZONE_SIZE = {
 };
 const HAND_ZONE_SEAT_OFFSET = 52;
 
-const getPresetSeatSlots = (count) => {
-  const presets = {
-    2: [
-      { px: 0, py: -1, nx: 0, ny: -1, side: 'top' },
-      { px: 0, py: 1, nx: 0, ny: 1, side: 'bottom' }
-    ],
-    3: [
-      { px: -0.38, py: -1, nx: 0, ny: -1, side: 'top' },
-      { px: 0.38, py: -1, nx: 0, ny: -1, side: 'top' },
-      { px: 0, py: 1, nx: 0, ny: 1, side: 'bottom' }
-    ],
-    4: [
-      { px: -0.38, py: -1, nx: 0, ny: -1, side: 'top' },
-      { px: 0.38, py: -1, nx: 0, ny: -1, side: 'top' },
-      { px: 0.38, py: 1, nx: 0, ny: 1, side: 'bottom' },
-      { px: -0.38, py: 1, nx: 0, ny: 1, side: 'bottom' }
-    ],
-    5: [
-      { px: -0.35, py: -1, nx: 0, ny: -1, side: 'top' },
-      { px: 0.35, py: -1, nx: 0, ny: -1, side: 'top' },
-      { px: 1, py: 0, nx: 1, ny: 0, side: 'right' },
-      { px: 0.35, py: 1, nx: 0, ny: 1, side: 'bottom' },
-      { px: -0.35, py: 1, nx: 0, ny: 1, side: 'bottom' }
-    ],
-    6: [
-      { px: -0.35, py: -1, nx: 0, ny: -1, side: 'top' },
-      { px: 0.35, py: -1, nx: 0, ny: -1, side: 'top' },
-      { px: 1, py: 0, nx: 1, ny: 0, side: 'right' },
-      { px: 0.35, py: 1, nx: 0, ny: 1, side: 'bottom' },
-      { px: -0.35, py: 1, nx: 0, ny: 1, side: 'bottom' },
-      { px: -1, py: 0, nx: -1, ny: 0, side: 'left' }
-    ]
-  };
-  return presets[count] ?? null;
+const SIDE_ORDER = ['top', 'right', 'bottom', 'left'];
+const SIDE_NORMALS = {
+  top: { angle: -Math.PI / 2 },
+  right: { angle: 0 },
+  bottom: { angle: Math.PI / 2 },
+  left: { angle: Math.PI }
 };
 
-const getPerimeterSeatSlot = (index, count) => {
-  const t = index / count;
-  const edge = t * 4;
-  if (edge < 1) {
-    return { px: edge * 2 - 1, py: -1, nx: 0, ny: -1, side: 'top' };
+const getSideSeatCounts = (seatCount) => {
+  const count = Math.max(2, seatCount);
+  const quarter = Math.floor(count / 4);
+  const sideCounts = {
+    top: Math.ceil(count / 4),
+    right: quarter,
+    bottom: Math.ceil(count / 4),
+    left: quarter
+  };
+  let assigned = sideCounts.top + sideCounts.right + sideCounts.bottom + sideCounts.left;
+  let sideIndex = 0;
+  while (assigned < count) {
+    const side = SIDE_ORDER[sideIndex % SIDE_ORDER.length];
+    sideCounts[side] += 1;
+    assigned += 1;
+    sideIndex += 1;
   }
-  if (edge < 2) {
-    return { px: 1, py: (edge - 1) * 2 - 1, nx: 1, ny: 0, side: 'right' };
+  return sideCounts;
+};
+
+const getSidePositions = (count) => {
+  return Array.from({ length: count }, (_, index) => (index + 1) / (count + 1));
+};
+
+const getSeatAnchors = ({ seatCount, feltBounds }) => {
+  if (!feltBounds || !feltBounds.width || !feltBounds.height) {
+    return [];
   }
-  if (edge < 3) {
-    return { px: 1 - (edge - 2) * 2, py: 1, nx: 0, ny: 1, side: 'bottom' };
-  }
-  return { px: -1, py: 1 - (edge - 3) * 2, nx: -1, ny: 0, side: 'left' };
+
+  const sideCounts = getSideSeatCounts(seatCount);
+  const minSpacingBySide = {
+    top: SEAT_SIZE.width,
+    bottom: SEAT_SIZE.width,
+    left: SEAT_SIZE.height,
+    right: SEAT_SIZE.height
+  };
+
+  return SIDE_ORDER.flatMap((side) => {
+    const count = sideCounts[side];
+    if (!count) {
+      return [];
+    }
+    const isHorizontal = side === 'top' || side === 'bottom';
+    const availableSpan = isHorizontal ? feltBounds.width : feltBounds.height;
+    const minimumSpan = minSpacingBySide[side] * (count + 1);
+    const overflow = Math.max(0, minimumSpan - availableSpan);
+    const start = isHorizontal ? feltBounds.left - overflow / 2 : feltBounds.top - overflow / 2;
+    const span = availableSpan + overflow;
+    const outwardAdjustment = overflow > 0 ? Math.min(24, overflow / (count + 1)) : 0;
+    const normal = SIDE_NORMALS[side];
+
+    return getSidePositions(count).map((t) => {
+      const axisValue = start + t * span;
+      if (isHorizontal) {
+        return {
+          x: axisValue,
+          y:
+            side === 'top'
+              ? feltBounds.top - (SEAT_GAP_PX + outwardAdjustment)
+              : feltBounds.bottom + (SEAT_GAP_PX + outwardAdjustment),
+          side,
+          angle: normal.angle
+        };
+      }
+      return {
+        x:
+          side === 'left'
+            ? feltBounds.left - (SEAT_GAP_PX + outwardAdjustment)
+            : feltBounds.right + (SEAT_GAP_PX + outwardAdjustment),
+        y: axisValue,
+        side,
+        angle: normal.angle
+      };
+    });
+  });
 };
 
 const Table = () => {
@@ -321,46 +356,51 @@ const Table = () => {
       return;
     }
     const frameRect = frameNode.getBoundingClientRect();
+    const feltNode = feltRef.current;
     const tableBounds = tableNode.getBoundingClientRect();
+    const feltBounds = feltNode?.getBoundingClientRect() ?? tableBounds;
     const scale = tableScaleRef.current;
     const frameWidth = frameRect.width / scale;
     const frameHeight = frameRect.height / scale;
-    const tableWidth = tableBounds.width / scale;
-    const tableHeight = tableBounds.height / scale;
-    const tableOffsetX = (tableBounds.left - frameRect.left) / scale;
-    const tableOffsetY = (tableBounds.top - frameRect.top) / scale;
+    const feltWidth = feltBounds.width / scale;
+    const feltHeight = feltBounds.height / scale;
+    const feltOffsetX = (feltBounds.left - frameRect.left) / scale;
+    const feltOffsetY = (feltBounds.top - frameRect.top) / scale;
     if (
       !frameWidth ||
       !frameHeight ||
-      !tableWidth ||
-      !tableHeight
+      !feltWidth ||
+      !feltHeight
     ) {
       setSeatPositions(seats.map((seat) => ({ ...seat, x: 0, y: 0 })));
       return;
     }
 
-    const centerX = tableOffsetX + tableWidth / 2;
-    const centerY = tableOffsetY + tableHeight / 2;
-    const seatRadius = Math.max(SEAT_SIZE.width, SEAT_SIZE.height) / 2;
-    const seatPush = seatRadius + SEAT_PADDING;
-    const presetSlots = getPresetSeatSlots(seats.length);
+    const anchors = getSeatAnchors({
+      seatCount: seats.length,
+      feltBounds: {
+        left: feltOffsetX,
+        right: feltOffsetX + feltWidth,
+        top: feltOffsetY,
+        bottom: feltOffsetY + feltHeight,
+        width: feltWidth,
+        height: feltHeight
+      }
+    });
 
     setSeatPositions(
       seats.map((seat, index) => {
-        const slot = presetSlots?.[index] ?? getPerimeterSeatSlot(index, seats.length);
-        const edgeX = centerX + slot.px * (tableWidth / 2);
-        const edgeY = centerY + slot.py * (tableHeight / 2);
-        const angle = Math.atan2(slot.ny, slot.nx);
+        const anchor = anchors[index];
         return {
           ...seat,
-          angle,
-          side: slot.side,
-          x: edgeX + slot.nx * seatPush,
-          y: edgeY + slot.ny * seatPush
+          angle: anchor?.angle ?? -Math.PI / 2,
+          side: anchor?.side ?? 'top',
+          x: anchor?.x ?? 0,
+          y: anchor?.y ?? 0
         };
       })
     );
-  }, [seats]);
+  }, [seats, tableShape]);
 
   const updateTabletopScale = useCallback(() => {
     const frameNode = tableFrameRef.current;
