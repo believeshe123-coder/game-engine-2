@@ -291,7 +291,9 @@ export const useTableState = (tableRect, cardSize, initialSettings) => {
           y: clamped.y,
           rotation: 0,
           faceUp,
-          cardIds
+          cardIds,
+          zone: 'table',
+          ownerSeatIndex: null
         });
       };
 
