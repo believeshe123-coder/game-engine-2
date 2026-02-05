@@ -1187,7 +1187,6 @@ const Table = () => {
     [handlePointerMoveHover]
   );
 
-  const badgeOffset = 24;
   const visibleBadgeStackId =
     settings.stackCountDisplayMode === 'hover' ? hoveredStackId : null;
 
@@ -1464,48 +1463,38 @@ const Table = () => {
                   return null;
                 }
                 const zIndex = index + 1;
-                return (
-                  <Card
-                    key={stack.id}
-                    id={stack.id}
-                    x={stack.x}
-                    y={stack.y}
-                    rotation={stack.rotation}
-                    faceUp={stack.faceUp}
-                    cardStyle={appliedSettings.cardStyle}
-                    zIndex={zIndex}
-                    rank={topCard?.rank}
-                    suit={topCard?.suit}
-                    color={topCard?.color}
-                    isHeld={isHeld}
-                    isSelected={stack.id === selectedStackId}
-                    onPointerDown={handleStackPointerDown}
-                  />
-                );
-              })}
-            </div>
-            <div id="stackLabelLayer" className="stack-label-layer" aria-hidden="true">
-              {stacks.map((stack) => {
-                if (stack.cardIds.length <= 1) {
-                  return null;
-                }
                 const showBadge =
-                  settings.stackCountDisplayMode === 'always' ||
-                  (settings.stackCountDisplayMode === 'hover' &&
-                    stack.id === visibleBadgeStackId);
-                if (!showBadge) {
-                  return null;
-                }
+                  stack.cardIds.length > 1 &&
+                  (settings.stackCountDisplayMode === 'always' ||
+                    (settings.stackCountDisplayMode === 'hover' &&
+                      stack.id === visibleBadgeStackId));
                 return (
                   <div
                     key={stack.id}
-                    className="stackCountBadge"
+                    className="stack-entity"
                     style={{
-                      left: stack.x + CARD_SIZE.width / 2,
-                      top: stack.y - badgeOffset
+                      transform: `translate(${stack.x}px, ${stack.y}px) rotate(${stack.rotation}deg)`,
+                      zIndex
                     }}
                   >
-                    Stack: {stack.cardIds.length}
+                    <Card
+                      id={stack.id}
+                      x={0}
+                      y={0}
+                      rotation={0}
+                      faceUp={stack.faceUp}
+                      cardStyle={appliedSettings.cardStyle}
+                      zIndex={1}
+                      rank={topCard?.rank}
+                      suit={topCard?.suit}
+                      color={topCard?.color}
+                      isHeld={isHeld}
+                      isSelected={stack.id === selectedStackId}
+                      onPointerDown={handleStackPointerDown}
+                    />
+                    {showBadge ? (
+                      <div className="stackCountBadge">Stack: {stack.cardIds.length}</div>
+                    ) : null}
                   </div>
                 );
               })}

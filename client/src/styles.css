@@ -239,17 +239,19 @@ body,
   z-index: 999998;
 }
 
-#stackLabelLayer {
+.stack-entity {
   position: absolute;
-  inset: 0;
-  padding: 24px;
-  pointer-events: none;
-  z-index: 6;
+  width: calc(var(--card-base-width) * var(--card-scale));
+  height: calc(var(--card-base-height) * var(--card-scale));
+  transform-origin: top left;
 }
 
 .stackCountBadge {
   position: absolute;
+  top: calc(-12px * var(--card-scale));
+  left: 50%;
   transform: translate(-50%, -100%);
+  z-index: 2;
   padding: 6px 10px;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.85);
@@ -260,6 +262,7 @@ body,
   box-shadow: 0 6px 14px rgba(0, 0, 0, 0.35);
   white-space: nowrap;
   user-select: none;
+  pointer-events: none;
 }
 
 #seatLayer {
@@ -328,6 +331,8 @@ body,
 
 .card {
   position: absolute;
+  top: 0;
+  left: 0;
   width: calc(var(--card-base-width) * var(--card-scale));
   height: calc(var(--card-base-height) * var(--card-scale));
   border-radius: calc(10px * var(--card-scale));
