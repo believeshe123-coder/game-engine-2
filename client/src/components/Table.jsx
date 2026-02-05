@@ -32,7 +32,6 @@ const SWEEP_MIN_INTERVAL_MS = 40;
 const SWEEP_MIN_DIST = 30;
 const STACK_EPS = 10;
 const SWEEP_JITTER = 6;
-const DOUBLE_CLICK_MS = 225;
 const HAND_ZONE_SIZE = {
   width: CARD_SIZE.width * 3.4,
   height: CARD_SIZE.height * 1.5
@@ -49,7 +48,7 @@ const Table = () => {
   const [tableScale, setTableScale] = useState(1);
   const tableScaleRef = useRef(1);
   const pendingDragRef = useRef(null);
-  const pendingClickRef = useRef({ stackId: null, timeoutId: null, expiresAt: 0 });
+  const capturedPointerRef = useRef({ pointerId: null, element: null });
   const [settings, setSettings] = useState(() => loadSettings());
   const [appliedSettings, setAppliedSettings] = useState(() => loadSettings());
   const {
@@ -163,11 +162,12 @@ const Table = () => {
     };
   }, []);
 
-  const clearPendingClick = useCallback(() => {
-    if (pendingClickRef.current.timeoutId) {
-      window.clearTimeout(pendingClickRef.current.timeoutId);
+  const releaseCapturedPointer = useCallback(() => {
+    const { pointerId, element } = capturedPointerRef.current;
+    if (element && pointerId !== null && element.hasPointerCapture?.(pointerId)) {
+      element.releasePointerCapture(pointerId);
     }
-    pendingClickRef.current = { stackId: null, timeoutId: null, expiresAt: 0 };
+    capturedPointerRef.current = { pointerId: null, element: null };
   }, []);
 
   useEffect(() => {
@@ -1178,6 +1178,9 @@ const Table = () => {
       if (!pending) {
         return;
       }
+      if (pending.pointerId !== undefined && event.pointerId !== pending.pointerId) {
+        return;
+      }
       const position = getTablePointerPosition(event);
       if (!position) {
         return;
@@ -1187,57 +1190,63 @@ const Table = () => {
       const deltaX = pointerX - pending.startX;
       const deltaY = pointerY - pending.startY;
       const distance = Math.hypot(deltaX, deltaY);
+      // A small threshold avoids turning plain clicks into accidental drags.
       if (distance < DRAG_THRESHOLD) {
         return;
       }
       pendingDragRef.current = null;
       setPendingDragActive(false);
+      releaseCapturedPointer();
       setSelectedStackId(null);
       setPickCountOpen(false);
       bringStackToFront(pending.stackId);
       startHeldFullStack(pending.stackId, pointerX, pointerY);
     };
 
-    const handlePendingPointerUp = () => {
+    const handlePendingPointerUp = (event) => {
       const pending = pendingDragRef.current;
       if (!pending) {
         return;
       }
+      if (pending.pointerId !== undefined && event.pointerId !== pending.pointerId) {
+        return;
+      }
       pendingDragRef.current = null;
       setPendingDragActive(false);
-      clearPendingClick();
-      const timeoutId = window.setTimeout(() => {
-        bringStackToFront(pending.stackId);
-        setSelectedStackId(pending.stackId);
-        setPickCountOpen(false);
-        pendingClickRef.current = { stackId: null, timeoutId: null, expiresAt: 0 };
-      }, DOUBLE_CLICK_MS);
-      pendingClickRef.current = {
-        stackId: pending.stackId,
-        timeoutId,
-        expiresAt: performance.now() + DOUBLE_CLICK_MS
-      };
+      releaseCapturedPointer();
+      bringStackToFront(pending.stackId);
+      setSelectedStackId(pending.stackId);
+      setPickCountOpen(false);
+    };
+
+    const handlePendingPointerCancel = (event) => {
+      const pending = pendingDragRef.current;
+      if (!pending) {
+        return;
+      }
+      if (pending.pointerId !== undefined && event.pointerId !== pending.pointerId) {
+        return;
+      }
+      pendingDragRef.current = null;
+      setPendingDragActive(false);
+      releaseCapturedPointer();
     };
 
     window.addEventListener('pointermove', handlePendingPointerMove);
     window.addEventListener('pointerup', handlePendingPointerUp);
+    window.addEventListener('pointercancel', handlePendingPointerCancel);
     return () => {
       window.removeEventListener('pointermove', handlePendingPointerMove);
       window.removeEventListener('pointerup', handlePendingPointerUp);
+      window.removeEventListener('pointercancel', handlePendingPointerCancel);
     };
   }, [
     bringStackToFront,
-    clearPendingClick,
     getTablePointerPosition,
     pendingDragActive,
+    releaseCapturedPointer,
     startHeldFullStack
   ]);
-
-  useEffect(() => {
-    return () => {
-      clearPendingClick();
-    };
-  }, [clearPendingClick]);
 
   const handleStackPointerDown = useCallback(
     (event, stackIdOverride = null) => {
@@ -1279,44 +1288,36 @@ const Table = () => {
         return;
       }
 
-      const pendingClick = pendingClickRef.current;
-      const now = performance.now();
-      if (
-        event.button === 0 &&
-        pendingClick.stackId === stackId &&
-        pendingClick.timeoutId &&
-        now <= pendingClick.expiresAt
-      ) {
-        clearPendingClick();
-        pendingDragRef.current = null;
-        setPendingDragActive(false);
-        setPickCountOpen(false);
-        setSelectedStackId(null);
-        setStacks((prev) =>
-          prev.map((stack) =>
-            stack.id === stackId ? { ...stack, faceUp: !stack.faceUp } : stack
-          )
-        );
-        return;
-      }
-
       if (heldStack.active) {
         placeHeldStack(lastPointerRef.current.x, lastPointerRef.current.y);
         setSelectedStackId(null);
         setPickCountOpen(false);
         return;
       }
-      pendingDragRef.current = { stackId, startX: pointerX, startY: pointerY };
+
+      // Capture the pointer during press-to-grab so move/up still reach us even if
+      // the pointer leaves the card while dragging.
+      if (event.currentTarget?.setPointerCapture && event.pointerId !== undefined) {
+        event.currentTarget.setPointerCapture(event.pointerId);
+        capturedPointerRef.current = {
+          pointerId: event.pointerId,
+          element: event.currentTarget
+        };
+      }
+      pendingDragRef.current = {
+        stackId,
+        startX: pointerX,
+        startY: pointerY,
+        pointerId: event.pointerId
+      };
       setPendingDragActive(true);
     },
     [
-      clearPendingClick,
       dealOneFromHeld,
       getTablePointerPosition,
       heldStack.active,
       hitTestStack,
-      placeHeldStack,
-      setStacks
+      placeHeldStack
     ]
   );
 
