@@ -1628,25 +1628,43 @@ const Table = () => {
           style={{ '--card-scale': CARD_SCALE }}
         >
           <div id="seatLayer" className="table__seats" aria-label="Table seats">
-            {seatPositions.map((seat) => {
+            {seatPositions.map((seat, i) => {
               const occupied = occupiedSeats[seat.id];
+              const seatHandCount = (handStacksBySeat[seat.id] ?? []).reduce(
+                (acc, stack) => acc + stack.cardIds.length,
+                0
+              );
               const seatStyle = {
                 left: `${seat.x}px`,
                 top: `${seat.y}px`
               };
               return (
-                <button
+                <div
                   key={seat.id}
-                  type="button"
-                  className={`seat seat--${seat.side} ${occupied ? 'seat--occupied' : ''}`}
+                  className={`seat seat--${seat.side} ${occupied ? 'seat--occupied' : ''} ${seatHandCount ? 'seat--has-cards' : ''}`}
+                  data-seat-index={i}
                   style={seatStyle}
                   onClick={() => toggleSeat(seat.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      toggleSeat(seat.id);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
                 >
-                  <span className="seat__plate">
-                    <span className="seat__label">{occupied ? 'You' : seat.label}</span>
-                  </span>
-                  <span className="seat__bench" aria-hidden="true" />
-                </button>
+                  <div className="seat__base" />
+                  <div className="seat__bench">
+                    <div className="seat__label">SEAT {i + 1}</div>
+
+                    <div className="seat__hand" aria-label={`Seat ${i + 1} hand zone`}>
+                      {/* hand contents render here if needed */}
+                    </div>
+
+                    <div className="seat__handIndicator" aria-hidden="true" />
+                  </div>
+                </div>
               );
             })}
           </div>
