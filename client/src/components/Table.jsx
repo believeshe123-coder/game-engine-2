@@ -31,6 +31,7 @@ const SWEEP_MIN_INTERVAL_MS = 40;
 const SWEEP_MIN_DIST = 30;
 const STACK_EPS = 10;
 const SWEEP_JITTER = 6;
+const DOUBLE_CLICK_MS = 225;
 
 const Table = () => {
   const sceneRootRef = useRef(null);
@@ -42,6 +43,7 @@ const Table = () => {
   const [tableScale, setTableScale] = useState(1);
   const tableScaleRef = useRef(1);
   const pendingDragRef = useRef(null);
+  const pendingClickRef = useRef({ stackId: null, timeoutId: null, expiresAt: 0 });
   const [settings, setSettings] = useState(() => loadSettings());
   const [appliedSettings, setAppliedSettings] = useState(() => loadSettings());
   const {
@@ -153,6 +155,13 @@ const Table = () => {
       lastDropAtMs: 0,
       lastDropPos: null
     };
+  }, []);
+
+  const clearPendingClick = useCallback(() => {
+    if (pendingClickRef.current.timeoutId) {
+      window.clearTimeout(pendingClickRef.current.timeoutId);
+    }
+    pendingClickRef.current = { stackId: null, timeoutId: null, expiresAt: 0 };
   }, []);
 
   useEffect(() => {
@@ -1043,9 +1052,18 @@ const Table = () => {
       }
       pendingDragRef.current = null;
       setPendingDragActive(false);
-      bringStackToFront(pending.stackId);
-      setSelectedStackId(pending.stackId);
-      setPickCountOpen(false);
+      clearPendingClick();
+      const timeoutId = window.setTimeout(() => {
+        bringStackToFront(pending.stackId);
+        setSelectedStackId(pending.stackId);
+        setPickCountOpen(false);
+        pendingClickRef.current = { stackId: null, timeoutId: null, expiresAt: 0 };
+      }, DOUBLE_CLICK_MS);
+      pendingClickRef.current = {
+        stackId: pending.stackId,
+        timeoutId,
+        expiresAt: performance.now() + DOUBLE_CLICK_MS
+      };
     };
 
     window.addEventListener('pointermove', handlePendingPointerMove);
@@ -1054,7 +1072,19 @@ const Table = () => {
       window.removeEventListener('pointermove', handlePendingPointerMove);
       window.removeEventListener('pointerup', handlePendingPointerUp);
     };
-  }, [bringStackToFront, getTablePointerPosition, pendingDragActive, startHeldFullStack]);
+  }, [
+    bringStackToFront,
+    clearPendingClick,
+    getTablePointerPosition,
+    pendingDragActive,
+    startHeldFullStack
+  ]);
+
+  useEffect(() => {
+    return () => {
+      clearPendingClick();
+    };
+  }, [clearPendingClick]);
 
   const handleStackPointerDown = useCallback(
     (event, stackIdOverride = null) => {
@@ -1091,20 +1121,50 @@ const Table = () => {
       }
       const pointerX = position.x;
       const pointerY = position.y;
+      const stackId = stackIdOverride ?? hitTestStack(pointerX, pointerY);
+      if (!stackId) {
+        return;
+      }
+
+      const pendingClick = pendingClickRef.current;
+      const now = performance.now();
+      if (
+        event.button === 0 &&
+        pendingClick.stackId === stackId &&
+        pendingClick.timeoutId &&
+        now <= pendingClick.expiresAt
+      ) {
+        clearPendingClick();
+        pendingDragRef.current = null;
+        setPendingDragActive(false);
+        setPickCountOpen(false);
+        setSelectedStackId(null);
+        setStacks((prev) =>
+          prev.map((stack) =>
+            stack.id === stackId ? { ...stack, faceUp: !stack.faceUp } : stack
+          )
+        );
+        return;
+      }
+
       if (heldStack.active) {
         placeHeldStack(lastPointerRef.current.x, lastPointerRef.current.y);
         setSelectedStackId(null);
         setPickCountOpen(false);
         return;
       }
-      const stackId = stackIdOverride ?? hitTestStack(pointerX, pointerY);
-      if (!stackId) {
-        return;
-      }
       pendingDragRef.current = { stackId, startX: pointerX, startY: pointerY };
       setPendingDragActive(true);
     },
-    [dealOneFromHeld, getTablePointerPosition, heldStack.active, hitTestStack, placeHeldStack]
+    [
+      clearPendingClick,
+      dealOneFromHeld,
+      getTablePointerPosition,
+      heldStack.active,
+      hitTestStack,
+      placeHeldStack,
+      setStacks
+    ]
   );
 
   const handleSurfacePointerDown = useCallback(
