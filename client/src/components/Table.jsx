@@ -42,7 +42,6 @@ const SEAT_DIAMETER_PX = Math.max(SEAT_SIZE.width, SEAT_SIZE.height);
 const SEAT_DRAG_PADDING_PX = 10;
 const SEAT_MIN_GAP_PX = SEAT_DIAMETER_PX + SEAT_DRAG_PADDING_PX;
 const TAU = Math.PI * 2;
-const RIGHT_SWEEP_HOLD_MS = 120;
 const SWEEP_MIN_INTERVAL_MS = 40;
 const SWEEP_MIN_DIST = 30;
 const STACK_EPS_BASE = 10;
@@ -111,8 +110,6 @@ const Table = () => {
   const [tableScale, setTableScale] = useState(1);
   const [tableFootprintPx, setTableFootprintPx] = useState(null);
   const tableScaleRef = useRef(1);
-  const pendingDragRef = useRef(null);
-  const lastOwnMovementRef = useRef(null);
   const capturedPointerRef = useRef({ pointerId: null, element: null });
   const [settings, setSettings] = useState(() => loadSettings());
   const [appliedSettings, setAppliedSettings] = useState(() => loadSettings());
@@ -151,6 +148,7 @@ const Table = () => {
   const seatCount = settings.roomSettings.seatCount;
   const {
     cardsById,
+    allCardIds,
     stacks,
     setStacks,
     createStackId,
@@ -165,8 +163,7 @@ const Table = () => {
     moveToHand,
     moveFromHandToTable,
     reorderHand,
-    toggleReveal,
-    pickupFromStack
+    toggleReveal
   } = useTableState(
     tableRect,
     cardSize,
@@ -174,21 +171,23 @@ const Table = () => {
     seatCount
   );
   const [cardFaceOverrides, setCardFaceOverrides] = useState({});
-  const [heldStack, setHeldStack] = useState({
-    active: false,
-    stackId: null,
-    cardIds: [],
-    sourceStackId: null,
-    offset: { dx: 0, dy: 0 },
-    origin: null,
-    mode: 'stack'
+  const [interaction, setInteraction] = useState({
+    mode: 'idle',
+    pointerId: null,
+    source: null,
+    held: null,
+    drag: null,
+    selectedStackId: null,
+    menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
   });
-  const initialCardTotalRef = useRef(null);
-  const lastCardCountRef = useRef(null);
-  const cardCountLogQueueRef = useRef([]);
   const [hoveredStackId, setHoveredStackId] = useState(null);
-  const [selectedStackId, setSelectedStackId] = useState(null);
-  const [pendingDragActive, setPendingDragActive] = useState(false);
+  const pointerDownRef = useRef(null);
+  const sweepRef = useRef({
+    lastDropAtMs: 0,
+    lastDropPos: null
+  });
+  const lastPointerWorldRef = useRef(null);
+  const lastPointerRef = useRef({ x: 0, y: 0 });
   const [pickCountOpen, setPickCountOpen] = useState(false);
   const [pickCountValue, setPickCountValue] = useState('1');
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -201,123 +200,50 @@ const Table = () => {
   const [actionLog, setActionLog] = useState([]);
   const actionLogIdRef = useRef(1);
   const [presence, setPresence] = useState(() => ({}));
-  const rafRef = useRef(null);
-  const latestPoint = useRef(null);
-  const lastPointerRef = useRef({ x: 0, y: 0 });
-  const rightSweepRef = useRef({
-    isRightDown: false,
-    sweepActive: false,
-    downAtMs: 0,
-    downPos: null,
-    lastDropAtMs: 0,
-    lastDropPos: null
-  });
+
   useEffect(() => {
     if (process.env.NODE_ENV === 'production') {
       return;
     }
-    if (initialCardTotalRef.current !== null) {
-      return;
-    }
-    const total = Object.keys(cardsById ?? {}).length;
-    if (total > 0) {
-      initialCardTotalRef.current = total;
-    }
-  }, [cardsById]);
-
-  const countAllCards = useCallback((state) => {
     const counts = new Map();
-    const heldId = state.heldStack?.active ? state.heldStack.stackId : null;
-    let tableCount = 0;
-    let handsCount = 0;
-    let heldCount = 0;
     const addCard = (cardId) => {
       counts.set(cardId, (counts.get(cardId) ?? 0) + 1);
     };
-    state.stacks.forEach((stack) => {
-      if (stack.id === heldId) {
-        return;
-      }
-      tableCount += stack.cardIds.length;
+    stacks.forEach((stack) => {
       stack.cardIds.forEach(addCard);
     });
-    Object.values(state.hands ?? {}).forEach((hand) => {
-      const cardIds = hand?.cardIds ?? [];
-      handsCount += cardIds.length;
-      cardIds.forEach(addCard);
+    Object.values(hands ?? {}).forEach((hand) => {
+      (hand?.cardIds ?? []).forEach(addCard);
     });
-    if (state.heldStack?.active) {
-      heldCount = state.heldStack.cardIds.length;
-      state.heldStack.cardIds.forEach(addCard);
-    }
+    interaction.held?.cardIds?.forEach(addCard);
+
     const duplicates = [];
     counts.forEach((count, cardId) => {
       if (count > 1) {
         duplicates.push(`${cardId} appears ${count}x`);
       }
     });
-    return {
-      tableCount,
-      handsCount,
-      heldCount,
-      total: tableCount + handsCount + heldCount,
-      duplicates
-    };
-  }, []);
-
-  const logCardCounts = useCallback((label, counts) => {
-    if (process.env.NODE_ENV === 'production') {
-      return;
-    }
-    const expectedTotal = initialCardTotalRef.current;
-    const previous = lastCardCountRef.current;
-    // eslint-disable-next-line no-console
-    console.log(`[card-count] ${label}`, {
-      ...counts,
-      expectedTotal: expectedTotal ?? null
-    });
-    if (previous && previous.total !== counts.total) {
+    const expectedTotal =
+      allCardIds?.length ?? Object.keys(cardsById ?? {}).length;
+    const actualTotal = counts.size
+      ? Array.from(counts.values()).reduce((sum, value) => sum + value, 0)
+      : 0;
+    const missing =
+      expectedTotal > 0
+        ? (allCardIds ?? Object.keys(cardsById ?? {})).filter(
+            (cardId) => !counts.has(cardId)
+          )
+        : [];
+    if (duplicates.length || (expectedTotal && actualTotal !== expectedTotal) || missing.length) {
       // eslint-disable-next-line no-console
-      console.warn(
-        `[card-count] total changed ${previous.total} -> ${counts.total} (${label})`,
-        { previous, current: counts }
-      );
+      console.error('[card-invariant] card conservation violated', {
+        duplicates,
+        missing,
+        expectedTotal,
+        actualTotal
+      });
     }
-    if (expectedTotal !== null && expectedTotal !== counts.total) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[card-count] total mismatch expected ${expectedTotal} got ${counts.total} (${label})`
-      );
-    }
-    if (counts.duplicates.length > 0) {
-      // eslint-disable-next-line no-console
-      console.warn(`[card-count] duplicates (${label})`, counts.duplicates);
-    }
-    lastCardCountRef.current = counts;
-  }, []);
-
-  const queueCardCountLog = useCallback((label) => {
-    if (process.env.NODE_ENV === 'production') {
-      return;
-    }
-    cardCountLogQueueRef.current.push(label);
-  }, []);
-
-  useEffect(() => {
-    if (process.env.NODE_ENV === 'production') {
-      return;
-    }
-    if (cardCountLogQueueRef.current.length === 0) {
-      return;
-    }
-    const label = cardCountLogQueueRef.current.shift();
-    if (!label) {
-      return;
-    }
-    const counts = countAllCards({ stacks, hands, heldStack });
-    logCardCounts(label, counts);
-  }, [countAllCards, hands, heldStack, logCardCounts, stacks]);
-  const DRAG_THRESHOLD = 8;
+  }, [allCardIds, cardsById, hands, interaction.held, stacks]);
   const applySweepJitter = useCallback((position, direction) => {
     if (!direction) {
       return position;
@@ -369,17 +295,6 @@ const Table = () => {
     [cardSize.height, cardSize.width, stackEps]
   );
 
-  const resetRightSweep = useCallback(() => {
-    rightSweepRef.current = {
-      isRightDown: false,
-      sweepActive: false,
-      downAtMs: 0,
-      downPos: null,
-      lastDropAtMs: 0,
-      lastDropPos: null
-    };
-  }, []);
-
   const releaseCapturedPointer = useCallback(() => {
     const { pointerId, element } = capturedPointerRef.current;
     if (element && pointerId !== null && element.hasPointerCapture?.(pointerId)) {
@@ -408,10 +323,6 @@ const Table = () => {
   const [feltScreenRect, setFeltScreenRect] = useState(null);
   const [debugClampPoint, setDebugClampPoint] = useState(null);
   const [showFeltDebug, setShowFeltDebug] = useState(false);
-  const placementDebugEnabled =
-    typeof window !== 'undefined' &&
-    process.env.NODE_ENV !== 'production' &&
-    window.localStorage?.getItem('placementDebug') === 'true';
   const safeFeltEllipse = useMemo(() => {
     if (!feltEllipse || !['oval', 'circle'].includes(tableShape)) {
       return null;
@@ -832,9 +743,9 @@ const Table = () => {
 
   useEffect(() => {
     updatePresence({
-      holdingCount: heldStack.active ? heldStack.cardIds.length : 0
+      holdingCount: interaction.held ? interaction.held.cardIds.length : 0
     });
-  }, [heldStack.active, heldStack.cardIds.length, updatePresence]);
+  }, [interaction.held, updatePresence]);
 
   const getCardFace = useCallback((stack, cardId) => {
     if (!stack || !cardId) {
@@ -911,83 +822,6 @@ const Table = () => {
       return next;
     });
   }, [setStacks]);
-
-  const getHeldTopLeft = useCallback((pointerX, pointerY, offset) => {
-    return {
-      x: pointerX - offset.dx,
-      y: pointerY - offset.dy
-    };
-  }, []);
-
-  const cloneStacksSnapshot = useCallback(
-    (stackList) => stackList.map((stack) => ({ ...stack, cardIds: [...stack.cardIds] })),
-    []
-  );
-
-  const stacksAreEqual = useCallback((a, b) => {
-    if (a === b) {
-      return true;
-    }
-    if (!a || !b || a.length !== b.length) {
-      return false;
-    }
-    for (let i = 0; i < a.length; i += 1) {
-      const left = a[i];
-      const right = b[i];
-      if (
-        left.id !== right.id ||
-        left.x !== right.x ||
-        left.y !== right.y ||
-        left.rotation !== right.rotation ||
-        left.faceUp !== right.faceUp ||
-        left.zone !== right.zone ||
-        left.ownerSeatIndex !== right.ownerSeatIndex ||
-        left.cardIds.length !== right.cardIds.length
-      ) {
-        return false;
-      }
-      for (let j = 0; j < left.cardIds.length; j += 1) {
-        if (left.cardIds[j] !== right.cardIds[j]) {
-          return false;
-        }
-      }
-    }
-    return true;
-  }, []);
-
-  const applyOwnMovement = useCallback(
-    (updater) => {
-      setStacks((prev) => {
-        const next = updater(prev);
-        if (stacksAreEqual(prev, next)) {
-          return prev;
-        }
-        lastOwnMovementRef.current = cloneStacksSnapshot(prev);
-        return next;
-      });
-    },
-    [cloneStacksSnapshot, setStacks, stacksAreEqual]
-  );
-
-  const undoLastOwnMovement = useCallback(() => {
-    const snapshot = lastOwnMovementRef.current;
-    if (!snapshot) {
-      return;
-    }
-    setStacks(cloneStacksSnapshot(snapshot));
-    lastOwnMovementRef.current = null;
-    setHeldStack({
-      active: false,
-      stackId: null,
-      cardIds: [],
-      sourceStackId: null,
-      offset: { dx: 0, dy: 0 },
-      origin: null,
-      mode: 'stack'
-    });
-    setSelectedStackId(null);
-    setPickCountOpen(false);
-  }, [cloneStacksSnapshot, setStacks]);
 
   const clampTopLeftToFelt = useCallback(
     (topLeft) => {
@@ -1098,7 +932,7 @@ const Table = () => {
 
   const handleSeatPointerDown = useCallback(
     (event, seatIndex) => {
-      if (heldStack.active) {
+      if (interaction.mode !== 'idle') {
         return;
       }
       event.preventDefault();
@@ -1116,7 +950,7 @@ const Table = () => {
       setDragSeatIndex(seatIndex);
       updateSeatParamFromPointer(event, seatIndex);
     },
-    [heldStack.active, updateSeatParamFromPointer]
+    [interaction.mode, updateSeatParamFromPointer]
   );
 
   const handleSeatPointerMove = useCallback(
@@ -1163,200 +997,632 @@ const Table = () => {
     [openSeatMenu]
   );
 
-  const flushAnimation = useCallback(() => {
-    if (!heldStack.active || !heldStack.stackId || !latestPoint.current) {
-      rafRef.current = null;
+  const DRAG_THRESHOLD = 6;
+
+  const getHeldTopLeft = useCallback((pointerPosition, offset) => {
+    if (!pointerPosition) {
+      return null;
+    }
+    return {
+      x: pointerPosition.x - offset.x,
+      y: pointerPosition.y - offset.y
+    };
+  }, []);
+
+  const clearInteraction = useCallback(() => {
+    setInteraction((prev) => ({
+      ...prev,
+      mode: 'idle',
+      pointerId: null,
+      source: null,
+      held: null,
+      drag: null,
+      selectedStackId: null,
+      menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
+    }));
+  }, []);
+
+  const closeMenu = useCallback(() => {
+    setPickCountOpen(false);
+    setInteraction((prev) => ({
+      ...prev,
+      menu: { ...prev.menu, open: false, stackId: null },
+      selectedStackId: null
+    }));
+  }, []);
+
+  const selectStack = useCallback((stackId, screenXY) => {
+    setPickCountOpen(false);
+    setInteraction((prev) => ({
+      ...prev,
+      selectedStackId: stackId,
+      menu: {
+        open: true,
+        stackId,
+        screenX: screenXY?.x ?? 0,
+        screenY: screenXY?.y ?? 0
+      }
+    }));
+  }, []);
+
+  const restoreHeldToOrigin = useCallback(() => {
+    if (!interaction.held) {
       return;
     }
-
-    setStacks((prev) =>
-      prev.map((stack) =>
-        stack.id === heldStack.stackId
-          ? { ...stack, x: latestPoint.current.x, y: latestPoint.current.y }
-          : stack
-      )
-    );
-    rafRef.current = null;
-  }, [heldStack.active, heldStack.stackId, setStacks]);
-
-  const getPointerPositionForHold = useCallback(
-    (pointerEvent, fallbackStack) => {
-      const pointerPosition = pointerEvent
-        ? getTablePointerPosition(pointerEvent)
-        : getTablePointerPositionFromClient(
-            lastPointerRef.current.x,
-            lastPointerRef.current.y
+    const held = interaction.held;
+    const origin = held.origin ?? {};
+    setStacks((prev) => {
+      if (origin.stackId) {
+        const source = prev.find((stack) => stack.id === origin.stackId);
+        if (source) {
+          return prev.map((stack) =>
+            stack.id === origin.stackId
+              ? { ...stack, cardIds: [...stack.cardIds, ...held.cardIds] }
+              : stack
           );
-      if (!pointerPosition || !fallbackStack) {
-        return { pointerPosition: null, isOverStack: false };
+        }
       }
-      const isOverStack =
-        pointerPosition.x >= fallbackStack.x &&
-        pointerPosition.x <= fallbackStack.x + cardSize.width &&
-        pointerPosition.y >= fallbackStack.y &&
-        pointerPosition.y <= fallbackStack.y + cardSize.height;
-      return { pointerPosition, isOverStack };
+      return prev.concat({
+        id: origin.stackId ?? held.stackId,
+        x: origin.x ?? 0,
+        y: origin.y ?? 0,
+        rotation: 0,
+        faceUp: held.faceUp ?? true,
+        cardIds: held.cardIds,
+        zone: 'table',
+        ownerSeatIndex: null
+      });
+    });
+    clearInteraction();
+  }, [clearInteraction, interaction.held, setStacks]);
+
+  const pickup = useCallback(
+    (stackId, kind, n = 1, pointerId = null) => {
+      let picked = null;
+      let heldStackId = null;
+      setStacks((prev) => {
+        const source = prev.find((stack) => stack.id === stackId);
+        if (!source) {
+          return prev;
+        }
+        const total = source.cardIds.length;
+        if (!total) {
+          return prev;
+        }
+        let pickCount = 1;
+        if (kind === 'full') {
+          pickCount = total;
+        } else if (kind === 'half') {
+          pickCount = Math.floor(total / 2);
+        } else if (kind === 'top') {
+          pickCount = 1;
+        } else if (kind === 'n') {
+          pickCount = n;
+        }
+        const clamped = Math.max(1, Math.min(pickCount, total));
+        const remaining = source.cardIds.slice(0, total - clamped);
+        const pickedIds = source.cardIds.slice(total - clamped);
+        if (!pickedIds.length) {
+          return prev;
+        }
+        heldStackId = createStackId();
+        picked = {
+          cardIds: pickedIds,
+          faceUp: source.faceUp,
+          origin: {
+            stackId: source.id,
+            x: source.x,
+            y: source.y,
+            faceUp: source.faceUp
+          }
+        };
+        return prev
+          .map((stack) =>
+            stack.id === stackId ? { ...stack, cardIds: remaining } : stack
+          )
+          .filter((stack) => stack.id !== stackId || remaining.length > 0);
+      });
+      if (picked && heldStackId) {
+        const pointerPosition = lastPointerWorldRef.current;
+        const originX = picked.origin.x ?? 0;
+        const originY = picked.origin.y ?? 0;
+        const offset = pointerPosition
+          ? { x: pointerPosition.x - originX, y: pointerPosition.y - originY }
+          : { x: cardSize.width / 2, y: cardSize.height / 2 };
+        setInteraction((prev) => ({
+          ...prev,
+          mode: 'holdStack',
+          pointerId,
+          source: { stackId },
+          held: {
+            stackId: heldStackId,
+            cardIds: picked.cardIds,
+            faceUp: picked.faceUp,
+            origin: picked.origin
+          },
+          drag: {
+            stackId: heldStackId,
+            startWorld: pointerPosition ?? { x: originX, y: originY },
+            offset,
+            originXY: { x: originX, y: originY }
+          },
+          selectedStackId: null,
+          menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
+        }));
+      }
+    },
+    [cardSize.height, cardSize.width, createStackId, setStacks]
+  );
+
+  const startDragStack = useCallback(
+    (stackId, pointerWorld, pointerId) => {
+      if (!pointerWorld) {
+        return;
+      }
+      const stack = stacksById[stackId];
+      if (!stack) {
+        return;
+      }
+      bringStackToFront(stackId);
+      setInteraction((prev) => ({
+        ...prev,
+        mode: 'dragStack',
+        pointerId,
+        source: { stackId },
+        drag: {
+          stackId,
+          startWorld: pointerWorld,
+          offset: { x: pointerWorld.x - stack.x, y: pointerWorld.y - stack.y },
+          originXY: { x: stack.x, y: stack.y }
+        },
+        selectedStackId: null,
+        menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
+      }));
+    },
+    [bringStackToFront, stacksById]
+  );
+
+  const updateDrag = useCallback(
+    (pointerWorld) => {
+      if (!pointerWorld || !interaction.drag) {
+        return;
+      }
+      const nextTopLeft = getHeldTopLeft(pointerWorld, interaction.drag.offset);
+      if (!nextTopLeft) {
+        return;
+      }
+      const clamped = clampTopLeftToFelt(nextTopLeft);
+      const position = clamped.position ?? nextTopLeft;
+      if (interaction.mode === 'dragStack') {
+        setStacks((prev) =>
+          prev.map((stack) =>
+            stack.id === interaction.drag.stackId
+              ? { ...stack, x: position.x, y: position.y }
+              : stack
+          )
+        );
+      }
+      setInteraction((prev) => ({
+        ...prev,
+        drag: prev.drag
+          ? {
+              ...prev.drag,
+              startWorld: pointerWorld
+            }
+          : prev.drag
+      }));
+    },
+    [clampTopLeftToFelt, getHeldTopLeft, interaction.drag, interaction.mode, setStacks]
+  );
+
+  const mergeStacks = useCallback(
+    (sourceId, targetId) => {
+      setStacks((prev) => {
+        const source = prev.find((stack) => stack.id === sourceId);
+        const target = prev.find((stack) => stack.id === targetId);
+        if (!source || !target) {
+          return prev;
+        }
+        const merged = {
+          ...target,
+          cardIds: [...target.cardIds, ...source.cardIds]
+        };
+        return prev.filter((stack) => stack.id !== sourceId && stack.id !== targetId).concat(merged);
+      });
+    },
+    [setStacks]
+  );
+
+  const dropHeld = useCallback(
+    (pointerWorld) => {
+      const held = interaction.held;
+      if (!held || !interaction.drag) {
+        return;
+      }
+      const pointerPosition = pointerWorld ?? lastPointerWorldRef.current;
+      if (!pointerPosition) {
+        return;
+      }
+      const nextTopLeft = getHeldTopLeft(pointerPosition, interaction.drag.offset);
+      if (!nextTopLeft) {
+        return;
+      }
+      const clamped = clampTopLeftToFelt(nextTopLeft);
+      const placement = clamped.position ?? nextTopLeft;
+      const handSeatIndex = getHandZoneAtPoint(
+        placement.x + cardSize.width / 2,
+        placement.y + cardSize.height / 2
+      );
+      if (
+        handSeatIndex !== null &&
+        handSeatIndex !== undefined &&
+        mySeatIndex !== null &&
+        handSeatIndex === mySeatIndex
+      ) {
+        moveToHand(mySeatIndex, held.cardIds);
+        pushAction(
+          `${myName} moved ${held.cardIds.length} ${held.cardIds.length === 1 ? 'card' : 'cards'} to hand`
+        );
+        clearInteraction();
+        return;
+      }
+      if (
+        handSeatIndex !== null &&
+        handSeatIndex !== undefined &&
+        mySeatIndex !== null &&
+        handSeatIndex !== mySeatIndex
+      ) {
+        restoreHeldToOrigin();
+        return;
+      }
+      const overlapId = findTableOverlapStackId(placement.x, placement.y, null);
+      if (overlapId) {
+        setStacks((prev) => {
+          const target = prev.find((stack) => stack.id === overlapId);
+          if (!target) {
+            return prev;
+          }
+          const merged = {
+            ...target,
+            cardIds: [...target.cardIds, ...held.cardIds]
+          };
+          return prev.filter((stack) => stack.id !== overlapId).concat(merged);
+        });
+      } else {
+        setStacks((prev) =>
+          prev.concat({
+            id: held.stackId,
+            x: placement.x,
+            y: placement.y,
+            rotation: 0,
+            faceUp: held.faceUp ?? true,
+            cardIds: held.cardIds,
+            zone: 'table',
+            ownerSeatIndex: null
+          })
+        );
+      }
+      clearInteraction();
     },
     [
       cardSize.height,
       cardSize.width,
-      getTablePointerPosition,
-      getTablePointerPositionFromClient
+      clampTopLeftToFelt,
+      clearInteraction,
+      findTableOverlapStackId,
+      getHandZoneAtPoint,
+      getHeldTopLeft,
+      interaction.drag,
+      interaction.held,
+      moveToHand,
+      myName,
+      mySeatIndex,
+      pushAction,
+      restoreHeldToOrigin,
+      setStacks
     ]
   );
 
-  const getDropTransformFromPointer = useCallback(
-    (clientX, clientY, heldStackState, options = {}) => {
-      const { sweepDirection = null, applySweepSpacing = false } = options;
-      if (!heldStackState?.active || !heldStackState?.stackId) {
-        return null;
+  const endDrag = useCallback(
+    (pointerWorld) => {
+      if (interaction.mode !== 'dragStack' || !interaction.drag) {
+        return;
       }
-      const pointerPosition = getTablePointerPositionFromClient(clientX, clientY);
-      if (!pointerPosition) {
-        return null;
+      const draggedId = interaction.drag.stackId;
+      const draggedStack = stacksById[draggedId];
+      if (!draggedStack) {
+        clearInteraction();
+        return;
       }
-      const {
-        rotation = 0,
-        scale = 1
-      } = stacksById[heldStackState.stackId] ?? {};
-      const rawPlacement = getHeldTopLeft(
-        pointerPosition.x,
-        pointerPosition.y,
-        heldStackState.offset
+      const placement = { x: draggedStack.x, y: draggedStack.y };
+      const handSeatIndex = getHandZoneAtPoint(
+        placement.x + cardSize.width / 2,
+        placement.y + cardSize.height / 2
       );
-      const clampedInitial = clampTopLeftToFelt(rawPlacement);
-      let placement = clampedInitial.position ?? rawPlacement;
-      let clampedFinal = clampedInitial;
-      if (applySweepSpacing) {
-        placement = applySweepJitter(placement, sweepDirection);
-        const clampedJitter = clampTopLeftToFelt(placement);
-        placement = clampedJitter.position ?? placement;
-        placement = pushOutOfStackEps(
-          placement,
-          sweepDirection,
-          stacks,
-          heldStackState.stackId
+      if (
+        handSeatIndex !== null &&
+        handSeatIndex !== undefined &&
+        mySeatIndex !== null &&
+        handSeatIndex === mySeatIndex
+      ) {
+        moveToHand(mySeatIndex, draggedStack.cardIds);
+        pushAction(
+          `${myName} moved ${draggedStack.cardIds.length} ${draggedStack.cardIds.length === 1 ? 'card' : 'cards'} to hand`
         );
-        clampedFinal = clampTopLeftToFelt(placement);
-        placement = clampedFinal.position ?? placement;
+        setStacks((prev) => prev.filter((stack) => stack.id !== draggedId));
+        clearInteraction();
+        return;
       }
-      return {
-        x: placement.x,
-        y: placement.y,
-        rot: rotation,
-        scale,
-        clampedInitial,
-        clampedFinal
-      };
+      if (
+        handSeatIndex !== null &&
+        handSeatIndex !== undefined &&
+        mySeatIndex !== null &&
+        handSeatIndex !== mySeatIndex
+      ) {
+        setStacks((prev) =>
+          prev.map((stack) =>
+            stack.id === draggedId
+              ? { ...stack, x: interaction.drag.originXY.x, y: interaction.drag.originXY.y }
+              : stack
+          )
+        );
+        clearInteraction();
+        return;
+      }
+      const overlapId = findTableOverlapStackId(placement.x, placement.y, draggedId);
+      if (overlapId) {
+        mergeStacks(draggedId, overlapId);
+      }
+      clearInteraction();
     },
     [
-      applySweepJitter,
-      clampTopLeftToFelt,
-      getHeldTopLeft,
-      getTablePointerPositionFromClient,
-      pushOutOfStackEps,
-      stacks,
+      cardSize.height,
+      cardSize.width,
+      clearInteraction,
+      findTableOverlapStackId,
+      getHandZoneAtPoint,
+      interaction.drag,
+      interaction.mode,
+      mergeStacks,
+      moveToHand,
+      myName,
+      mySeatIndex,
+      pushAction,
+      setStacks,
       stacksById
     ]
   );
 
-  const logPlacementDebug = useCallback(
-    (context, previewTransform, actualTransform) => {
-      if (!placementDebugEnabled) {
-        return;
-      }
-      console.log(`[placement-debug] ${context} preview`, previewTransform);
-      console.log(`[placement-debug] ${context} actual`, actualTransform);
-      console.assert(
-        previewTransform.x === actualTransform.x &&
-          previewTransform.y === actualTransform.y &&
-          previewTransform.rotation === actualTransform.rotation,
-        `[placement-debug] ${context} mismatch`,
-        { previewTransform, actualTransform }
+  const cancelDrag = useCallback(() => {
+    if (interaction.mode === 'dragStack' && interaction.drag) {
+      setStacks((prev) =>
+        prev.map((stack) =>
+          stack.id === interaction.drag.stackId
+            ? { ...stack, x: interaction.drag.originXY.x, y: interaction.drag.originXY.y }
+            : stack
+        )
       );
-    },
-    [placementDebugEnabled]
-  );
-
-  const cancelHeldStack = useCallback(() => {
-    if (!heldStack.active || !heldStack.stackId) {
+    } else if (interaction.held) {
+      restoreHeldToOrigin();
       return;
     }
-    applyOwnMovement((prev) => {
-      const held = prev.find((stack) => stack.id === heldStack.stackId);
-      if (!held) {
-        return prev;
-      }
-      if (heldStack.sourceStackId) {
-        const source = prev.find((stack) => stack.id === heldStack.sourceStackId);
-        if (source) {
-          const merged = {
-            ...source,
-            cardIds: [...source.cardIds, ...held.cardIds]
-          };
-          return prev
-            .filter(
-              (stack) =>
-                stack.id !== heldStack.stackId && stack.id !== heldStack.sourceStackId
-            )
-            .concat(merged);
-        }
-      }
-      if (heldStack.origin) {
-        return prev.map((stack) =>
-          stack.id === heldStack.stackId
-            ? { ...stack, x: heldStack.origin.x, y: heldStack.origin.y }
-            : stack
-        );
-      }
-      return prev;
-    });
-    setHeldStack({
-      active: false,
-      stackId: null,
-      cardIds: [],
-      sourceStackId: null,
-      offset: { dx: 0, dy: 0 },
-      origin: null,
-      mode: 'stack'
-    });
-    queueCardCountLog('after cancel');
-  }, [applyOwnMovement, heldStack, queueCardCountLog]);
+    pointerDownRef.current = null;
+    clearInteraction();
+  }, [clearInteraction, interaction.drag, interaction.held, interaction.mode, restoreHeldToOrigin, setStacks]);
 
-  useEffect(() => {
-    const handleKeyDown = (event) => {
+  const dealOneFromHeld = useCallback(
+    (pointerWorld, options = {}) => {
+      if (!interaction.held || !interaction.drag) {
+        return;
+      }
+      const { sweepDirection = null, applySweepSpacing = false, skipMerge = false } = options;
+      const pointerPosition = pointerWorld ?? lastPointerWorldRef.current;
+      if (!pointerPosition) {
+        return;
+      }
+      const nextTopLeft = getHeldTopLeft(pointerPosition, interaction.drag.offset);
+      if (!nextTopLeft) {
+        return;
+      }
+      let placement = clampTopLeftToFelt(nextTopLeft).position ?? nextTopLeft;
+      if (applySweepSpacing) {
+        placement = applySweepJitter(placement, sweepDirection);
+        placement = clampTopLeftToFelt(placement).position ?? placement;
+        placement = pushOutOfStackEps(placement, sweepDirection, stacks, null);
+        placement = clampTopLeftToFelt(placement).position ?? placement;
+      }
+      const remaining = [...interaction.held.cardIds];
+      const dealtCard = remaining.pop();
+      if (!dealtCard) {
+        clearInteraction();
+        return;
+      }
+      const dealtStackId = createStackId();
+      setStacks((prev) => {
+        let next = prev.concat({
+          id: dealtStackId,
+          x: placement.x,
+          y: placement.y,
+          rotation: 0,
+          faceUp: interaction.held.faceUp ?? true,
+          cardIds: [dealtCard],
+          zone: 'table',
+          ownerSeatIndex: null
+        });
+        if (!skipMerge) {
+          const overlapId = findTableOverlapStackId(placement.x, placement.y, dealtStackId);
+          if (overlapId) {
+            const target = next.find((stack) => stack.id === overlapId);
+            if (target) {
+              const merged = {
+                ...target,
+                cardIds: [...target.cardIds, dealtCard]
+              };
+              next = next.filter((stack) => stack.id !== overlapId && stack.id !== dealtStackId).concat(merged);
+            }
+          }
+        }
+        return next;
+      });
+      if (remaining.length === 0) {
+        clearInteraction();
+      } else {
+        setInteraction((prev) => ({
+          ...prev,
+          held: prev.held ? { ...prev.held, cardIds: remaining } : prev.held
+        }));
+      }
+    },
+    [
+      applySweepJitter,
+      clampTopLeftToFelt,
+      clearInteraction,
+      createStackId,
+      findTableOverlapStackId,
+      getHeldTopLeft,
+      interaction.drag,
+      interaction.held,
+      pushOutOfStackEps,
+      setStacks,
+      stacks
+    ]
+  );
+
+  const startSweep = useCallback(
+    (pointerId) => {
+      if (!interaction.held || interaction.held.cardIds.length <= 1) {
+        return;
+      }
+      const pointerWorld = lastPointerWorldRef.current;
+      if (!pointerWorld) {
+        return;
+      }
+      sweepRef.current = {
+        lastDropAtMs: performance.now(),
+        lastDropPos: pointerWorld
+      };
+      setInteraction((prev) => ({
+        ...prev,
+        mode: 'sweepDeal',
+        pointerId
+      }));
+      dealOneFromHeld(pointerWorld, { skipMerge: true });
+    },
+    [dealOneFromHeld, interaction.held]
+  );
+
+  const updateSweep = useCallback(
+    (pointerWorld) => {
+      if (interaction.mode !== 'sweepDeal' || !interaction.held) {
+        return;
+      }
+      const now = performance.now();
+      const lastDropPos = sweepRef.current.lastDropPos ?? pointerWorld;
+      const distance = Math.hypot(pointerWorld.x - lastDropPos.x, pointerWorld.y - lastDropPos.y);
+      const elapsed = now - sweepRef.current.lastDropAtMs;
+      if (distance >= SWEEP_MIN_DIST && elapsed >= SWEEP_MIN_INTERVAL_MS) {
+        const directionLength = Math.hypot(pointerWorld.x - lastDropPos.x, pointerWorld.y - lastDropPos.y);
+        const sweepDirection =
+          directionLength > 0
+            ? {
+                x: (pointerWorld.x - lastDropPos.x) / directionLength,
+                y: (pointerWorld.y - lastDropPos.y) / directionLength
+              }
+            : null;
+        dealOneFromHeld(pointerWorld, {
+          skipMerge: true,
+          applySweepSpacing: true,
+          sweepDirection
+        });
+        sweepRef.current.lastDropAtMs = now;
+        sweepRef.current.lastDropPos = pointerWorld;
+      }
+    },
+    [dealOneFromHeld, interaction.held, interaction.mode]
+  );
+
+  const endSweep = useCallback(() => {
+    if (interaction.mode !== 'sweepDeal') {
+      return;
+    }
+    setInteraction((prev) => ({
+      ...prev,
+      mode: prev.held ? 'holdStack' : 'idle',
+      pointerId: null
+    }));
+  }, [interaction.mode]);
+
+  const moveHeldWithPointer = useCallback(
+    (pointerWorld) => {
+      if (!pointerWorld) {
+        return;
+      }
+      if (!interaction.held || !interaction.drag) {
+        return;
+      }
+      setInteraction((prev) => ({
+        ...prev,
+        drag: prev.drag
+          ? {
+              ...prev.drag,
+              startWorld: pointerWorld
+            }
+          : prev.drag
+      }));
+    },
+    [interaction.drag, interaction.held]
+  );
+
+  const handleKeyDown = useCallback(
+    (event) => {
       if (event.repeat) {
         return;
       }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+      if (event.key === 'Escape') {
         event.preventDefault();
-        undoLastOwnMovement();
+        cancelDrag();
+        closeSeatMenu();
         return;
       }
-      if (event.key !== 'Escape') {
+      const isFormElement =
+        event.target instanceof HTMLElement &&
+        (event.target.tagName === 'INPUT' ||
+          event.target.tagName === 'TEXTAREA' ||
+          event.target.tagName === 'SELECT' ||
+          event.target.isContentEditable);
+      if (isFormElement || !interaction.selectedStackId) {
         return;
       }
-      cancelHeldStack();
-      setSelectedStackId(null);
-      setPickCountOpen(false);
-      closeSeatMenu();
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [
-    closeSeatMenu,
-    cancelHeldStack,
-    heldStack.active,
-    undoLastOwnMovement
-  ]);
+      const lowerKey = event.key.toLowerCase();
+      if (lowerKey === 'f') {
+        event.preventDefault();
+        handleFlipSelected();
+        return;
+      }
+      if (lowerKey === 's') {
+        event.preventDefault();
+        handleShuffleSelected();
+        return;
+      }
+      if (event.key === '1' || event.key === '5' || event.key === '0') {
+        event.preventDefault();
+        const pickCount = event.key === '0' ? 10 : Number(event.key);
+        pickup(interaction.selectedStackId, 'n', pickCount);
+      }
+    },
+    [cancelDrag, closeSeatMenu, handleFlipSelected, handleShuffleSelected, interaction.selectedStackId, pickup]
+  );
 
   useEffect(() => {
-    if (!heldStack.active) {
-      return undefined;
-    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
+
+  useEffect(() => {
     const handleCancel = () => {
-      cancelHeldStack();
+      if (interaction.mode !== 'idle') {
+        cancelDrag();
+      }
     };
     window.addEventListener('pointercancel', handleCancel);
     window.addEventListener('blur', handleCancel);
@@ -1364,331 +1630,232 @@ const Table = () => {
       window.removeEventListener('pointercancel', handleCancel);
       window.removeEventListener('blur', handleCancel);
     };
-  }, [cancelHeldStack, heldStack.active]);
+  }, [cancelDrag, interaction.mode]);
 
-  const placeHeldStack = useCallback(
-    (clientX, clientY) => {
-      if (!heldStack.active || !heldStack.stackId) {
+  useEffect(() => {
+    const handlePointerUp = () => {
+      updatePresence({ isDown: false });
+    };
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+    window.addEventListener('blur', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+      window.removeEventListener('blur', handlePointerUp);
+    };
+  }, [updatePresence]);
+
+  const handlePointerMoveHover = useCallback(
+    (pointerWorld) => {
+      if (interaction.mode !== 'idle') {
         return;
       }
-      const placementResult = getDropTransformFromPointer(
-        clientX,
-        clientY,
-        heldStack
-      );
-      if (!placementResult) {
+      const stackId = pointerWorld ? hitTestStack(pointerWorld.x, pointerWorld.y) : null;
+      setHoveredStackId(stackId);
+    },
+    [hitTestStack, interaction.mode]
+  );
+
+  const handleSurfacePointerDown = useCallback(
+    (event) => {
+      lastPointerRef.current = { x: event.clientX, y: event.clientY };
+      const pointerWorld = getTablePointerPosition(event);
+      if (!pointerWorld) {
         return;
       }
-      const { x: finalX, y: finalY, clampedInitial, rot } = placementResult;
-      const { inside, clampedCenter } = clampedInitial;
-      if (showFeltDebug && !inside && clampedCenter) {
-        setDebugClampPoint(clampedCenter);
-      } else if (showFeltDebug) {
-        setDebugClampPoint(null);
+      event.preventDefault();
+      lastPointerWorldRef.current = pointerWorld;
+      updatePresence({ isDown: true, x: pointerWorld.x, y: pointerWorld.y });
+      closeSeatMenu();
+      if (interaction.menu.open) {
+        closeMenu();
       }
-
-      const draggedStack = stacksById[heldStack.stackId];
-      if (draggedStack) {
-        const draggedX = finalX ?? draggedStack?.x ?? heldStack.origin?.x ?? 0;
-        const draggedY = finalY ?? draggedStack?.y ?? heldStack.origin?.y ?? 0;
-        const pointerPosition = getTablePointerPositionFromClient(clientX, clientY);
-        const handSeatIndex = pointerPosition
-          ? getHandZoneAtPoint(pointerPosition.x, pointerPosition.y)
-          : getHandZoneAtPoint(
-              draggedX + cardSize.width / 2,
-              draggedY + cardSize.height / 2
-            );
-        if (
-          handSeatIndex !== null &&
-          handSeatIndex !== undefined &&
-          mySeatIndex !== null &&
-          handSeatIndex === mySeatIndex
-        ) {
-          const draggedCards = stacksById[heldStack.stackId]?.cardIds ?? [];
-          if (draggedCards.length) {
-            moveToHand(mySeatIndex, draggedCards);
-            pushAction(
-              `${myName} moved ${draggedCards.length} ${draggedCards.length === 1 ? 'card' : 'cards'} to hand`
-            );
-            applyOwnMovement((prev) => prev.filter((stack) => stack.id !== heldStack.stackId));
-          }
-          setHeldStack({
-            active: false,
-            stackId: null,
-            cardIds: [],
-            sourceStackId: null,
-            offset: { dx: 0, dy: 0 },
-            origin: null,
-            mode: 'stack'
-          });
-          queueCardCountLog('after drop');
+      const stackId = hitTestStack(pointerWorld.x, pointerWorld.y);
+      if (event.button === 2) {
+        event.preventDefault();
+        if (interaction.held && interaction.held.cardIds.length > 1) {
+          startSweep(event.pointerId);
           return;
         }
-        if (
-          handSeatIndex !== null &&
-          handSeatIndex !== undefined &&
-          mySeatIndex !== null &&
-          handSeatIndex !== mySeatIndex
-        ) {
-          applyOwnMovement((prev) =>
-            prev.map((stack) =>
-              stack.id === heldStack.stackId
-                ? { ...stack, x: heldStack.origin?.x ?? stack.x, y: heldStack.origin?.y ?? stack.y }
-                : stack
-            )
-          );
-          setHeldStack({
-            active: false,
-            stackId: null,
-            cardIds: [],
-            sourceStackId: null,
-            offset: { dx: 0, dy: 0 },
-            origin: null,
-            mode: 'stack'
-          });
-          queueCardCountLog('after drop');
+        if (!stackId) {
           return;
         }
-        logPlacementDebug(
-          'placeStack',
-          {
-            x: finalX ?? draggedStack?.x,
-            y: finalY ?? draggedStack?.y,
-            rotation: rot
-          },
-          {
-            x: draggedX,
-            y: draggedY,
-            rotation: rot
-          }
-        );
-
-        const overlapId = findTableOverlapStackId(
-          draggedX,
-          draggedY,
-          heldStack.stackId
-        );
-
-        if (overlapId) {
-          applyOwnMovement((prev) => {
-            const target = prev.find((stack) => stack.id === overlapId);
-            const dragged = prev.find((stack) => stack.id === heldStack.stackId);
-            if (!target || !dragged) {
-              return prev;
-            }
-            const merged = {
-              ...target,
-              cardIds: [...target.cardIds, ...dragged.cardIds]
-            };
-            return prev
-              .filter((stack) => stack.id !== heldStack.stackId && stack.id !== overlapId)
-              .concat(merged);
-          });
-        } else if (finalX !== null && finalX !== undefined) {
-          applyOwnMovement((prev) =>
-            prev.map((stack) =>
-              stack.id === heldStack.stackId
-                ? { ...stack, x: finalX, y: finalY, zone: 'table', ownerSeatIndex: null }
-                : stack
-            )
-          );
+        if (event.currentTarget?.setPointerCapture && event.pointerId !== undefined) {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          capturedPointerRef.current = {
+            pointerId: event.pointerId,
+            element: event.currentTarget
+          };
         }
+        pointerDownRef.current = {
+          stackId,
+          pointerId: event.pointerId,
+          button: 2,
+          startWorld: pointerWorld,
+          startScreen: { x: event.clientX, y: event.clientY },
+          dragStarted: false
+        };
+        return;
       }
 
-      setHeldStack({
-        active: false,
-        stackId: null,
-        cardIds: [],
-        sourceStackId: null,
-        offset: { dx: 0, dy: 0 },
-        origin: null,
-        mode: 'stack'
-      });
-      queueCardCountLog('after drop');
+      if (event.button !== 0) {
+        return;
+      }
+      if (interaction.held) {
+        setInteraction((prev) => ({
+          ...prev,
+          pointerId: event.pointerId
+        }));
+        pointerDownRef.current = {
+          stackId: null,
+          pointerId: event.pointerId,
+          button: 0,
+          startWorld: pointerWorld,
+          startScreen: { x: event.clientX, y: event.clientY },
+          dragStarted: true
+        };
+        if (event.currentTarget?.setPointerCapture && event.pointerId !== undefined) {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          capturedPointerRef.current = {
+            pointerId: event.pointerId,
+            element: event.currentTarget
+          };
+        }
+        return;
+      }
+      if (stackId) {
+        if (event.currentTarget?.setPointerCapture && event.pointerId !== undefined) {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          capturedPointerRef.current = {
+            pointerId: event.pointerId,
+            element: event.currentTarget
+          };
+        }
+        pointerDownRef.current = {
+          stackId,
+          pointerId: event.pointerId,
+          button: 0,
+          startWorld: pointerWorld,
+          startScreen: { x: event.clientX, y: event.clientY },
+          dragStarted: false
+        };
+        return;
+      }
+      setInteraction((prev) => ({
+        ...prev,
+        selectedStackId: null,
+        menu: { ...prev.menu, open: false, stackId: null }
+      }));
     },
     [
-      applyOwnMovement,
-      cardSize.height,
-      cardSize.width,
-      getDropTransformFromPointer,
-      heldStack,
-      logPlacementDebug,
-      showFeltDebug,
-      stacks,
-      stacksById,
-      getHandZoneAtPoint,
-      getTablePointerPositionFromClient,
-      moveToHand,
-      mySeatIndex,
-      myName,
-      pushAction,
-      queueCardCountLog
+      closeMenu,
+      closeSeatMenu,
+      getTablePointerPosition,
+      hitTestStack,
+      interaction.held,
+      interaction.menu.open,
+      setInteraction,
+      startSweep,
+      updatePresence
     ]
   );
 
-  const dealOneFromHeld = useCallback(
-    (clientX, clientY, options = {}) => {
-      if (!heldStack.active || !heldStack.stackId) {
+  const handleSurfacePointerMove = useCallback(
+    (event) => {
+      const pointerWorld = getTablePointerPosition(event);
+      if (!pointerWorld) {
         return;
       }
-      if (heldStack.cardIds.length === 0) {
-        setHeldStack({
-          active: false,
-          stackId: null,
-          cardIds: [],
-          sourceStackId: null,
-          offset: { dx: 0, dy: 0 },
-          origin: null,
-          mode: 'stack'
-        });
+      lastPointerRef.current = { x: event.clientX, y: event.clientY };
+      lastPointerWorldRef.current = pointerWorld;
+      updatePresence({ x: pointerWorld.x, y: pointerWorld.y });
+
+      if (interaction.mode === 'dragStack') {
+        updateDrag(pointerWorld);
         return;
       }
-
-      const { sweepDirection = null, applySweepSpacing = false, skipMerge = false } =
-        options;
-      const dropResult = getDropTransformFromPointer(
-        clientX,
-        clientY,
-        heldStack,
-        { sweepDirection, applySweepSpacing }
-      );
-      if (!dropResult) {
-        return;
+      if (interaction.mode === 'holdStack') {
+        moveHeldWithPointer(pointerWorld);
       }
-      const { x: placementX, y: placementY, clampedInitial, clampedFinal, rot } =
-        dropResult;
-      if (applySweepSpacing) {
-        if (showFeltDebug && !clampedFinal.inside && clampedFinal.clampedCenter) {
-          setDebugClampPoint(clampedFinal.clampedCenter);
-        } else if (showFeltDebug) {
-          setDebugClampPoint(null);
-        }
-      } else if (showFeltDebug) {
-        if (!clampedInitial.inside && clampedInitial.clampedCenter) {
-          setDebugClampPoint(clampedInitial.clampedCenter);
-        } else {
-          setDebugClampPoint(null);
-        }
+      if (interaction.mode === 'sweepDeal') {
+        moveHeldWithPointer(pointerWorld);
+        updateSweep(pointerWorld);
       }
-      const newStackId = createStackId();
-      let removedCardId = null;
-      let remainingCardIds = [];
 
-      applyOwnMovement((prev) => {
-        const currentHeld = prev.find((stack) => stack.id === heldStack.stackId);
-        if (!currentHeld || currentHeld.cardIds.length === 0) {
-          return prev;
-        }
-        const nextCardIds = [...currentHeld.cardIds];
-        removedCardId = nextCardIds.pop() ?? null;
-        remainingCardIds = nextCardIds;
-        if (!removedCardId) {
-          return prev;
-        }
-
-        const newStack = {
-          id: newStackId,
-          x: placementX ?? currentHeld.x,
-          y: placementY ?? currentHeld.y,
-          rotation: currentHeld.rotation,
-          faceUp: currentHeld.faceUp,
-          cardIds: [removedCardId],
-          zone: 'table',
-          ownerSeatIndex: null
-        };
-
-        logPlacementDebug(
-          'dealOne',
-          {
-            x: placementX ?? currentHeld.x,
-            y: placementY ?? currentHeld.y,
-            rotation: rot
-          },
-          {
-            x: newStack.x,
-            y: newStack.y,
-            rotation: newStack.rotation
-          }
+      const pending = pointerDownRef.current;
+      if (pending && pending.pointerId === event.pointerId && !pending.dragStarted) {
+        const distance = Math.hypot(
+          pointerWorld.x - pending.startWorld.x,
+          pointerWorld.y - pending.startWorld.y
         );
-
-        let next = prev
-          .map((stack) =>
-            stack.id === heldStack.stackId
-              ? { ...stack, cardIds: nextCardIds, zone: 'table', ownerSeatIndex: null }
-              : stack
-          )
-          .filter((stack) => stack.id !== heldStack.stackId || nextCardIds.length > 0)
-          .concat(newStack);
-
-        if (!skipMerge) {
-          let overlapId = null;
-          for (let i = next.length - 1; i >= 0; i -= 1) {
-            const stack = next[i];
-            if (stack.id === newStackId || stack.id === heldStack.stackId) {
-              continue;
-            }
-            const overlaps =
-              newStack.x < stack.x + cardSize.width &&
-              newStack.x + cardSize.width > stack.x &&
-              newStack.y < stack.y + cardSize.height &&
-              newStack.y + cardSize.height > stack.y;
-            if (overlaps) {
-              overlapId = stack.id;
-              break;
-            }
+        if (distance >= DRAG_THRESHOLD) {
+          pending.dragStarted = true;
+          if (pending.button === 0 && pending.stackId) {
+            startDragStack(pending.stackId, pointerWorld, event.pointerId);
           }
-
-          if (overlapId) {
-            const target = next.find((stack) => stack.id === overlapId);
-            const dealt = next.find((stack) => stack.id === newStackId);
-            if (!target || !dealt) {
-              return next;
-            }
-            const merged = {
-              ...target,
-              cardIds: [...target.cardIds, ...dealt.cardIds]
-            };
-            next = next
-              .filter((stack) => stack.id !== overlapId && stack.id !== newStackId)
-              .concat(merged);
+          if (pending.button === 2 && pending.stackId) {
+            pickup(pending.stackId, 'top', 1, event.pointerId);
           }
         }
-
-        return next;
-      });
-
-      if (!removedCardId) {
-        return;
       }
 
-      if (remainingCardIds.length === 0) {
-        setHeldStack({
-          active: false,
-          stackId: null,
-          cardIds: [],
-          sourceStackId: null,
-          offset: { dx: 0, dy: 0 },
-          origin: null,
-          mode: 'stack'
-        });
-        latestPoint.current = null;
-      } else {
-        setHeldStack((prev) => ({
-          ...prev,
-          cardIds: remainingCardIds
-        }));
-      }
+      handlePointerMoveHover(pointerWorld);
     },
     [
-      cardSize.height,
-      cardSize.width,
-      getDropTransformFromPointer,
-      createStackId,
-      heldStack,
-      logPlacementDebug,
-      setStacks,
-      showFeltDebug,
-      stacks
+      DRAG_THRESHOLD,
+      getTablePointerPosition,
+      handlePointerMoveHover,
+      interaction.mode,
+      moveHeldWithPointer,
+      pickup,
+      startDragStack,
+      updateDrag,
+      updatePresence,
+      updateSweep
+    ]
+  );
+
+  const handleSurfacePointerUp = useCallback(
+    (event) => {
+      const pointerWorld = getTablePointerPosition(event);
+      if (pointerWorld) {
+        lastPointerWorldRef.current = pointerWorld;
+      }
+      const pending = pointerDownRef.current;
+      if (pending && pending.pointerId === event.pointerId) {
+        if (!pending.dragStarted && pending.button === 0 && pending.stackId) {
+          selectStack(pending.stackId, {
+            x: event.clientX,
+            y: event.clientY
+          });
+        }
+        pointerDownRef.current = null;
+      }
+
+      if (interaction.mode === 'dragStack' && interaction.pointerId === event.pointerId) {
+        endDrag(pointerWorld);
+      } else if (
+        (interaction.mode === 'holdStack' || interaction.mode === 'sweepDeal') &&
+        interaction.pointerId === event.pointerId
+      ) {
+        if (interaction.mode === 'sweepDeal') {
+          endSweep();
+        } else {
+          dropHeld(pointerWorld);
+        }
+      }
+      releaseCapturedPointer();
+    },
+    [
+      dropHeld,
+      endDrag,
+      endSweep,
+      getTablePointerPosition,
+      interaction.mode,
+      interaction.pointerId,
+      releaseCapturedPointer,
+      selectStack
     ]
   );
 
@@ -1727,33 +1894,26 @@ const Table = () => {
     }
   }, []);
 
-  const handleTableDrop = useCallback(
-    (event) => {
-      event.preventDefault();
-      const cardId = event.dataTransfer?.getData('text/plain');
-      if (!cardId || mySeatIndex === null || mySeatIndex === undefined) {
+  const playFromHand = useCallback(
+    (cardId, pointerWorld) => {
+      if (mySeatIndex === null || mySeatIndex === undefined) {
         return;
       }
-      const seatHand = hands?.[mySeatIndex]?.cardIds ?? [];
-      if (!seatHand.includes(cardId)) {
+      if (!pointerWorld) {
         return;
       }
-      const pointer = getTablePointerPositionFromClient(event.clientX, event.clientY);
-      if (!pointer) {
-        return;
-      }
-      const handSeatIndex = getHandZoneAtPoint(pointer.x, pointer.y);
+      const handSeatIndex = getHandZoneAtPoint(pointerWorld.x, pointerWorld.y);
       if (handSeatIndex !== null && handSeatIndex !== undefined) {
         return;
       }
       const rawPlacement = {
-        x: pointer.x - cardSize.width / 2,
-        y: pointer.y - cardSize.height / 2
+        x: pointerWorld.x - cardSize.width / 2,
+        y: pointerWorld.y - cardSize.height / 2
       };
       const clamped = clampTopLeftToFelt(rawPlacement);
       const placement = clamped.position ?? rawPlacement;
       moveFromHandToTable(mySeatIndex, cardId);
-      applyOwnMovement((prev) =>
+      setStacks((prev) =>
         prev.concat({
           id: createStackId(),
           x: placement.x,
@@ -1768,19 +1928,39 @@ const Table = () => {
       pushAction(`${myName} played ${getCardLabel(cardId)}`);
     },
     [
-      applyOwnMovement,
       cardSize.height,
       cardSize.width,
       clampTopLeftToFelt,
       createStackId,
       getCardLabel,
       getHandZoneAtPoint,
-      getTablePointerPositionFromClient,
-      hands,
       moveFromHandToTable,
       myName,
       mySeatIndex,
-      pushAction
+      pushAction,
+      setStacks
+    ]
+  );
+
+  const handleTableDrop = useCallback(
+    (event) => {
+      event.preventDefault();
+      const cardId = event.dataTransfer?.getData('text/plain');
+      if (!cardId || mySeatIndex === null || mySeatIndex === undefined) {
+        return;
+      }
+      const seatHand = hands?.[mySeatIndex]?.cardIds ?? [];
+      if (!seatHand.includes(cardId)) {
+        return;
+      }
+      const pointer = getTablePointerPositionFromClient(event.clientX, event.clientY);
+      playFromHand(cardId, pointer);
+    },
+    [
+      getTablePointerPositionFromClient,
+      hands,
+      mySeatIndex,
+      playFromHand
     ]
   );
 
@@ -1797,571 +1977,15 @@ const Table = () => {
     [getCardLabel, hands, myName, mySeatIndex, pushAction, toggleReveal]
   );
 
-  useEffect(() => {
-    if (!heldStack.active) {
-      latestPoint.current = null;
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-      resetRightSweep();
-      return undefined;
-    }
-
-    const handleWindowPointerMove = (event) => {
-      const position = getTablePointerPosition(event);
-      if (!position) {
-        return;
-      }
-      updatePresence({ x: position.x, y: position.y });
-      lastPointerRef.current = { x: event.clientX, y: event.clientY };
-      const clamped = getHeldTopLeft(position.x, position.y, heldStack.offset);
-
-      latestPoint.current = clamped;
-      if (rightSweepRef.current.isRightDown && heldStack.cardIds.length > 0) {
-        const now = performance.now();
-        const sweep = rightSweepRef.current;
-        const sweepPointer = lastPointerRef.current
-          ? getTablePointerPositionFromClient(
-              lastPointerRef.current.x,
-              lastPointerRef.current.y
-            )
-          : null;
-        if (!sweepPointer) {
-          return;
-        }
-        if (!sweep.sweepActive) {
-          const downPos = sweep.downPos ?? sweepPointer;
-          const moved = Math.hypot(
-            sweepPointer.x - downPos.x,
-            sweepPointer.y - downPos.y
-          );
-          if (now - sweep.downAtMs >= RIGHT_SWEEP_HOLD_MS || moved >= SWEEP_MIN_DIST) {
-            sweep.sweepActive = true;
-          }
-        }
-        if (sweep.sweepActive) {
-          const lastPos = sweep.lastDropPos ?? sweep.downPos ?? sweepPointer;
-          const distance = Math.hypot(
-            sweepPointer.x - lastPos.x,
-            sweepPointer.y - lastPos.y
-          );
-          const elapsed = now - sweep.lastDropAtMs;
-          if (distance >= SWEEP_MIN_DIST && elapsed >= SWEEP_MIN_INTERVAL_MS) {
-            const directionLength = Math.hypot(
-              sweepPointer.x - lastPos.x,
-              sweepPointer.y - lastPos.y
-            );
-            const sweepDirection =
-              directionLength > 0
-                ? {
-                    x: (sweepPointer.x - lastPos.x) / directionLength,
-                    y: (sweepPointer.y - lastPos.y) / directionLength
-                  }
-                : null;
-            dealOneFromHeld(lastPointerRef.current.x, lastPointerRef.current.y, {
-              skipMerge: true,
-              applySweepSpacing: true,
-              sweepDirection
-            });
-            sweep.lastDropAtMs = now;
-            sweep.lastDropPos = sweepPointer;
-          }
-        }
-      }
-      if (!rafRef.current) {
-        rafRef.current = requestAnimationFrame(flushAnimation);
-      }
-    };
-
-    window.addEventListener('pointermove', handleWindowPointerMove);
-
-    return () => {
-      window.removeEventListener('pointermove', handleWindowPointerMove);
-    };
-  }, [
-    dealOneFromHeld,
-    flushAnimation,
-    getTablePointerPosition,
-    getTablePointerPositionFromClient,
-    getHeldTopLeft,
-    heldStack.active,
-    heldStack.cardIds.length,
-    heldStack.offset,
-    resetRightSweep,
-    updatePresence
-  ]);
-
-  useEffect(() => {
-    if (!heldStack.active) {
-      return undefined;
-    }
-    const handlePointerUp = (event) => {
-      if (event.button === 2 || rightSweepRef.current.isRightDown) {
-        resetRightSweep();
-      }
-    };
-    const handlePointerCancel = () => {
-      if (rightSweepRef.current.isRightDown) {
-        resetRightSweep();
-      }
-    };
-    window.addEventListener('pointerup', handlePointerUp);
-    window.addEventListener('pointercancel', handlePointerCancel);
-    window.addEventListener('blur', handlePointerCancel);
-    return () => {
-      window.removeEventListener('pointerup', handlePointerUp);
-      window.removeEventListener('pointercancel', handlePointerCancel);
-      window.removeEventListener('blur', handlePointerCancel);
-    };
-  }, [heldStack.active, resetRightSweep]);
-
-  useEffect(() => {
-    const handlePointerUp = () => {
-      updatePresence({ isDown: false });
-    };
-    window.addEventListener('pointerup', handlePointerUp);
-    window.addEventListener('pointercancel', handlePointerUp);
-    window.addEventListener('blur', handlePointerUp);
-    return () => {
-      window.removeEventListener('pointerup', handlePointerUp);
-      window.removeEventListener('pointercancel', handlePointerUp);
-      window.removeEventListener('blur', handlePointerUp);
-    };
-  }, [updatePresence]);
-
-  useEffect(() => {
-    if (pickCountOpen || settingsOpen || roomSettingsOpen) {
-      resetRightSweep();
-    }
-  }, [pickCountOpen, resetRightSweep, roomSettingsOpen, settingsOpen]);
-
-  const startHeldStack = useCallback(
-    (stackId, pointerX, pointerY) => {
-      const stack = stacksById[stackId];
-      if (!stack || !stack.cardIds.length) {
-        return;
-      }
-      const offset = {
-        dx: pointerX - stack.x,
-        dy: pointerY - stack.y
-      };
-      const visualStack = interactiveStackRects.find((item) => item.id === stackId);
-      const originX = visualStack?.x ?? stack.x ?? 0;
-      const originY = visualStack?.y ?? stack.y ?? 0;
-      latestPoint.current = { x: originX, y: originY };
-      setHeldStack({
-        active: true,
-        stackId,
-        cardIds: [...stack.cardIds],
-        sourceStackId: null,
-        offset,
-        origin: { x: originX, y: originY },
-        mode: 'stack'
-      });
-    },
-    [interactiveStackRects, stacksById]
-  );
-
-  useEffect(() => {
-    if (!pendingDragActive) {
-      return undefined;
-    }
-
-    const handlePendingPointerMove = (event) => {
-      const pending = pendingDragRef.current;
-      if (!pending) {
-        return;
-      }
-      if (pending.pointerId !== undefined && event.pointerId !== pending.pointerId) {
-        return;
-      }
-      const position = getTablePointerPosition(event);
-      if (!position) {
-        return;
-      }
-      const pointerX = position.x;
-      const pointerY = position.y;
-      const deltaX = pointerX - pending.startX;
-      const deltaY = pointerY - pending.startY;
-      const distance = Math.hypot(deltaX, deltaY);
-      // A small threshold avoids turning plain clicks into accidental drags.
-      if (distance < DRAG_THRESHOLD) {
-        return;
-      }
-      pendingDragRef.current = null;
-      setPendingDragActive(false);
-      releaseCapturedPointer();
-      setSelectedStackId(null);
-      setPickCountOpen(false);
-      if (pending.button === 2) {
-        // RMB drag pulls the top card into a new held stack.
-        const originStack = stacksById[pending.stackId];
-        if (!originStack || originStack.cardIds.length === 0) {
-          return;
-        }
-        const offset = {
-          dx: pointerX - originStack.x,
-          dy: pointerY - originStack.y
-        };
-        const heldPosition = getHeldTopLeft(pointerX, pointerY, offset);
-        if (process.env.NODE_ENV !== 'production') {
-          logCardCounts(
-            'before pickup (rmb)',
-            countAllCards({ stacks, hands, heldStack })
-          );
-        }
-        const spawned = pickupFromStack(pending.stackId, 'one', {
-          position: heldPosition
-        });
-        if (!spawned?.stackId) {
-          return;
-        }
-        latestPoint.current = { x: spawned.origin.x, y: spawned.origin.y };
-        setHeldStack({
-          active: true,
-          stackId: spawned.stackId,
-          cardIds: spawned.cardIds,
-          sourceStackId: pending.stackId,
-          offset,
-          origin: spawned.origin,
-          mode: 'singleCard'
-        });
-        queueCardCountLog('after pickup (rmb)');
-        return;
-      }
-      bringStackToFront(pending.stackId);
-      startHeldStack(pending.stackId, pointerX, pointerY);
-    };
-
-    const handlePendingPointerUp = (event) => {
-      const pending = pendingDragRef.current;
-      if (!pending) {
-        return;
-      }
-      if (pending.pointerId !== undefined && event.pointerId !== pending.pointerId) {
-        return;
-      }
-      pendingDragRef.current = null;
-      setPendingDragActive(false);
-      releaseCapturedPointer();
-      if (pending.button !== 2) {
-        bringStackToFront(pending.stackId);
-        setSelectedStackId(pending.stackId);
-        setPickCountOpen(false);
-      }
-    };
-
-    const handlePendingPointerCancel = (event) => {
-      const pending = pendingDragRef.current;
-      if (!pending) {
-        return;
-      }
-      if (pending.pointerId !== undefined && event.pointerId !== pending.pointerId) {
-        return;
-      }
-      pendingDragRef.current = null;
-      setPendingDragActive(false);
-      releaseCapturedPointer();
-    };
-
-    window.addEventListener('pointermove', handlePendingPointerMove);
-    window.addEventListener('pointerup', handlePendingPointerUp);
-    window.addEventListener('pointercancel', handlePendingPointerCancel);
-    return () => {
-      window.removeEventListener('pointermove', handlePendingPointerMove);
-      window.removeEventListener('pointerup', handlePendingPointerUp);
-      window.removeEventListener('pointercancel', handlePendingPointerCancel);
-    };
-  }, [
-    bringStackToFront,
-    getTablePointerPosition,
-    pendingDragActive,
-    releaseCapturedPointer,
-    countAllCards,
-    getHeldTopLeft,
-    hands,
-    heldStack,
-    logCardCounts,
-    pickupFromStack,
-    stacksById,
-    startHeldStack,
-    stacks,
-    queueCardCountLog
-  ]);
-
-  const pickUpStack = useCallback(
-    (stackId, mode, pointerEvent = null) => {
-      if (pointerEvent) {
-        pointerEvent.preventDefault();
-        lastPointerRef.current = { x: pointerEvent.clientX, y: pointerEvent.clientY };
-      }
-      const source = stacksById[stackId];
-      if (!source) {
-        return;
-      }
-      const { pointerPosition, isOverStack } = getPointerPositionForHold(
-        pointerEvent,
-        source
-      );
-      let heldPosition = null;
-      const offset =
-        pointerPosition && isOverStack
-          ? {
-              dx: pointerPosition.x - source.x,
-              dy: pointerPosition.y - source.y
-            }
-          : { dx: cardSize.width / 2, dy: cardSize.height / 2 };
-      if (pointerPosition && isOverStack) {
-        heldPosition = getHeldTopLeft(pointerPosition.x, pointerPosition.y, offset);
-      }
-      if (process.env.NODE_ENV !== 'production') {
-        logCardCounts('before pickup', countAllCards({ stacks, hands, heldStack }));
-      }
-      const spawned = pickupFromStack(stackId, mode, {
-        position: heldPosition
-      });
-      if (!spawned?.stackId) {
-        return;
-      }
-      setHeldStack({
-        active: true,
-        stackId: spawned.stackId,
-        cardIds: spawned.cardIds,
-        sourceStackId: stackId,
-        offset,
-        origin: spawned.origin,
-        mode: mode === 'one' ? 'singleCard' : 'stack'
-      });
-      setSelectedStackId(null);
-      setPickCountOpen(false);
-      queueCardCountLog('after pickup');
-    },
-    [
-      cardSize.height,
-      cardSize.width,
-      countAllCards,
-      getHeldTopLeft,
-      getPointerPositionForHold,
-      hands,
-      heldStack,
-      logCardCounts,
-      pickupFromStack,
-      queueCardCountLog,
-      stacks,
-      stacksById
-    ]
-  );
-
-  const handleStackPointerDown = useCallback(
-    (event, stackIdOverride = null) => {
-      lastPointerRef.current = { x: event.clientX, y: event.clientY };
-      if (event.button === 2) {
-        if (heldStack.active) {
-          event.preventDefault();
-          event.stopPropagation();
-          const position = getTablePointerPosition(event);
-          if (position) {
-            const now = performance.now();
-            rightSweepRef.current = {
-              isRightDown: true,
-              sweepActive: false,
-              downAtMs: now,
-              downPos: position,
-              lastDropAtMs: now,
-              lastDropPos: position
-            };
-            dealOneFromHeld(lastPointerRef.current.x, lastPointerRef.current.y, {
-              skipMerge: true
-            });
-          }
-          return;
-        }
-
-        event.preventDefault();
-        event.stopPropagation();
-        const position = getTablePointerPosition(event);
-        if (!position) {
-          return;
-        }
-        const stackId = stackIdOverride ?? hitTestStack(position.x, position.y);
-        if (!stackId) {
-          return;
-        }
-        if (event.currentTarget?.setPointerCapture && event.pointerId !== undefined) {
-          event.currentTarget.setPointerCapture(event.pointerId);
-          capturedPointerRef.current = {
-            pointerId: event.pointerId,
-            element: event.currentTarget
-          };
-        }
-        pendingDragRef.current = {
-          stackId,
-          startX: position.x,
-          startY: position.y,
-          pointerId: event.pointerId,
-          button: 2
-        };
-        setPendingDragActive(true);
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-
-      const position = getTablePointerPosition(event);
-      if (!position) {
-        return;
-      }
-      const pointerX = position.x;
-      const pointerY = position.y;
-      const stackId = stackIdOverride ?? hitTestStack(pointerX, pointerY);
-      if (!stackId) {
-        return;
-      }
-
-      if (heldStack.active) {
-        placeHeldStack(lastPointerRef.current.x, lastPointerRef.current.y);
-        setSelectedStackId(null);
-        setPickCountOpen(false);
-        return;
-      }
-
-      // Capture the pointer during press-to-grab so move/up still reach us even if
-      // the pointer leaves the card while dragging.
-      if (event.currentTarget?.setPointerCapture && event.pointerId !== undefined) {
-        event.currentTarget.setPointerCapture(event.pointerId);
-        capturedPointerRef.current = {
-          pointerId: event.pointerId,
-          element: event.currentTarget
-        };
-      }
-      pendingDragRef.current = {
-        stackId,
-        startX: pointerX,
-        startY: pointerY,
-        pointerId: event.pointerId,
-        button: 0
-      };
-      setPendingDragActive(true);
-    },
-    [
-      dealOneFromHeld,
-      getTablePointerPosition,
-      heldStack.active,
-      hitTestStack,
-      stacksById,
-      placeHeldStack
-    ]
-  );
-
-  const handleSurfacePointerDown = useCallback(
-    (event) => {
-      lastPointerRef.current = { x: event.clientX, y: event.clientY };
-      closeSeatMenu();
-      updatePresence({ isDown: true });
-      if (event.button === 2) {
-        if (heldStack.active) {
-          event.preventDefault();
-          event.stopPropagation();
-          const position = getTablePointerPosition(event);
-          if (position) {
-            const now = performance.now();
-            rightSweepRef.current = {
-              isRightDown: true,
-              sweepActive: false,
-              downAtMs: now,
-              downPos: position,
-              lastDropAtMs: now,
-              lastDropPos: position
-            };
-            dealOneFromHeld(lastPointerRef.current.x, lastPointerRef.current.y, {
-              skipMerge: true
-            });
-          }
-        }
-        return;
-      }
-      const position = getTablePointerPosition(event);
-      if (!position) {
-        return;
-      }
-      const pointerX = position.x;
-      const pointerY = position.y;
-      if (heldStack.active) {
-        placeHeldStack(lastPointerRef.current.x, lastPointerRef.current.y);
-        setSelectedStackId(null);
-        setPickCountOpen(false);
-        return;
-      }
-      const stackId = hitTestStack(pointerX, pointerY);
-      if (stackId) {
-        handleStackPointerDown(event, stackId);
-        return;
-      }
-      setSelectedStackId(null);
-      setPickCountOpen(false);
-    },
-    [
-      closeSeatMenu,
-      dealOneFromHeld,
-      getTablePointerPosition,
-      handleStackPointerDown,
-      heldStack.active,
-      hitTestStack,
-      placeHeldStack,
-      updatePresence
-    ]
-  );
-
-  const handlePointerMoveHover = useCallback(
-    (event) => {
-      const position = getTablePointerPosition(event);
-      if (!position) {
-        return;
-      }
-      if (heldStack.active) {
-        return;
-      }
-      const pointerX = position.x;
-      const pointerY = position.y;
-      const stackId = hitTestStack(pointerX, pointerY);
-      setHoveredStackId(stackId);
-    },
-    [getTablePointerPosition, heldStack.active, hitTestStack]
-  );
-
-  const handleSurfacePointerMove = useCallback(
-    (event) => {
-      lastPointerRef.current = { x: event.clientX, y: event.clientY };
-      const position = getTablePointerPosition(event);
-      if (position) {
-        updatePresence({ x: position.x, y: position.y });
-      }
-      handlePointerMoveHover(event);
-    },
-    [getTablePointerPosition, handlePointerMoveHover, updatePresence]
-  );
-
   const visibleBadgeStackId =
     settings.stackCountDisplayMode === 'hover' ? hoveredStackId : null;
 
   const resetInteractionStates = useCallback(() => {
-    setHeldStack({
-      active: false,
-      stackId: null,
-      cardIds: [],
-      sourceStackId: null,
-      offset: { dx: 0, dy: 0 },
-      origin: null,
-      mode: 'stack'
-    });
-    lastOwnMovementRef.current = null;
-    setSelectedStackId(null);
+    clearInteraction();
     setHoveredStackId(null);
     setPickCountOpen(false);
     setPickCountValue('1');
-  }, []);
+  }, [clearInteraction]);
 
   const applySettings = useCallback(() => {
     setAppliedSettings(settings);
@@ -2372,12 +1996,12 @@ const Table = () => {
   }, [rebuildTableFromSettings, resetInteractionStates, settings, updateTabletopScale]);
 
   const handleShuffleSelected = useCallback(() => {
-    if (!selectedStackId) {
+    if (!interaction.selectedStackId) {
       return;
     }
-    applyOwnMovement((prev) =>
+    setStacks((prev) =>
       prev.map((stack) => {
-        if (stack.id !== selectedStackId) {
+        if (stack.id !== interaction.selectedStackId) {
           return stack;
         }
         const nextCardIds = [...stack.cardIds];
@@ -2389,19 +2013,12 @@ const Table = () => {
       })
     );
     pushAction(`${myName} shuffled a stack`);
-  }, [applyOwnMovement, myName, pushAction, selectedStackId]);
-
-  const pickUpFromStack = useCallback(
-    (stackId, mode) => {
-      pickUpStack(stackId, mode);
-    },
-    [pickUpStack]
-  );
+  }, [interaction.selectedStackId, myName, pushAction, setStacks]);
 
   const handleStackDoubleClick = useCallback((event, stackId) => {
     event.preventDefault();
     event.stopPropagation();
-    applyOwnMovement((prev) =>
+    setStacks((prev) =>
       prev.map((stack) =>
         stack.id === stackId ? { ...stack, faceUp: !stack.faceUp } : stack
       )
@@ -2419,16 +2036,18 @@ const Table = () => {
       });
       return next;
     });
-  }, [applyOwnMovement, myName, pushAction, stacksById]);
+  }, [myName, pushAction, setStacks, stacksById]);
 
   const handleFlipSelected = useCallback(() => {
-    if (!selectedStackId) {
+    if (!interaction.selectedStackId) {
       return;
     }
-    const selected = stacksById[selectedStackId];
-    applyOwnMovement((prev) =>
+    const selected = stacksById[interaction.selectedStackId];
+    setStacks((prev) =>
       prev.map((stack) =>
-        stack.id === selectedStackId ? { ...stack, faceUp: !stack.faceUp } : stack
+        stack.id === interaction.selectedStackId
+          ? { ...stack, faceUp: !stack.faceUp }
+          : stack
       )
     );
     if (selected) {
@@ -2442,13 +2061,17 @@ const Table = () => {
       });
     }
     pushAction(`${myName} flipped a stack`);
-  }, [applyOwnMovement, myName, pushAction, selectedStackId, stacksById]);
+  }, [interaction.selectedStackId, myName, pushAction, setStacks, stacksById]);
 
   const handleMoveSelectedToHand = useCallback(() => {
-    if (!selectedStackId || mySeatIndex === null || mySeatIndex === undefined) {
+    if (
+      !interaction.selectedStackId ||
+      mySeatIndex === null ||
+      mySeatIndex === undefined
+    ) {
       return;
     }
-    const selected = stacksById[selectedStackId];
+    const selected = stacksById[interaction.selectedStackId];
     if (!selected) {
       return;
     }
@@ -2456,107 +2079,71 @@ const Table = () => {
     pushAction(
       `${myName} moved ${selected.cardIds.length} ${selected.cardIds.length === 1 ? 'card' : 'cards'} to hand`
     );
-    applyOwnMovement((prev) => prev.filter((stack) => stack.id !== selectedStackId));
-    setSelectedStackId(null);
+    setStacks((prev) =>
+      prev.filter((stack) => stack.id !== interaction.selectedStackId)
+    );
+    setInteraction((prev) => ({
+      ...prev,
+      selectedStackId: null,
+      menu: { ...prev.menu, open: false, stackId: null }
+    }));
     setPickCountOpen(false);
   }, [
-    applyOwnMovement,
+    interaction.selectedStackId,
     moveToHand,
     myName,
     mySeatIndex,
     pushAction,
-    selectedStackId,
+    setInteraction,
+    setStacks,
     stacksById
   ]);
 
-  useEffect(() => {
-    const handleKeyDown = (event) => {
-      if (event.repeat) {
-        return;
-      }
-      const isFormElement =
-        event.target instanceof HTMLElement &&
-        (event.target.tagName === 'INPUT' ||
-          event.target.tagName === 'TEXTAREA' ||
-          event.target.tagName === 'SELECT' ||
-          event.target.isContentEditable);
-      if (isFormElement || !selectedStackId || heldStack.active) {
-        return;
-      }
-      const lowerKey = event.key.toLowerCase();
-      if (lowerKey === 'f') {
-        event.preventDefault();
-        handleFlipSelected();
-        return;
-      }
-      if (lowerKey === 's') {
-        event.preventDefault();
-        handleShuffleSelected();
-        return;
-      }
-      if (event.key === '1' || event.key === '5' || event.key === '0') {
-        event.preventDefault();
-        const pickCount = event.key === '0' ? 10 : Number(event.key);
-        pickUpStack(selectedStackId, { n: pickCount });
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [
-    handleFlipSelected,
-    handleShuffleSelected,
-    heldStack.active,
-    pickUpStack,
-    selectedStackId
-  ]);
-
-  const selectedStack = selectedStackId ? stacksById[selectedStackId] : null;
-  const heldStackData =
-    heldStack.active && heldStack.stackId ? stacksById[heldStack.stackId] : null;
-  const heldTopCardId = heldStackData?.cardIds[heldStackData.cardIds.length - 1];
+  const selectedStack = interaction.selectedStackId
+    ? stacksById[interaction.selectedStackId]
+    : null;
+  const heldTopCardId = interaction.held?.cardIds?.[
+    (interaction.held?.cardIds?.length ?? 1) - 1
+  ];
   const heldTopCard = heldTopCardId ? cardsById[heldTopCardId] : null;
-  const placementPointer = heldStackData ? lastPointerRef.current : null;
+  const heldWorldPosition = (() => {
+    if (!interaction.held || !interaction.drag) {
+      return null;
+    }
+    const pointerWorld = lastPointerWorldRef.current ?? interaction.drag.startWorld;
+    if (!pointerWorld) {
+      return interaction.drag.originXY;
+    }
+    const raw = getHeldTopLeft(pointerWorld, interaction.drag.offset);
+    if (!raw) {
+      return interaction.drag.originXY;
+    }
+    const clamped = clampTopLeftToFelt(raw);
+    return clamped.position ?? raw;
+  })();
   const placementGhost =
-    heldStack.active && heldStackData && placementPointer
-      ? getDropTransformFromPointer(
-          placementPointer.x,
-          placementPointer.y,
-          heldStack
+    interaction.held && heldWorldPosition
+      ? { x: heldWorldPosition.x, y: heldWorldPosition.y, rot: 0 }
+      : null;
+  const hoverHandSeatId =
+    interaction.held && heldWorldPosition
+      ? getHandZoneAtPoint(
+          heldWorldPosition.x + cardSize.width / 2,
+          heldWorldPosition.y + cardSize.height / 2
         )
       : null;
-
-  const hoverHandSeatId =
-    heldStack.active && placementPointer
-      ? (() => {
-          const pointerPosition = getTablePointerPositionFromClient(
-            placementPointer.x,
-            placementPointer.y
-          );
-          return pointerPosition
-            ? getHandZoneAtPoint(pointerPosition.x, pointerPosition.y)
-            : null;
-        })()
-      : null;
   const mergeHighlightStackId =
-    heldStack.active &&
-    placementGhost &&
+    interaction.held &&
+    heldWorldPosition &&
     !hoverHandSeatId
-      ? findTableOverlapStackId(placementGhost.x, placementGhost.y, heldStack.stackId)
+      ? findTableOverlapStackId(heldWorldPosition.x, heldWorldPosition.y, null)
       : null;
   const menuBelow = selectedStack ? selectedStack.y < 140 : false;
   const menuPosition =
-    selectedStack && tableScreenRect
+    interaction.menu.open
       ? {
-          left:
-            tableScreenRect.left +
-            (selectedStack.x + cardSize.width / 2) * combinedScale,
-          top:
-            tableScreenRect.top +
-            (menuBelow
-              ? selectedStack.y + cardSize.height + 10
-              : selectedStack.y - 10) *
-              combinedScale
+          left: interaction.menu.screenX,
+          top: interaction.menu.screenY
         }
       : null;
   const menuStackCount = selectedStack ? selectedStack.cardIds.length : 0;
@@ -2581,10 +2168,10 @@ const Table = () => {
   const uiOverlayRoot =
     typeof document !== 'undefined' ? document.getElementById('ui-overlay') : null;
   const dragCardPosition =
-    heldStackData && tableScreenRect
+    interaction.held && heldWorldPosition && tableScreenRect
       ? {
-          x: tableScreenRect.left + heldStackData.x * combinedScale,
-          y: tableScreenRect.top + heldStackData.y * combinedScale
+          x: tableScreenRect.left + heldWorldPosition.x * combinedScale,
+          y: tableScreenRect.top + heldWorldPosition.y * combinedScale
         }
       : null;
   return (
@@ -2672,6 +2259,8 @@ const Table = () => {
               className={`table__surface table__surface--${tableStyle} table__surface--${tableShape}`}
               onPointerDown={handleSurfacePointerDown}
               onPointerMove={handleSurfacePointerMove}
+              onPointerUp={handleSurfacePointerUp}
+              onPointerCancel={handleSurfacePointerUp}
               onContextMenu={(event) => event.preventDefault()}
               onDragOver={handleTableDragOver}
               onDrop={handleTableDrop}
@@ -2727,7 +2316,7 @@ const Table = () => {
               ) : null}
               {handZones.map((zone) => {
                 const isOwnerZone = mySeatIndex === zone.seatIndex;
-                const isDragHover = heldStack.active && hoverHandSeatId === zone.seatIndex;
+                const isDragHover = Boolean(interaction.held) && hoverHandSeatId === zone.seatIndex;
                 const isValidDropZone = isDragHover && isOwnerZone;
                 const isInvalidDropZone =
                   isDragHover && mySeatIndex !== null && zone.seatIndex !== mySeatIndex;
@@ -2851,10 +2440,9 @@ const Table = () => {
               {tableStacks.map((stack, index) => {
                 const topCardId = stack.cardIds[stack.cardIds.length - 1];
                 const topCard = cardsById[topCardId];
-                const isHeld = heldStack.active && stack.id === heldStack.stackId;
-                if (isHeld && heldStackData) {
-                  return null;
-                }
+                const isHeld =
+                  interaction.mode === 'dragStack' &&
+                  interaction.drag?.stackId === stack.id;
                 const zIndex = index + 1;
                 const showBadge =
                   stack.cardIds.length > 1 &&
@@ -2882,8 +2470,8 @@ const Table = () => {
                       suit={topCard?.suit}
                       color={topCard?.color}
                       isHeld={isHeld}
-                      isSelected={stack.id === selectedStackId}
-                      onPointerDown={handleStackPointerDown}
+                      isSelected={stack.id === interaction.selectedStackId}
+                      onPointerDown={() => {}}
                       onDoubleClick={handleStackDoubleClick}
                       onContextMenu={(event) => event.preventDefault()}
                     />
@@ -2909,7 +2497,7 @@ const Table = () => {
           cardStyle={appliedSettings.cardStyle}
         />
       ) : null}
-      {heldStackData && uiOverlayRoot && dragCardPosition
+      {interaction.held && uiOverlayRoot && dragCardPosition
         ? createPortal(
             <div
                 className="drag-layer"
@@ -2917,11 +2505,11 @@ const Table = () => {
                 style={{ '--card-scale': viewTransform.cardScale * combinedScale }}
               >
                 <Card
-                  id={heldStackData.id}
+                  id={interaction.held.stackId}
                   x={dragCardPosition.x}
                   y={dragCardPosition.y}
-                  rotation={heldStackData.rotation}
-                  faceUp={getCardFace(heldStackData, heldTopCardId)}
+                  rotation={0}
+                  faceUp={interaction.held.faceUp ?? true}
                   cardStyle={appliedSettings.cardStyle}
                   zIndex={2000}
                   rank={heldTopCard?.rank}
@@ -2929,7 +2517,7 @@ const Table = () => {
                   color={heldTopCard?.color}
                   isHeld
                   isSelected={false}
-                  onPointerDown={handleStackPointerDown}
+                  onPointerDown={() => {}}
                   onContextMenu={(event) => event.preventDefault()}
                 />
               </div>,
@@ -3219,7 +2807,10 @@ const Table = () => {
               <button
                 type="button"
                 className="stack-menu__button"
-                onClick={() => pickUpFromStack(selectedStack.id, 'full')}
+                onClick={() => {
+                  pickup(selectedStack.id, 'full');
+                  closeMenu();
+                }}
               >
                 Pick up full stack
               </button>
@@ -3230,7 +2821,8 @@ const Table = () => {
                   if (selectedStack.cardIds.length < 2) {
                     return;
                   }
-                  pickUpFromStack(selectedStack.id, 'half');
+                  pickup(selectedStack.id, 'half');
+                  closeMenu();
                 }}
               >
                 Pick up half stack
@@ -3238,7 +2830,10 @@ const Table = () => {
               <button
                 type="button"
                 className="stack-menu__button"
-                onClick={() => pickUpFromStack(selectedStack.id, 'one')}
+                onClick={() => {
+                  pickup(selectedStack.id, 'top');
+                  closeMenu();
+                }}
               >
                 Pick up 1 card
               </button>
@@ -3273,7 +2868,8 @@ const Table = () => {
                       onClick={() => {
                         const parsed = Number.parseInt(pickCountValue, 10);
                         const count = Number.isNaN(parsed) ? 1 : parsed;
-                        pickUpFromStack(selectedStack.id, { n: count });
+                        pickup(selectedStack.id, 'n', count);
+                        closeMenu();
                       }}
                     >
                       Pick up
@@ -3290,27 +2886,36 @@ const Table = () => {
               ) : null}
               {mySeatIndex !== null ? (
                 <button
-                  type="button"
-                  className="stack-menu__button"
-                  onClick={handleMoveSelectedToHand}
-                >
-                  Move to Hand
-                </button>
-              ) : null}
-              <button
                 type="button"
                 className="stack-menu__button"
-                onClick={handleFlipSelected}
+                onClick={() => {
+                  handleMoveSelectedToHand();
+                  closeMenu();
+                }}
               >
-                Flip
+                Move to Hand
               </button>
-              <button
-                type="button"
-                className="stack-menu__button"
-                onClick={handleShuffleSelected}
-              >
-                Shuffle
-              </button>
+            ) : null}
+            <button
+              type="button"
+              className="stack-menu__button"
+              onClick={() => {
+                handleFlipSelected();
+                closeMenu();
+              }}
+            >
+              Flip
+            </button>
+            <button
+              type="button"
+              className="stack-menu__button"
+              onClick={() => {
+                handleShuffleSelected();
+                closeMenu();
+              }}
+            >
+              Shuffle
+            </button>
             </div>,
             uiOverlayRoot
           )
