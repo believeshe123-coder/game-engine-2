@@ -1573,6 +1573,7 @@ const Table = () => {
     [interaction.drag, interaction.held]
   );
 
+  // --- handlers (must be declared before menus/hotkeys) ---
   const handleFlipSelected = useCallback(() => {
     if (!interaction.selectedStackId) {
       return;
@@ -1597,6 +1598,26 @@ const Table = () => {
     }
     pushAction(`${myName} flipped a stack`);
   }, [interaction.selectedStackId, myName, pushAction, setStacks, stacksById]);
+
+  const handleShuffleSelected = useCallback(() => {
+    if (!interaction.selectedStackId) {
+      return;
+    }
+    setStacks((prev) =>
+      prev.map((stack) => {
+        if (stack.id !== interaction.selectedStackId) {
+          return stack;
+        }
+        const nextCardIds = [...stack.cardIds];
+        for (let i = nextCardIds.length - 1; i > 0; i -= 1) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [nextCardIds[i], nextCardIds[j]] = [nextCardIds[j], nextCardIds[i]];
+        }
+        return { ...stack, cardIds: nextCardIds };
+      })
+    );
+    pushAction(`${myName} shuffled a stack`);
+  }, [interaction.selectedStackId, myName, pushAction, setStacks]);
 
   const handleKeyDown = useCallback(
     (event) => {
@@ -2019,26 +2040,6 @@ const Table = () => {
     setCardFaceOverrides({});
     updateTabletopScale();
   }, [rebuildTableFromSettings, resetInteractionStates, settings, updateTabletopScale]);
-
-  const handleShuffleSelected = useCallback(() => {
-    if (!interaction.selectedStackId) {
-      return;
-    }
-    setStacks((prev) =>
-      prev.map((stack) => {
-        if (stack.id !== interaction.selectedStackId) {
-          return stack;
-        }
-        const nextCardIds = [...stack.cardIds];
-        for (let i = nextCardIds.length - 1; i > 0; i -= 1) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [nextCardIds[i], nextCardIds[j]] = [nextCardIds[j], nextCardIds[i]];
-        }
-        return { ...stack, cardIds: nextCardIds };
-      })
-    );
-    pushAction(`${myName} shuffled a stack`);
-  }, [interaction.selectedStackId, myName, pushAction, setStacks]);
 
   const handleStackDoubleClick = useCallback((event, stackId) => {
     event.preventDefault();
