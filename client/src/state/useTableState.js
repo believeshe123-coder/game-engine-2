@@ -552,64 +552,66 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     });
   }, []);
 
-  const takeTopCardFromStack = useCallback(
-    (stackId) => {
-      let removedCardId = null;
+  const pickupFromStack = useCallback(
+    (stackId, mode, options = {}) => {
+      let result = null;
       setStacks((prev) => {
-        const next = prev.map((stack) => {
-          if (stack.id !== stackId) {
-            return stack;
-          }
-          if (!stack.cardIds.length) {
-            return stack;
-          }
-          const nextCardIds = [...stack.cardIds];
-          removedCardId = nextCardIds.pop() ?? null;
-          return { ...stack, cardIds: nextCardIds };
-        });
-        return next.filter((stack) => stack.cardIds.length > 0);
-      });
-      return removedCardId;
-    },
-    [setStacks]
-  );
-
-  const spawnHeldStack = useCallback(
-    (cardIds, originStackId, originOverride = null) => {
-      if (!cardIds?.length) {
-        return null;
-      }
-      const newStackId = createStackId();
-      let origin = null;
-      let meta = null;
-      setStacks((prev) => {
-        const originStack =
-          prev.find((stack) => stack.id === originStackId) ?? originOverride;
-        if (!originStack) {
+        const source = prev.find((stack) => stack.id === stackId);
+        if (!source) {
           return prev;
         }
-        origin = { x: originStack.x, y: originStack.y };
-        meta = { rotation: originStack.rotation, faceUp: originStack.faceUp };
-        return prev.concat({
+        let pickCount = 1;
+        if (mode === 'full') {
+          pickCount = source.cardIds.length;
+        } else if (mode === 'half') {
+          pickCount = Math.floor(source.cardIds.length / 2);
+        } else if (mode === 'one') {
+          pickCount = 1;
+        } else if (typeof mode === 'number') {
+          pickCount = mode;
+        } else if (mode && typeof mode === 'object' && typeof mode.n === 'number') {
+          pickCount = mode.n;
+        }
+        const clampedCount = Math.max(
+          1,
+          Math.min(pickCount, source.cardIds.length)
+        );
+        if (clampedCount <= 0) {
+          return prev;
+        }
+        const remainingCount = source.cardIds.length - clampedCount;
+        const remainingCardIds = source.cardIds.slice(0, remainingCount);
+        const pickedCardIds = source.cardIds.slice(remainingCount);
+        if (!pickedCardIds.length) {
+          return prev;
+        }
+        const newStackId = createStackId();
+        result = {
+          stackId: newStackId,
+          cardIds: pickedCardIds,
+          sourceStackId: source.id,
+          origin: { x: source.x, y: source.y },
+          rotation: source.rotation,
+          faceUp: source.faceUp
+        };
+        const next = prev
+          .map((item) =>
+            item.id === stackId ? { ...item, cardIds: remainingCardIds } : item
+          )
+          .filter((item) => item.id !== stackId || item.cardIds.length > 0);
+        next.push({
           id: newStackId,
-          x: originStack.x,
-          y: originStack.y,
-          rotation: originStack.rotation,
-          faceUp: originStack.faceUp,
-          cardIds: [...cardIds],
+          x: options.position?.x ?? source.x,
+          y: options.position?.y ?? source.y,
+          rotation: source.rotation,
+          faceUp: source.faceUp,
+          cardIds: pickedCardIds,
           zone: 'table',
           ownerSeatIndex: null
         });
+        return next;
       });
-      if (!origin || !meta) {
-        return null;
-      }
-      return {
-        stackId: newStackId,
-        origin,
-        rotation: meta.rotation,
-        faceUp: meta.faceUp
-      };
+      return result;
     },
     [createStackId, setStacks]
   );
@@ -631,7 +633,6 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     moveFromHandToTable,
     reorderHand,
     toggleReveal,
-    takeTopCardFromStack,
-    spawnHeldStack
+    pickupFromStack
   };
 };

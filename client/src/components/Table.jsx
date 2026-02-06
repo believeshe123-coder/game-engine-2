@@ -166,8 +166,7 @@ const Table = () => {
     moveFromHandToTable,
     reorderHand,
     toggleReveal,
-    takeTopCardFromStack,
-    spawnHeldStack
+    pickupFromStack
   } = useTableState(
     tableRect,
     cardSize,
@@ -184,6 +183,9 @@ const Table = () => {
     origin: null,
     mode: 'stack'
   });
+  const initialCardTotalRef = useRef(null);
+  const lastCardCountRef = useRef(null);
+  const cardCountLogQueueRef = useRef([]);
   const [hoveredStackId, setHoveredStackId] = useState(null);
   const [selectedStackId, setSelectedStackId] = useState(null);
   const [pendingDragActive, setPendingDragActive] = useState(false);
@@ -210,6 +212,111 @@ const Table = () => {
     lastDropAtMs: 0,
     lastDropPos: null
   });
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'production') {
+      return;
+    }
+    if (initialCardTotalRef.current !== null) {
+      return;
+    }
+    const total = Object.keys(cardsById ?? {}).length;
+    if (total > 0) {
+      initialCardTotalRef.current = total;
+    }
+  }, [cardsById]);
+
+  const countAllCards = useCallback((state) => {
+    const counts = new Map();
+    const heldId = state.heldStack?.active ? state.heldStack.stackId : null;
+    let tableCount = 0;
+    let handsCount = 0;
+    let heldCount = 0;
+    const addCard = (cardId) => {
+      counts.set(cardId, (counts.get(cardId) ?? 0) + 1);
+    };
+    state.stacks.forEach((stack) => {
+      if (stack.id === heldId) {
+        return;
+      }
+      tableCount += stack.cardIds.length;
+      stack.cardIds.forEach(addCard);
+    });
+    Object.values(state.hands ?? {}).forEach((hand) => {
+      const cardIds = hand?.cardIds ?? [];
+      handsCount += cardIds.length;
+      cardIds.forEach(addCard);
+    });
+    if (state.heldStack?.active) {
+      heldCount = state.heldStack.cardIds.length;
+      state.heldStack.cardIds.forEach(addCard);
+    }
+    const duplicates = [];
+    counts.forEach((count, cardId) => {
+      if (count > 1) {
+        duplicates.push(`${cardId} appears ${count}x`);
+      }
+    });
+    return {
+      tableCount,
+      handsCount,
+      heldCount,
+      total: tableCount + handsCount + heldCount,
+      duplicates
+    };
+  }, []);
+
+  const logCardCounts = useCallback((label, counts) => {
+    if (process.env.NODE_ENV === 'production') {
+      return;
+    }
+    const expectedTotal = initialCardTotalRef.current;
+    const previous = lastCardCountRef.current;
+    // eslint-disable-next-line no-console
+    console.log(`[card-count] ${label}`, {
+      ...counts,
+      expectedTotal: expectedTotal ?? null
+    });
+    if (previous && previous.total !== counts.total) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[card-count] total changed ${previous.total} -> ${counts.total} (${label})`,
+        { previous, current: counts }
+      );
+    }
+    if (expectedTotal !== null && expectedTotal !== counts.total) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[card-count] total mismatch expected ${expectedTotal} got ${counts.total} (${label})`
+      );
+    }
+    if (counts.duplicates.length > 0) {
+      // eslint-disable-next-line no-console
+      console.warn(`[card-count] duplicates (${label})`, counts.duplicates);
+    }
+    lastCardCountRef.current = counts;
+  }, []);
+
+  const queueCardCountLog = useCallback((label) => {
+    if (process.env.NODE_ENV === 'production') {
+      return;
+    }
+    cardCountLogQueueRef.current.push(label);
+  }, []);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'production') {
+      return;
+    }
+    if (cardCountLogQueueRef.current.length === 0) {
+      return;
+    }
+    const label = cardCountLogQueueRef.current.shift();
+    if (!label) {
+      return;
+    }
+    const counts = countAllCards({ stacks, hands, heldStack });
+    logCardCounts(label, counts);
+  }, [countAllCards, hands, heldStack, logCardCounts, stacks]);
   const DRAG_THRESHOLD = 8;
   const applySweepJitter = useCallback((position, direction) => {
     if (!direction) {
@@ -1171,6 +1278,51 @@ const Table = () => {
     [placementDebugEnabled]
   );
 
+  const cancelHeldStack = useCallback(() => {
+    if (!heldStack.active || !heldStack.stackId) {
+      return;
+    }
+    applyOwnMovement((prev) => {
+      const held = prev.find((stack) => stack.id === heldStack.stackId);
+      if (!held) {
+        return prev;
+      }
+      if (heldStack.sourceStackId) {
+        const source = prev.find((stack) => stack.id === heldStack.sourceStackId);
+        if (source) {
+          const merged = {
+            ...source,
+            cardIds: [...source.cardIds, ...held.cardIds]
+          };
+          return prev
+            .filter(
+              (stack) =>
+                stack.id !== heldStack.stackId && stack.id !== heldStack.sourceStackId
+            )
+            .concat(merged);
+        }
+      }
+      if (heldStack.origin) {
+        return prev.map((stack) =>
+          stack.id === heldStack.stackId
+            ? { ...stack, x: heldStack.origin.x, y: heldStack.origin.y }
+            : stack
+        );
+      }
+      return prev;
+    });
+    setHeldStack({
+      active: false,
+      stackId: null,
+      cardIds: [],
+      sourceStackId: null,
+      offset: { dx: 0, dy: 0 },
+      origin: null,
+      mode: 'stack'
+    });
+    queueCardCountLog('after cancel');
+  }, [applyOwnMovement, heldStack, queueCardCountLog]);
+
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.repeat) {
@@ -1184,24 +1336,7 @@ const Table = () => {
       if (event.key !== 'Escape') {
         return;
       }
-      if (heldStack.active && heldStack.stackId && heldStack.origin) {
-        setStacks((prev) =>
-          prev.map((stack) =>
-            stack.id === heldStack.stackId
-              ? { ...stack, x: heldStack.origin.x, y: heldStack.origin.y }
-              : stack
-          )
-        );
-        setHeldStack({
-          active: false,
-          stackId: null,
-          cardIds: [],
-          sourceStackId: null,
-          offset: { dx: 0, dy: 0 },
-          origin: null,
-          mode: 'stack'
-        });
-      }
+      cancelHeldStack();
       setSelectedStackId(null);
       setPickCountOpen(false);
       closeSeatMenu();
@@ -1211,12 +1346,25 @@ const Table = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
     closeSeatMenu,
+    cancelHeldStack,
     heldStack.active,
-    heldStack.origin,
-    heldStack.stackId,
-    setStacks,
     undoLastOwnMovement
   ]);
+
+  useEffect(() => {
+    if (!heldStack.active) {
+      return undefined;
+    }
+    const handleCancel = () => {
+      cancelHeldStack();
+    };
+    window.addEventListener('pointercancel', handleCancel);
+    window.addEventListener('blur', handleCancel);
+    return () => {
+      window.removeEventListener('pointercancel', handleCancel);
+      window.removeEventListener('blur', handleCancel);
+    };
+  }, [cancelHeldStack, heldStack.active]);
 
   const placeHeldStack = useCallback(
     (clientX, clientY) => {
@@ -1273,6 +1421,7 @@ const Table = () => {
             origin: null,
             mode: 'stack'
           });
+          queueCardCountLog('after drop');
           return;
         }
         if (
@@ -1297,6 +1446,7 @@ const Table = () => {
             origin: null,
             mode: 'stack'
           });
+          queueCardCountLog('after drop');
           return;
         }
         logPlacementDebug(
@@ -1354,6 +1504,7 @@ const Table = () => {
         origin: null,
         mode: 'stack'
       });
+      queueCardCountLog('after drop');
     },
     [
       applyOwnMovement,
@@ -1370,7 +1521,8 @@ const Table = () => {
       moveToHand,
       mySeatIndex,
       myName,
-      pushAction
+      pushAction,
+      queueCardCountLog
     ]
   );
 
@@ -1848,28 +2000,34 @@ const Table = () => {
         if (!originStack || originStack.cardIds.length === 0) {
           return;
         }
-        const topCardId = takeTopCardFromStack(pending.stackId);
-        if (!topCardId) {
-          return;
-        }
-        const spawned = spawnHeldStack([topCardId], pending.stackId, originStack);
-        if (!spawned?.stackId) {
-          return;
-        }
         const offset = {
           dx: pointerX - originStack.x,
           dy: pointerY - originStack.y
         };
-        latestPoint.current = { x: originStack.x, y: originStack.y };
+        const heldPosition = getHeldTopLeft(pointerX, pointerY, offset);
+        if (process.env.NODE_ENV !== 'production') {
+          logCardCounts(
+            'before pickup (rmb)',
+            countAllCards({ stacks, hands, heldStack })
+          );
+        }
+        const spawned = pickupFromStack(pending.stackId, 'one', {
+          position: heldPosition
+        });
+        if (!spawned?.stackId) {
+          return;
+        }
+        latestPoint.current = { x: spawned.origin.x, y: spawned.origin.y };
         setHeldStack({
           active: true,
           stackId: spawned.stackId,
-          cardIds: [topCardId],
+          cardIds: spawned.cardIds,
           sourceStackId: pending.stackId,
           offset,
-          origin: { x: originStack.x, y: originStack.y },
+          origin: spawned.origin,
           mode: 'singleCard'
         });
+        queueCardCountLog('after pickup (rmb)');
         return;
       }
       bringStackToFront(pending.stackId);
@@ -1920,14 +2078,20 @@ const Table = () => {
     getTablePointerPosition,
     pendingDragActive,
     releaseCapturedPointer,
-    spawnHeldStack,
+    countAllCards,
+    getHeldTopLeft,
+    hands,
+    heldStack,
+    logCardCounts,
+    pickupFromStack,
     stacksById,
     startHeldStack,
-    takeTopCardFromStack
+    stacks,
+    queueCardCountLog
   ]);
 
   const pickUpStack = useCallback(
-    (stackId, requestedCount, pointerEvent = null) => {
+    (stackId, mode, pointerEvent = null) => {
       if (pointerEvent) {
         pointerEvent.preventDefault();
         lastPointerRef.current = { x: pointerEvent.clientX, y: pointerEvent.clientY };
@@ -1940,10 +2104,6 @@ const Table = () => {
         pointerEvent,
         source
       );
-      const clampedCount = Math.max(1, Math.min(requestedCount, source.cardIds.length));
-      const newStackId = createStackId();
-      let pickedCardIds = [];
-      let origin = null;
       let heldPosition = null;
       const offset =
         pointerPosition && isOverStack
@@ -1955,60 +2115,40 @@ const Table = () => {
       if (pointerPosition && isOverStack) {
         heldPosition = getHeldTopLeft(pointerPosition.x, pointerPosition.y, offset);
       }
-
-      applyOwnMovement((prev) => {
-        const current = prev.find((stack) => stack.id === stackId);
-        if (!current) {
-          return prev;
-        }
-        const safeCount = Math.max(1, Math.min(clampedCount, current.cardIds.length));
-        const remainingCount = current.cardIds.length - safeCount;
-        const remainingCardIds = current.cardIds.slice(0, remainingCount);
-        pickedCardIds = current.cardIds.slice(remainingCount);
-        if (pickedCardIds.length === 0) {
-          return prev;
-        }
-        origin = { x: current.x, y: current.y };
-        const next = prev
-          .map((item) =>
-            item.id === stackId ? { ...item, cardIds: remainingCardIds } : item
-          )
-          .filter((item) => item.id !== stackId || item.cardIds.length > 0);
-        next.push({
-          id: newStackId,
-          x: heldPosition?.x ?? current.x,
-          y: heldPosition?.y ?? current.y,
-          rotation: current.rotation,
-          faceUp: current.faceUp,
-          cardIds: pickedCardIds,
-          zone: 'table',
-          ownerSeatIndex: null
-        });
-        return next;
+      if (process.env.NODE_ENV !== 'production') {
+        logCardCounts('before pickup', countAllCards({ stacks, hands, heldStack }));
+      }
+      const spawned = pickupFromStack(stackId, mode, {
+        position: heldPosition
       });
-
-      if (pickedCardIds.length === 0) {
+      if (!spawned?.stackId) {
         return;
       }
       setHeldStack({
         active: true,
-        stackId: newStackId,
-        cardIds: pickedCardIds,
+        stackId: spawned.stackId,
+        cardIds: spawned.cardIds,
         sourceStackId: stackId,
         offset,
-        origin,
-        mode: 'stack'
+        origin: spawned.origin,
+        mode: mode === 'one' ? 'singleCard' : 'stack'
       });
       setSelectedStackId(null);
       setPickCountOpen(false);
+      queueCardCountLog('after pickup');
     },
     [
-      applyOwnMovement,
       cardSize.height,
       cardSize.width,
-      createStackId,
+      countAllCards,
       getHeldTopLeft,
       getPointerPositionForHold,
+      hands,
+      heldStack,
+      logCardCounts,
+      pickupFromStack,
+      queueCardCountLog,
+      stacks,
       stacksById
     ]
   );
@@ -2110,7 +2250,6 @@ const Table = () => {
       getTablePointerPosition,
       heldStack.active,
       hitTestStack,
-      pickUpStack,
       stacksById,
       placeHeldStack
     ]
@@ -2253,8 +2392,8 @@ const Table = () => {
   }, [applyOwnMovement, myName, pushAction, selectedStackId]);
 
   const pickUpFromStack = useCallback(
-    (stackId, requestedCount) => {
-      pickUpStack(stackId, requestedCount);
+    (stackId, mode) => {
+      pickUpStack(stackId, mode);
     },
     [pickUpStack]
   );
@@ -2358,7 +2497,7 @@ const Table = () => {
       if (event.key === '1' || event.key === '5' || event.key === '0') {
         event.preventDefault();
         const pickCount = event.key === '0' ? 10 : Number(event.key);
-        pickUpStack(selectedStackId, pickCount);
+        pickUpStack(selectedStackId, { n: pickCount });
       }
     };
 
@@ -3080,7 +3219,7 @@ const Table = () => {
               <button
                 type="button"
                 className="stack-menu__button"
-                onClick={() => pickUpFromStack(selectedStack.id, selectedStack.cardIds.length)}
+                onClick={() => pickUpFromStack(selectedStack.id, 'full')}
               >
                 Pick up full stack
               </button>
@@ -3088,11 +3227,10 @@ const Table = () => {
                 type="button"
                 className="stack-menu__button"
                 onClick={() => {
-                  const halfCount = Math.floor(selectedStack.cardIds.length / 2);
-                  if (halfCount < 1) {
+                  if (selectedStack.cardIds.length < 2) {
                     return;
                   }
-                  pickUpFromStack(selectedStack.id, halfCount);
+                  pickUpFromStack(selectedStack.id, 'half');
                 }}
               >
                 Pick up half stack
@@ -3100,7 +3238,7 @@ const Table = () => {
               <button
                 type="button"
                 className="stack-menu__button"
-                onClick={() => pickUpFromStack(selectedStack.id, 1)}
+                onClick={() => pickUpFromStack(selectedStack.id, 'one')}
               >
                 Pick up 1 card
               </button>
@@ -3135,7 +3273,7 @@ const Table = () => {
                       onClick={() => {
                         const parsed = Number.parseInt(pickCountValue, 10);
                         const count = Number.isNaN(parsed) ? 1 : parsed;
-                        pickUpFromStack(selectedStack.id, count);
+                        pickUpFromStack(selectedStack.id, { n: count });
                       }}
                     >
                       Pick up
