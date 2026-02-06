@@ -7,6 +7,8 @@ const DEFAULT_SETTINGS = {
   deckCount: 1,
   presetLayout: 'none',
   stackCountDisplayMode: 'always',
+  tableZoom: 1,
+  cardScale: 1,
   roomSettings: {
     tableStyle: 'medieval',
     tableShape: 'rectangle',
@@ -17,6 +19,14 @@ const DEFAULT_SETTINGS = {
       circle: []
     }
   }
+};
+
+const clampNumber = (value, min, max, fallback) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, parsed));
 };
 
 const normalizeDeckCount = (value) => {
@@ -30,6 +40,8 @@ const normalizeDeckCount = (value) => {
 const normalizeSettings = (settings) => {
   const next = { ...DEFAULT_SETTINGS, ...(settings ?? {}) };
   next.deckCount = normalizeDeckCount(next.deckCount);
+  next.tableZoom = clampNumber(next.tableZoom, 0.5, 1.4, DEFAULT_SETTINGS.tableZoom);
+  next.cardScale = clampNumber(next.cardScale, 0.7, 1.6, DEFAULT_SETTINGS.cardScale);
   if (!['medieval', 'classic'].includes(next.cardStyle)) {
     next.cardStyle = DEFAULT_SETTINGS.cardStyle;
   }
