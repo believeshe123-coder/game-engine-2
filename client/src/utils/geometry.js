@@ -5,12 +5,14 @@ export const getFeltShape = ({ width = 0, height = 0, shape = 'rectangle' } = {}
   const h = Math.max(0, height);
   const cx = w / 2;
   const cy = h / 2;
-  const rx = w / 2;
-  const ry = h / 2;
+  const r = Math.min(w, h) / 2;
+  const rx = shape === 'circle' ? r : w / 2;
+  const ry = shape === 'circle' ? r : h / 2;
   return {
-    type: shape === 'oval' ? 'ellipse' : 'rect',
+    type: shape === 'oval' ? 'ellipse' : shape === 'circle' ? 'circle' : 'rect',
     cx,
     cy,
+    r,
     w,
     h,
     rx,
@@ -93,6 +95,23 @@ export const clampStackToFeltEllipse = (x, y, stackW, stackH, feltEllipse) => {
 export const clampStackToFelt = (x, y, stackW, stackH, felt) => {
   if (!felt || felt.w <= 0 || felt.h <= 0) {
     return { x, y };
+  }
+  if (felt.type === 'circle') {
+    const cx = felt.cx ?? 0;
+    const cy = felt.cy ?? 0;
+    const r = Math.max(0, felt.r ?? 0);
+    const safeRadius = r - Math.max(stackW, stackH) / 2;
+    if (safeRadius <= 0) {
+      return { x: cx, y: cy };
+    }
+    const dx = x - cx;
+    const dy = y - cy;
+    const distance = Math.hypot(dx, dy);
+    if (distance <= safeRadius || !distance) {
+      return { x, y };
+    }
+    const scale = safeRadius / distance;
+    return { x: cx + dx * scale, y: cy + dy * scale };
   }
   if (felt.type === 'ellipse') {
     const cx = felt.cx ?? 0;

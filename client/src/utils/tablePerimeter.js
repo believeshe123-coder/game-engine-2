@@ -106,6 +106,17 @@ const getEllipseFromRect = (tableRect) => ({
   ry: (tableRect.height ?? 0) / 2
 });
 
+const getCircleFromRect = (tableRect) => {
+  const width = tableRect.width ?? 0;
+  const height = tableRect.height ?? 0;
+  const radius = Math.min(width, height) / 2;
+  return {
+    cx: (tableRect.left ?? 0) + width / 2,
+    cy: (tableRect.top ?? 0) + height / 2,
+    r: radius
+  };
+};
+
 const getEllipseBoundaryPoint = (ellipse, angle) => {
   const rx = Math.max(1, ellipse.rx);
   const ry = Math.max(1, ellipse.ry);
@@ -130,6 +141,13 @@ export const paramFromPointer = (shape, tableRect, pointerXY) => {
   if (!tableRect || !pointerXY) {
     return 0;
   }
+  if (shape === 'circle') {
+    const circle = getCircleFromRect(tableRect);
+    const dx = pointerXY.x - circle.cx;
+    const dy = pointerXY.y - circle.cy;
+    const angle = Math.atan2(dy, dx);
+    return normalizeParam(angle / TAU);
+  }
   if (shape === 'oval') {
     const ellipse = getEllipseFromRect(tableRect);
     const dx = pointerXY.x - ellipse.cx;
@@ -152,6 +170,21 @@ export const pointFromParam = (shape, tableRect, param, railOffsetPx = 0) => {
     return { x: 0, y: 0, nx: 0, ny: -1 };
   }
   const normalizedParam = normalizeParam(param);
+  if (shape === 'circle') {
+    const circle = getCircleFromRect(tableRect);
+    const angle = normalizedParam * TAU;
+    const nx = Math.cos(angle);
+    const ny = Math.sin(angle);
+    const r = Math.max(1, circle.r);
+    const boundaryX = circle.cx + nx * r;
+    const boundaryY = circle.cy + ny * r;
+    return {
+      x: boundaryX + nx * railOffsetPx,
+      y: boundaryY + ny * railOffsetPx,
+      nx,
+      ny
+    };
+  }
   if (shape === 'oval') {
     const ellipse = getEllipseFromRect(tableRect);
     const angle = normalizedParam * TAU;
@@ -183,6 +216,10 @@ export const perimeterLength = (shape, tableRect) => {
   }
   const width = Math.max(0, tableRect.width ?? 0);
   const height = Math.max(0, tableRect.height ?? 0);
+  if (shape === 'circle') {
+    const radius = Math.max(1, Math.min(width, height) / 2);
+    return TAU * radius;
+  }
   if (shape === 'oval') {
     const a = Math.max(1, width / 2);
     const b = Math.max(1, height / 2);
