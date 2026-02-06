@@ -409,6 +409,10 @@ body,
   border-radius: 999px;
 }
 
+.table-frame--circle::before {
+  border-radius: 999px;
+}
+
 .table-frame::after {
   content: '';
   position: absolute;
@@ -425,6 +429,10 @@ body,
 }
 
 .table-frame--oval::after {
+  border-radius: 999px;
+}
+
+.table-frame--circle::after {
   border-radius: 999px;
 }
 
@@ -457,6 +465,10 @@ body,
 }
 
 .table__surface--oval {
+  border-radius: 999px;
+}
+
+.table__surface--circle {
   border-radius: 999px;
 }
 

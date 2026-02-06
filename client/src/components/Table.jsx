@@ -21,6 +21,9 @@ const RIGHT_PANEL_SAFE_WIDTH = 340;
 const TABLETOP_MARGIN = 24;
 const MIN_TABLETOP_SCALE = 0.65;
 const MAX_TABLETOP_SCALE = 1;
+const TABLE_BASE_WIDTH = 1100;
+const TABLE_BASE_HEIGHT = 680;
+const TABLE_FOOTPRINT_SCALE = 0.9;
 const BASE_CARD_SIZE = { width: 72, height: 104 };
 const CARD_SIZE = {
   width: BASE_CARD_SIZE.width * CARD_SCALE,
@@ -110,6 +113,7 @@ const Table = () => {
   const [tableRect, setTableRect] = useState({ width: 0, height: 0 });
   const [tableScreenRect, setTableScreenRect] = useState(null);
   const [tableScale, setTableScale] = useState(1);
+  const [tableFootprintPx, setTableFootprintPx] = useState(null);
   const tableScaleRef = useRef(1);
   const pendingDragRef = useRef(null);
   const lastOwnMovementRef = useRef(null);
@@ -255,7 +259,7 @@ const Table = () => {
     process.env.NODE_ENV !== 'production' &&
     window.localStorage?.getItem('placementDebug') === 'true';
   const safeFeltEllipse = useMemo(() => {
-    if (!feltEllipse || tableShape !== 'oval') {
+    if (!feltEllipse || !['oval', 'circle'].includes(tableShape)) {
       return null;
     }
     const rxSafe = feltEllipse.rx - CARD_SIZE.width / 2;
@@ -479,6 +483,8 @@ const Table = () => {
       0,
       window.innerHeight - TABLETOP_MARGIN * 2
     );
+    const nextFootprint = Math.min(availableWidth, availableHeight) * TABLE_FOOTPRINT_SCALE;
+    setTableFootprintPx(nextFootprint);
     const nextScale = Math.max(
       MIN_TABLETOP_SCALE,
       Math.min(
@@ -2059,7 +2065,18 @@ const Table = () => {
         <div
           ref={tableFrameRef}
           className={`table-frame table-frame--${tableStyle} table-frame--${tableShape}`}
-          style={{ '--card-scale': CARD_SCALE }}
+          style={{
+            '--card-scale': CARD_SCALE,
+            '--table-width': `${(() => {
+              const footprint =
+                tableFootprintPx ?? Math.min(TABLE_BASE_WIDTH, TABLE_BASE_HEIGHT);
+              if (tableShape === 'circle') {
+                return footprint;
+              }
+              return footprint * (TABLE_BASE_WIDTH / TABLE_BASE_HEIGHT);
+            })()}px`,
+            '--table-height': `${tableFootprintPx ?? Math.min(TABLE_BASE_WIDTH, TABLE_BASE_HEIGHT)}px`
+          }}
         >
           <div id="seatLayer" className="table__seats" aria-label="Table seats">
             {seatPositions.map((seat, i) => {
@@ -2520,6 +2537,7 @@ const Table = () => {
                 >
                   <option value="rectangle">Rectangle</option>
                   <option value="oval">Oval</option>
+                  <option value="circle">Circle</option>
                 </select>
               </label>
               <label className="table-settings__row">
