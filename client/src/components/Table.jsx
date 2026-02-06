@@ -1573,6 +1573,31 @@ const Table = () => {
     [interaction.drag, interaction.held]
   );
 
+  const handleFlipSelected = useCallback(() => {
+    if (!interaction.selectedStackId) {
+      return;
+    }
+    const selected = stacksById[interaction.selectedStackId];
+    setStacks((prev) =>
+      prev.map((stack) =>
+        stack.id === interaction.selectedStackId
+          ? { ...stack, faceUp: !stack.faceUp }
+          : stack
+      )
+    );
+    if (selected) {
+      setCardFaceOverrides((prev) => {
+        const next = { ...prev };
+        selected.cardIds.forEach((cardId) => {
+          const currentFace = typeof next[cardId] === 'boolean' ? next[cardId] : selected.faceUp;
+          next[cardId] = !currentFace;
+        });
+        return next;
+      });
+    }
+    pushAction(`${myName} flipped a stack`);
+  }, [interaction.selectedStackId, myName, pushAction, setStacks, stacksById]);
+
   const handleKeyDown = useCallback(
     (event) => {
       if (event.repeat) {
@@ -2037,31 +2062,6 @@ const Table = () => {
       return next;
     });
   }, [myName, pushAction, setStacks, stacksById]);
-
-  const handleFlipSelected = useCallback(() => {
-    if (!interaction.selectedStackId) {
-      return;
-    }
-    const selected = stacksById[interaction.selectedStackId];
-    setStacks((prev) =>
-      prev.map((stack) =>
-        stack.id === interaction.selectedStackId
-          ? { ...stack, faceUp: !stack.faceUp }
-          : stack
-      )
-    );
-    if (selected) {
-      setCardFaceOverrides((prev) => {
-        const next = { ...prev };
-        selected.cardIds.forEach((cardId) => {
-          const currentFace = typeof next[cardId] === 'boolean' ? next[cardId] : selected.faceUp;
-          next[cardId] = !currentFace;
-        });
-        return next;
-      });
-    }
-    pushAction(`${myName} flipped a stack`);
-  }, [interaction.selectedStackId, myName, pushAction, setStacks, stacksById]);
 
   const handleMoveSelectedToHand = useCallback(() => {
     if (
