@@ -104,7 +104,8 @@ const Card = ({
   color,
   cardStyle,
   isHeld,
-  isSelected
+  isSelected,
+  onContextMenu
 }) => {
   const displayRank = rank ?? '?';
   const isJoker = displayRank === 'JOKER';
@@ -131,6 +132,7 @@ const Card = ({
       }}
       onPointerDown={(event) => onPointerDown(event, id)}
       onDoubleClick={(event) => onDoubleClick?.(event, id)}
+      onContextMenu={onContextMenu}
     >
       <div className="card__surface" aria-hidden="true">
         {faceUp ? (
