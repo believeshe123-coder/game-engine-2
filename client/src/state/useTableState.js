@@ -65,30 +65,6 @@ const buildDecks = (settings) => {
   };
 };
 
-const validateUniqueCardIds = (stacks, hands) => {
-  const counts = new Map();
-  stacks.forEach((stack) => {
-    stack.cardIds.forEach((cardId) => {
-      counts.set(cardId, (counts.get(cardId) ?? 0) + 1);
-    });
-  });
-  Object.values(hands ?? {}).forEach((hand) => {
-    hand?.cardIds?.forEach((cardId) => {
-      counts.set(cardId, (counts.get(cardId) ?? 0) + 1);
-    });
-  });
-  const duplicates = [];
-  counts.forEach((count, cardId) => {
-    if (count > 1) {
-      duplicates.push(`${cardId} appears ${count}x`);
-    }
-  });
-  if (duplicates.length > 0) {
-    // eslint-disable-next-line no-console
-    console.error(`DUPLICATE CARD IDS: ${duplicates.join(', ')}`);
-  }
-};
-
 const applyRectangleLayout = ({
   preset,
   feltBounds,
@@ -247,6 +223,7 @@ const createEmptyHand = () => ({ cardIds: [], revealed: {} });
 
 export const useTableState = (tableRect, cardSize, initialSettings, seatCount) => {
   const [cardsById, setCardsById] = useState({});
+  const [allCardIds, setAllCardIds] = useState([]);
   const [stacks, setStacks] = useState([]);
   const initializedRef = useRef(false);
   const nextStackIdRef = useRef(21);
@@ -341,6 +318,7 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
       });
 
       setCardsById(nextCardsById);
+      setAllCardIds(allCardIds);
       setStacks(nextStacks);
       initializedRef.current = true;
     },
@@ -364,12 +342,6 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     tableRect?.height,
     tableRect?.width
   ]);
-
-  useEffect(() => {
-    if (process.env.NODE_ENV !== 'production') {
-      validateUniqueCardIds(stacks, hands);
-    }
-  }, [hands, stacks]);
 
   useEffect(() => {
     const count = seatCount ?? DEFAULT_SETTINGS.roomSettings.seatCount;
@@ -552,72 +524,9 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     });
   }, []);
 
-  const pickupFromStack = useCallback(
-    (stackId, mode, options = {}) => {
-      let result = null;
-      setStacks((prev) => {
-        const source = prev.find((stack) => stack.id === stackId);
-        if (!source) {
-          return prev;
-        }
-        let pickCount = 1;
-        if (mode === 'full') {
-          pickCount = source.cardIds.length;
-        } else if (mode === 'half') {
-          pickCount = Math.floor(source.cardIds.length / 2);
-        } else if (mode === 'one') {
-          pickCount = 1;
-        } else if (typeof mode === 'number') {
-          pickCount = mode;
-        } else if (mode && typeof mode === 'object' && typeof mode.n === 'number') {
-          pickCount = mode.n;
-        }
-        const clampedCount = Math.max(
-          1,
-          Math.min(pickCount, source.cardIds.length)
-        );
-        if (clampedCount <= 0) {
-          return prev;
-        }
-        const remainingCount = source.cardIds.length - clampedCount;
-        const remainingCardIds = source.cardIds.slice(0, remainingCount);
-        const pickedCardIds = source.cardIds.slice(remainingCount);
-        if (!pickedCardIds.length) {
-          return prev;
-        }
-        const newStackId = createStackId();
-        result = {
-          stackId: newStackId,
-          cardIds: pickedCardIds,
-          sourceStackId: source.id,
-          origin: { x: source.x, y: source.y },
-          rotation: source.rotation,
-          faceUp: source.faceUp
-        };
-        const next = prev
-          .map((item) =>
-            item.id === stackId ? { ...item, cardIds: remainingCardIds } : item
-          )
-          .filter((item) => item.id !== stackId || item.cardIds.length > 0);
-        next.push({
-          id: newStackId,
-          x: options.position?.x ?? source.x,
-          y: options.position?.y ?? source.y,
-          rotation: source.rotation,
-          faceUp: source.faceUp,
-          cardIds: pickedCardIds,
-          zone: 'table',
-          ownerSeatIndex: null
-        });
-        return next;
-      });
-      return result;
-    },
-    [createStackId, setStacks]
-  );
-
   return {
     cardsById,
+    allCardIds,
     stacks,
     setStacks,
     createStackId,
@@ -632,7 +541,6 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     moveToHand,
     moveFromHandToTable,
     reorderHand,
-    toggleReveal,
-    pickupFromStack
+    toggleReveal
   };
 };
