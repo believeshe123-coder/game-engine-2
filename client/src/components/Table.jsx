@@ -32,7 +32,10 @@ const SEAT_POSITION = {
 };
 const SEAT_SIZE = { width: 208, height: 132 };
 const SEAT_PADDING = 24;
-const SEAT_GAP_PX = Math.max(0, Math.max(SEAT_SIZE.width, SEAT_SIZE.height) / 2 + SEAT_PADDING - 20);
+const SEAT_RAIL_OFFSET_PX = Math.max(
+  0,
+  Math.max(SEAT_SIZE.width, SEAT_SIZE.height) / 2 + SEAT_PADDING - 20
+);
 const SEAT_DIAMETER_PX = Math.max(SEAT_SIZE.width, SEAT_SIZE.height);
 const SEAT_DRAG_PADDING_PX = 10;
 const SEAT_MIN_GAP_PX = SEAT_DIAMETER_PX + SEAT_DRAG_PADDING_PX;
@@ -78,12 +81,12 @@ const getSeatSideFromAngle = (angle) => {
   return 'top';
 };
 
-const computeSeatAnchorsFromParams = ({ seatParams, tableShape, feltBounds }) => {
-  if (!feltBounds || !feltBounds.width || !feltBounds.height) {
+const computeSeatAnchorsFromParams = ({ seatParams, tableShape, seatRailBounds }) => {
+  if (!seatRailBounds || !seatRailBounds.width || !seatRailBounds.height) {
     return [];
   }
   return seatParams.map((param) => {
-    const point = pointFromParam(tableShape, feltBounds, param, SEAT_GAP_PX);
+    const point = pointFromParam(tableShape, seatRailBounds, param, SEAT_RAIL_OFFSET_PX);
     const angle = Math.atan2(point.ny, point.nx);
     return {
       x: point.x,
@@ -242,6 +245,7 @@ const Table = () => {
   const tableStyle = settings.roomSettings.tableStyle;
   const tableShape = settings.roomSettings.tableShape;
   const [feltBounds, setFeltBounds] = useState(null);
+  const [seatRailBounds, setSeatRailBounds] = useState(null);
   const [feltEllipse, setFeltEllipse] = useState(null);
   const [feltScreenRect, setFeltScreenRect] = useState(null);
   const [debugClampPoint, setDebugClampPoint] = useState(null);
@@ -399,14 +403,21 @@ const Table = () => {
     const feltHeight = feltBounds.height / scale;
     const feltOffsetX = (feltBounds.left - frameRect.left) / scale;
     const feltOffsetY = (feltBounds.top - frameRect.top) / scale;
+    const seatRailWidth = tableBounds.width / scale;
+    const seatRailHeight = tableBounds.height / scale;
+    const seatRailOffsetX = (tableBounds.left - frameRect.left) / scale;
+    const seatRailOffsetY = (tableBounds.top - frameRect.top) / scale;
     if (
       !frameWidth ||
       !frameHeight ||
       !feltWidth ||
-      !feltHeight
+      !feltHeight ||
+      !seatRailWidth ||
+      !seatRailHeight
     ) {
       setSeatPositions(seats.map((seat) => ({ ...seat, x: 0, y: 0 })));
       setFeltBounds(null);
+      setSeatRailBounds(null);
       return;
     }
 
@@ -419,10 +430,19 @@ const Table = () => {
       height: feltHeight
     };
     setFeltBounds(nextFeltBounds);
+    const nextSeatRailBounds = {
+      left: seatRailOffsetX,
+      right: seatRailOffsetX + seatRailWidth,
+      top: seatRailOffsetY,
+      bottom: seatRailOffsetY + seatRailHeight,
+      width: seatRailWidth,
+      height: seatRailHeight
+    };
+    setSeatRailBounds(nextSeatRailBounds);
     const anchors = computeSeatAnchorsFromParams({
       seatParams,
       tableShape,
-      feltBounds: nextFeltBounds
+      seatRailBounds: nextSeatRailBounds
     });
 
     setSeatPositions(
@@ -815,14 +835,14 @@ const Table = () => {
 
   const updateSeatParamFromPointer = useCallback(
     (event, seatIndex) => {
-      if (!feltBounds) {
+      if (!seatRailBounds) {
         return;
       }
       const position = getTablePointerPosition(event);
       if (!position) {
         return;
       }
-      const candidate = paramFromPointer(tableShape, feltBounds, position);
+      const candidate = paramFromPointer(tableShape, seatRailBounds, position);
       const nextParams = [...seatParams];
       nextParams[seatIndex] = candidate;
       const clamped = clampParamBetweenNeighbors(
@@ -830,11 +850,11 @@ const Table = () => {
         seatIndex,
         SEAT_MIN_GAP_PX,
         tableShape,
-        feltBounds
+        seatRailBounds
       );
       updateSeatParam(seatIndex, clamped);
     },
-    [feltBounds, getTablePointerPosition, seatParams, tableShape, updateSeatParam]
+    [seatRailBounds, getTablePointerPosition, seatParams, tableShape, updateSeatParam]
   );
 
   const handleSeatPointerDown = useCallback(

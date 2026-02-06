@@ -107,15 +107,13 @@ const getEllipseFromRect = (tableRect) => ({
 });
 
 const getEllipseBoundaryPoint = (ellipse, angle) => {
-  const dx = Math.cos(angle);
-  const dy = Math.sin(angle);
   const rx = Math.max(1, ellipse.rx);
   const ry = Math.max(1, ellipse.ry);
-  const denominator = Math.sqrt((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry));
-  const k = denominator > 0 ? 1 / denominator : 0;
+  const dx = Math.cos(angle);
+  const dy = Math.sin(angle);
   return {
-    x: ellipse.cx + dx * k,
-    y: ellipse.cy + dy * k
+    x: ellipse.cx + dx * rx,
+    y: ellipse.cy + dy * ry
   };
 };
 
@@ -134,7 +132,11 @@ export const paramFromPointer = (shape, tableRect, pointerXY) => {
   }
   if (shape === 'oval') {
     const ellipse = getEllipseFromRect(tableRect);
-    const angle = Math.atan2(pointerXY.y - ellipse.cy, pointerXY.x - ellipse.cx);
+    const dx = pointerXY.x - ellipse.cx;
+    const dy = pointerXY.y - ellipse.cy;
+    const rx = Math.max(1, ellipse.rx);
+    const ry = Math.max(1, ellipse.ry);
+    const angle = Math.atan2(dy / ry, dx / rx);
     return normalizeParam(angle / TAU);
   }
   const bounds = getRectBounds(tableRect);
