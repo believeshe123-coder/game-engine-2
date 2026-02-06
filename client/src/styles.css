@@ -238,6 +238,29 @@
   border: 1px solid rgba(255, 231, 175, 0.35);
 }
 
+.hand-zone--owner {
+  border-color: var(--seat-color, rgba(247, 228, 176, 0.9));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--seat-color, #f7e4b0) 50%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--seat-color, #f7e4b0) 30%, transparent),
+    0 0 18px color-mix(in srgb, var(--seat-color, #f7e4b0) 35%, transparent);
+}
+
+.hand-zone__count {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(12, 8, 6, 0.6);
+  border: 1px solid rgba(255, 231, 175, 0.35);
+  color: rgba(255, 240, 205, 0.9);
+}
+
 .hand-zone--hover,
 .handZone.is-hover,
 .handZone:hover {
@@ -711,8 +734,8 @@ body,
 
 .card--selected {
   box-shadow:
-    0 0 0 2px rgba(239, 216, 160, 0.9),
-    0 0 16px rgba(239, 216, 160, 0.6),
+    0 0 0 2px var(--player-accent, rgba(239, 216, 160, 0.9)),
+    0 0 16px var(--player-accent, rgba(239, 216, 160, 0.6)),
     0 10px 18px rgba(0, 0, 0, 0.35),
     inset 0 0 0 1px rgba(255, 255, 255, 0.2);
 }
@@ -1199,8 +1222,8 @@ body,
 }
 
 .hand-zone--owner {
-  border-color: rgba(22, 22, 22, 0.65);
-  background: rgba(255, 255, 255, 0.2);
+  border-color: color-mix(in srgb, var(--seat-color, #f7e4b0) 70%, rgba(22, 22, 22, 0.65));
+  background: color-mix(in srgb, var(--seat-color, #f7e4b0) 18%, rgba(255, 255, 255, 0.2));
 }
 
 .hand-zone--hover {
@@ -1306,6 +1329,7 @@ body,
   border: none;
   background: transparent;
   padding: 0;
+  --seat-outline: var(--seat-color, rgba(255, 255, 255, 0.4));
 }
 
 .seat--dragging {
@@ -1314,6 +1338,18 @@ body,
 
 .seat--dragging .seat__bench {
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6), var(--seat-shadow-soft);
+}
+
+.seat--occupied .seat__bench,
+.seat--occupied .seat__label {
+  border-color: var(--seat-outline);
+}
+
+.seat--mine .seat__bench {
+  box-shadow:
+    0 0 0 2px var(--seat-outline),
+    0 0 18px color-mix(in srgb, var(--seat-outline) 60%, transparent),
+    var(--seat-shadow-soft);
 }
 
 .seat__base {
@@ -1515,12 +1551,213 @@ body,
   top: 14px;
 }
 
-.hand-zone {
-  background: transparent;
-  border: none;
-  box-shadow: none;
+.hand-reveal {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  display: flex;
+  gap: 6px;
+  z-index: 30;
 }
 
-.hand-zone::before {
-  content: none;
+.hand-reveal__card {
+  position: relative;
+  width: calc(var(--card-base-width) * var(--card-scale));
+  height: calc(var(--card-base-height) * var(--card-scale));
+  transform-origin: top left;
+}
+
+.inventory-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  width: min(960px, calc(100% - 32px));
+  background: rgba(20, 18, 16, 0.92);
+  border: 1px solid rgba(255, 225, 175, 0.2);
+  border-radius: 18px;
+  padding: 16px 18px;
+  box-shadow: 0 24px 40px rgba(0, 0, 0, 0.45);
+  z-index: var(--ui-panel-z);
+  backdrop-filter: blur(10px);
+}
+
+.inventory-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.inventory-panel__title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.inventory-panel__subtitle {
+  font-size: 12px;
+  color: rgba(245, 236, 220, 0.7);
+}
+
+.inventory-panel__count {
+  min-width: 36px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 222, 170, 0.35);
+  font-weight: 700;
+  text-align: center;
+}
+
+.inventory-panel__cards {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.inventory-panel__cards::-webkit-scrollbar {
+  height: 8px;
+}
+
+.inventory-panel__cards::-webkit-scrollbar-thumb {
+  background: rgba(255, 226, 175, 0.35);
+  border-radius: 999px;
+}
+
+.inventory-card {
+  position: relative;
+  min-width: calc(var(--card-base-width) * var(--card-scale));
+  padding-top: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.inventory-card__face {
+  position: relative;
+  width: calc(var(--card-base-width) * var(--card-scale));
+  height: calc(var(--card-base-height) * var(--card-scale));
+}
+
+.inventory-card__toggle {
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid rgba(255, 214, 160, 0.4);
+  background: rgba(22, 17, 14, 0.7);
+  color: rgba(255, 236, 206, 0.9);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.inventory-card__toggle.is-revealed {
+  border-color: var(--accent-color, rgba(255, 220, 160, 0.9));
+  color: var(--accent-color, #ffdca0);
+}
+
+.inventory-card__toggle-icon {
+  font-size: 12px;
+}
+
+.seat-menu__wrapper {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  z-index: var(--ui-panel-z);
+}
+
+.seat-menu {
+  min-width: 240px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(18, 16, 14, 0.95);
+  border: 1px solid rgba(255, 214, 160, 0.25);
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.4);
+  color: rgba(248, 238, 219, 0.9);
+}
+
+.seat-menu__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.seat-menu__title {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.seat-menu__subtitle {
+  font-size: 12px;
+  color: rgba(248, 238, 219, 0.65);
+}
+
+.seat-menu__swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.seat-menu__actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.seat-menu__button {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 214, 160, 0.3);
+  background: rgba(35, 28, 22, 0.8);
+  color: rgba(248, 238, 219, 0.95);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.seat-menu__settings {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.seat-menu__setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.seat-menu__label {
+  font-size: 12px;
+  color: rgba(248, 238, 219, 0.75);
+}
+
+.seat-menu__color {
+  width: 48px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+
+.seat-menu__footer {
+  margin-top: 10px;
+  text-align: right;
+}
+
+.seat-menu__link {
+  background: none;
+  border: none;
+  color: rgba(248, 238, 219, 0.7);
+  font-size: 12px;
+  cursor: pointer;
 }

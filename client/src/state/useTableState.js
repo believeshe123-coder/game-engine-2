@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clampStackToFelt, getFeltShape } from '../utils/geometry.js';
 import { DEFAULT_SETTINGS, normalizeSettings } from './tableSettings.js';
+import { loadPlayerProfile, savePlayerProfile } from './playerProfile.js';
 
 const SUITS = [
   { id: 'S', name: 'Spades' },
@@ -64,10 +65,15 @@ const buildDecks = (settings) => {
   };
 };
 
-const validateUniqueCardIds = (stacks) => {
+const validateUniqueCardIds = (stacks, hands) => {
   const counts = new Map();
   stacks.forEach((stack) => {
     stack.cardIds.forEach((cardId) => {
+      counts.set(cardId, (counts.get(cardId) ?? 0) + 1);
+    });
+  });
+  Object.values(hands ?? {}).forEach((hand) => {
+    hand?.cardIds?.forEach((cardId) => {
       counts.set(cardId, (counts.get(cardId) ?? 0) + 1);
     });
   });
@@ -237,11 +243,37 @@ const applyPresetLayout = (preset, tableShape, feltBounds, layout) => {
   });
 };
 
-export const useTableState = (tableRect, cardSize, initialSettings) => {
+const createEmptyHand = () => ({ cardIds: [], revealed: {} });
+
+export const useTableState = (tableRect, cardSize, initialSettings, seatCount) => {
   const [cardsById, setCardsById] = useState({});
   const [stacks, setStacks] = useState([]);
   const initializedRef = useRef(false);
   const nextStackIdRef = useRef(21);
+  const initialProfile = useMemo(() => loadPlayerProfile(), []);
+  const playerIdRef = useRef(initialProfile.playerId);
+  const [players, setPlayers] = useState(() => ({
+    [playerIdRef.current]: {
+      id: playerIdRef.current,
+      name: 'You',
+      seatIndex: initialProfile.mySeatIndex ?? null,
+      seatColor: initialProfile.seatColor,
+      accentColor: initialProfile.accentColor
+    }
+  }));
+  const [seatAssignments, setSeatAssignments] = useState(() => {
+    const count = seatCount ?? DEFAULT_SETTINGS.roomSettings.seatCount;
+    return Array.from({ length: count }, (_, index) =>
+      index === initialProfile.mySeatIndex ? playerIdRef.current : null
+    );
+  });
+  const [hands, setHands] = useState(() => {
+    const count = seatCount ?? DEFAULT_SETTINGS.roomSettings.seatCount;
+    return Array.from({ length: count }, (_, index) => index).reduce((acc, index) => {
+      acc[index] = createEmptyHand();
+      return acc;
+    }, {});
+  });
 
   const createStackId = useCallback(() => {
     const id = `s${nextStackIdRef.current}`;
@@ -335,15 +367,207 @@ export const useTableState = (tableRect, cardSize, initialSettings) => {
 
   useEffect(() => {
     if (process.env.NODE_ENV !== 'production') {
-      validateUniqueCardIds(stacks);
+      validateUniqueCardIds(stacks, hands);
     }
-  }, [stacks]);
+  }, [hands, stacks]);
+
+  useEffect(() => {
+    const count = seatCount ?? DEFAULT_SETTINGS.roomSettings.seatCount;
+    setSeatAssignments((prev) => {
+      const next = Array.from({ length: count }, (_, index) => prev?.[index] ?? null);
+      const myIndex = next.findIndex((id) => id === playerIdRef.current);
+      if (myIndex === -1) {
+        const profileSeat = players[playerIdRef.current]?.seatIndex ?? null;
+        if (profileSeat !== null && profileSeat < count) {
+          next[profileSeat] = playerIdRef.current;
+        }
+      }
+      return next;
+    });
+    setHands((prev) => {
+      const next = {};
+      for (let index = 0; index < count; index += 1) {
+        const entry = prev?.[index] ?? createEmptyHand();
+        next[index] = {
+          cardIds: [...(entry.cardIds ?? [])],
+          revealed: { ...(entry.revealed ?? {}) }
+        };
+      }
+      return next;
+    });
+    const currentSeatIndex = players[playerIdRef.current]?.seatIndex ?? null;
+    if (currentSeatIndex !== null && currentSeatIndex >= count) {
+      setPlayers((prev) => ({
+        ...prev,
+        [playerIdRef.current]: {
+          ...prev[playerIdRef.current],
+          seatIndex: null
+        }
+      }));
+    }
+  }, [players, seatCount]);
+
+  useEffect(() => {
+    const profile = players[playerIdRef.current];
+    if (!profile) {
+      return;
+    }
+    savePlayerProfile({
+      playerId: profile.id,
+      mySeatIndex: profile.seatIndex ?? null,
+      seatColor: profile.seatColor,
+      accentColor: profile.accentColor
+    });
+  }, [players]);
+
+  const sitAtSeat = useCallback(
+    (seatIndex) => {
+      if (seatIndex === null || seatIndex === undefined) {
+        return;
+      }
+      setSeatAssignments((prev) => {
+        const next = Array.from({ length: prev.length }, (_, index) => prev[index] ?? null);
+        const occupiedBy = next[seatIndex];
+        if (occupiedBy && occupiedBy !== playerIdRef.current) {
+          return prev;
+        }
+        const currentIndex = next.findIndex((id) => id === playerIdRef.current);
+        if (currentIndex !== -1) {
+          next[currentIndex] = null;
+        }
+        next[seatIndex] = playerIdRef.current;
+        return next;
+      });
+      setPlayers((prev) => ({
+        ...prev,
+        [playerIdRef.current]: {
+          ...prev[playerIdRef.current],
+          seatIndex
+        }
+      }));
+    },
+    []
+  );
+
+  const standUp = useCallback(() => {
+    setSeatAssignments((prev) =>
+      prev.map((entry) => (entry === playerIdRef.current ? null : entry))
+    );
+    setPlayers((prev) => ({
+      ...prev,
+      [playerIdRef.current]: {
+        ...prev[playerIdRef.current],
+        seatIndex: null
+      }
+    }));
+  }, []);
+
+  const updatePlayerColors = useCallback((colors) => {
+    setPlayers((prev) => ({
+      ...prev,
+      [playerIdRef.current]: {
+        ...prev[playerIdRef.current],
+        ...colors
+      }
+    }));
+  }, []);
+
+  const moveToHand = useCallback((seatIndex, cardIds) => {
+    if (!cardIds?.length) {
+      return;
+    }
+    setHands((prev) => {
+      const next = { ...prev };
+      const current = prev?.[seatIndex] ?? createEmptyHand();
+      next[seatIndex] = {
+        ...current,
+        cardIds: [...current.cardIds, ...cardIds]
+      };
+      return next;
+    });
+  }, []);
+
+  const moveFromHandToTable = useCallback((seatIndex, cardId) => {
+    setHands((prev) => {
+      const current = prev?.[seatIndex];
+      if (!current) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [seatIndex]: {
+          ...current,
+          cardIds: current.cardIds.filter((id) => id !== cardId),
+          revealed: Object.keys(current.revealed ?? {}).reduce((acc, id) => {
+            if (id !== cardId) {
+              acc[id] = current.revealed[id];
+            }
+            return acc;
+          }, {})
+        }
+      };
+    });
+  }, []);
+
+  const reorderHand = useCallback((seatIndex, cardId, targetIndex) => {
+    setHands((prev) => {
+      const current = prev?.[seatIndex];
+      if (!current) {
+        return prev;
+      }
+      const currentIndex = current.cardIds.indexOf(cardId);
+      if (currentIndex === -1) {
+        return prev;
+      }
+      const nextCardIds = [...current.cardIds];
+      nextCardIds.splice(currentIndex, 1);
+      const clampedTarget = Math.max(0, Math.min(targetIndex, nextCardIds.length));
+      nextCardIds.splice(clampedTarget, 0, cardId);
+      return {
+        ...prev,
+        [seatIndex]: {
+          ...current,
+          cardIds: nextCardIds
+        }
+      };
+    });
+  }, []);
+
+  const toggleReveal = useCallback((seatIndex, cardId) => {
+    setHands((prev) => {
+      const current = prev?.[seatIndex];
+      if (!current) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [seatIndex]: {
+          ...current,
+          revealed: {
+            ...current.revealed,
+            [cardId]: !current.revealed?.[cardId]
+          }
+        }
+      };
+    });
+  }, []);
 
   return {
     cardsById,
     stacks,
     setStacks,
     createStackId,
-    rebuildTableFromSettings
+    rebuildTableFromSettings,
+    players,
+    seatAssignments,
+    hands,
+    myPlayerId: playerIdRef.current,
+    sitAtSeat,
+    standUp,
+    updatePlayerColors,
+    moveToHand,
+    moveFromHandToTable,
+    reorderHand,
+    toggleReveal
   };
 };
