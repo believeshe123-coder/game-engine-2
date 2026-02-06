@@ -552,6 +552,68 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     });
   }, []);
 
+  const takeTopCardFromStack = useCallback(
+    (stackId) => {
+      let removedCardId = null;
+      setStacks((prev) => {
+        const next = prev.map((stack) => {
+          if (stack.id !== stackId) {
+            return stack;
+          }
+          if (!stack.cardIds.length) {
+            return stack;
+          }
+          const nextCardIds = [...stack.cardIds];
+          removedCardId = nextCardIds.pop() ?? null;
+          return { ...stack, cardIds: nextCardIds };
+        });
+        return next.filter((stack) => stack.cardIds.length > 0);
+      });
+      return removedCardId;
+    },
+    [setStacks]
+  );
+
+  const spawnHeldStack = useCallback(
+    (cardIds, originStackId, originOverride = null) => {
+      if (!cardIds?.length) {
+        return null;
+      }
+      const newStackId = createStackId();
+      let origin = null;
+      let meta = null;
+      setStacks((prev) => {
+        const originStack =
+          prev.find((stack) => stack.id === originStackId) ?? originOverride;
+        if (!originStack) {
+          return prev;
+        }
+        origin = { x: originStack.x, y: originStack.y };
+        meta = { rotation: originStack.rotation, faceUp: originStack.faceUp };
+        return prev.concat({
+          id: newStackId,
+          x: originStack.x,
+          y: originStack.y,
+          rotation: originStack.rotation,
+          faceUp: originStack.faceUp,
+          cardIds: [...cardIds],
+          zone: 'table',
+          ownerSeatIndex: null
+        });
+      });
+      if (!origin || !meta) {
+        return null;
+      }
+      return {
+        stackId: newStackId,
+        origin,
+        rotation: meta.rotation,
+        faceUp: meta.faceUp
+      };
+    },
+    [createStackId, setStacks]
+  );
+
   return {
     cardsById,
     stacks,
@@ -568,6 +630,8 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     moveToHand,
     moveFromHandToTable,
     reorderHand,
-    toggleReveal
+    toggleReveal,
+    takeTopCardFromStack,
+    spawnHeldStack
   };
 };

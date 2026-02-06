@@ -165,7 +165,9 @@ const Table = () => {
     moveToHand,
     moveFromHandToTable,
     reorderHand,
-    toggleReveal
+    toggleReveal,
+    takeTopCardFromStack,
+    spawnHeldStack
   } = useTableState(
     tableRect,
     cardSize,
@@ -1840,6 +1842,36 @@ const Table = () => {
       releaseCapturedPointer();
       setSelectedStackId(null);
       setPickCountOpen(false);
+      if (pending.button === 2) {
+        // RMB drag pulls the top card into a new held stack.
+        const originStack = stacksById[pending.stackId];
+        if (!originStack || originStack.cardIds.length === 0) {
+          return;
+        }
+        const topCardId = takeTopCardFromStack(pending.stackId);
+        if (!topCardId) {
+          return;
+        }
+        const spawned = spawnHeldStack([topCardId], pending.stackId, originStack);
+        if (!spawned?.stackId) {
+          return;
+        }
+        const offset = {
+          dx: pointerX - originStack.x,
+          dy: pointerY - originStack.y
+        };
+        latestPoint.current = { x: originStack.x, y: originStack.y };
+        setHeldStack({
+          active: true,
+          stackId: spawned.stackId,
+          cardIds: [topCardId],
+          sourceStackId: pending.stackId,
+          offset,
+          origin: { x: originStack.x, y: originStack.y },
+          mode: 'singleCard'
+        });
+        return;
+      }
       bringStackToFront(pending.stackId);
       startHeldStack(pending.stackId, pointerX, pointerY);
     };
@@ -1855,9 +1887,11 @@ const Table = () => {
       pendingDragRef.current = null;
       setPendingDragActive(false);
       releaseCapturedPointer();
-      bringStackToFront(pending.stackId);
-      setSelectedStackId(pending.stackId);
-      setPickCountOpen(false);
+      if (pending.button !== 2) {
+        bringStackToFront(pending.stackId);
+        setSelectedStackId(pending.stackId);
+        setPickCountOpen(false);
+      }
     };
 
     const handlePendingPointerCancel = (event) => {
@@ -1886,7 +1920,10 @@ const Table = () => {
     getTablePointerPosition,
     pendingDragActive,
     releaseCapturedPointer,
-    startHeldStack
+    spawnHeldStack,
+    stacksById,
+    startHeldStack,
+    takeTopCardFromStack
   ]);
 
   const pickUpStack = useCallback(
@@ -2011,11 +2048,21 @@ const Table = () => {
         if (!stackId) {
           return;
         }
-        const stack = stacksById[stackId];
-        if (!stack) {
-          return;
+        if (event.currentTarget?.setPointerCapture && event.pointerId !== undefined) {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          capturedPointerRef.current = {
+            pointerId: event.pointerId,
+            element: event.currentTarget
+          };
         }
-        pickUpStack(stackId, stack.cardIds.length, event);
+        pendingDragRef.current = {
+          stackId,
+          startX: position.x,
+          startY: position.y,
+          pointerId: event.pointerId,
+          button: 2
+        };
+        setPendingDragActive(true);
         return;
       }
 
@@ -2053,7 +2100,8 @@ const Table = () => {
         stackId,
         startX: pointerX,
         startY: pointerY,
-        pointerId: event.pointerId
+        pointerId: event.pointerId,
+        button: 0
       };
       setPendingDragActive(true);
     },
