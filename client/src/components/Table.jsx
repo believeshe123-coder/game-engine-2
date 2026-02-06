@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Card from './Card.jsx';
-import { getFeltEllipseInTableSpace } from '../utils/geometry.js';
+import { clamp, getFeltEllipseInTableSpace } from '../utils/geometry.js';
 import {
   clampPointToFelt,
   getFeltRect,
@@ -28,6 +28,10 @@ const SEAT_POSITION = {
 const SEAT_SIZE = { width: 208, height: 132 };
 const SEAT_PADDING = 24;
 const SEAT_GAP_PX = Math.max(0, Math.max(SEAT_SIZE.width, SEAT_SIZE.height) / 2 + SEAT_PADDING - 20);
+const SEAT_DIAMETER_PX = Math.max(SEAT_SIZE.width, SEAT_SIZE.height);
+const SEAT_DRAG_PADDING_PX = 10;
+const SEAT_MIN_GAP_PX = SEAT_DIAMETER_PX + SEAT_DRAG_PADDING_PX;
+const TAU = Math.PI * 2;
 const RIGHT_SWEEP_HOLD_MS = 120;
 const SWEEP_MIN_INTERVAL_MS = 40;
 const SWEEP_MIN_DIST = 30;
@@ -47,80 +51,165 @@ const SIDE_NORMALS = {
   left: { angle: Math.PI }
 };
 
-const getSideSeatCounts = (seatCount) => {
-  const count = Math.max(2, seatCount);
-  const quarter = Math.floor(count / 4);
-  const sideCounts = {
-    top: Math.ceil(count / 4),
-    right: quarter,
-    bottom: Math.ceil(count / 4),
-    left: quarter
-  };
-  let assigned = sideCounts.top + sideCounts.right + sideCounts.bottom + sideCounts.left;
-  let sideIndex = 0;
-  while (assigned < count) {
-    const side = SIDE_ORDER[sideIndex % SIDE_ORDER.length];
-    sideCounts[side] += 1;
-    assigned += 1;
-    sideIndex += 1;
+const normalizeParam = (value, max) => {
+  if (!Number.isFinite(value) || !Number.isFinite(max) || max <= 0) {
+    return 0;
   }
-  return sideCounts;
+  const wrapped = value % max;
+  return wrapped < 0 ? wrapped + max : wrapped;
 };
 
-const getSidePositions = (count) => {
-  return Array.from({ length: count }, (_, index) => (index + 1) / (count + 1));
+const getSeatSideFromAngle = (angle) => {
+  const normalized = normalizeParam(angle, TAU);
+  if (normalized < Math.PI / 4 || normalized >= (Math.PI * 7) / 4) {
+    return 'right';
+  }
+  if (normalized < (Math.PI * 3) / 4) {
+    return 'bottom';
+  }
+  if (normalized < (Math.PI * 5) / 4) {
+    return 'left';
+  }
+  return 'top';
 };
 
-const getSeatAnchors = ({ seatCount, feltBounds }) => {
+const getRectPerimeter = (bounds) =>
+  Math.max(1, 2 * (bounds.width + bounds.height));
+
+const getRectPointFromT = (t, bounds) => {
+  const perimeter = getRectPerimeter(bounds);
+  const distance = normalizeParam(t, 1) * perimeter;
+  const w = bounds.width;
+  const h = bounds.height;
+  if (distance <= w) {
+    return {
+      x: bounds.left + distance,
+      y: bounds.top,
+      side: 'top',
+      normal: { x: 0, y: -1 }
+    };
+  }
+  if (distance <= w + h) {
+    return {
+      x: bounds.right,
+      y: bounds.top + (distance - w),
+      side: 'right',
+      normal: { x: 1, y: 0 }
+    };
+  }
+  if (distance <= w + h + w) {
+    return {
+      x: bounds.right - (distance - w - h),
+      y: bounds.bottom,
+      side: 'bottom',
+      normal: { x: 0, y: 1 }
+    };
+  }
+  return {
+    x: bounds.left,
+    y: bounds.bottom - (distance - w - h - w),
+    side: 'left',
+    normal: { x: -1, y: 0 }
+  };
+};
+
+const getRectPerimeterT = (point, bounds) => {
+  const w = bounds.width;
+  const h = bounds.height;
+  if (point.side === 'top') {
+    return (point.x - bounds.left) / getRectPerimeter(bounds);
+  }
+  if (point.side === 'right') {
+    return (w + (point.y - bounds.top)) / getRectPerimeter(bounds);
+  }
+  if (point.side === 'bottom') {
+    return (w + h + (bounds.right - point.x)) / getRectPerimeter(bounds);
+  }
+  return (w + h + w + (bounds.bottom - point.y)) / getRectPerimeter(bounds);
+};
+
+const getClosestPointOnRectPerimeter = (position, bounds) => {
+  const clampedX = clamp(position.x, bounds.left, bounds.right);
+  const clampedY = clamp(position.y, bounds.top, bounds.bottom);
+  const distances = [
+    { side: 'top', distance: Math.abs(position.y - bounds.top) },
+    { side: 'right', distance: Math.abs(position.x - bounds.right) },
+    { side: 'bottom', distance: Math.abs(position.y - bounds.bottom) },
+    { side: 'left', distance: Math.abs(position.x - bounds.left) }
+  ];
+  distances.sort((a, b) => a.distance - b.distance);
+  const closestSide = distances[0].side;
+  if (closestSide === 'top') {
+    return { x: clampedX, y: bounds.top, side: 'top' };
+  }
+  if (closestSide === 'right') {
+    return { x: bounds.right, y: clampedY, side: 'right' };
+  }
+  if (closestSide === 'bottom') {
+    return { x: clampedX, y: bounds.bottom, side: 'bottom' };
+  }
+  return { x: bounds.left, y: clampedY, side: 'left' };
+};
+
+const clampSeatParamBetweenNeighbors = (value, index, params, minGap, maxValue) => {
+  const count = params.length;
+  if (count < 2) {
+    return normalizeParam(value, maxValue);
+  }
+  const prevIndex = (index - 1 + count) % count;
+  const nextIndex = (index + 1) % count;
+  const prev = normalizeParam(params[prevIndex], maxValue);
+  const next = normalizeParam(params[nextIndex], maxValue);
+
+  // Unwrap neighbors into a monotonic range so we can clamp without swapping order.
+  const unwrap = (candidate, base) => {
+    let unwrapped = candidate;
+    while (unwrapped <= base) {
+      unwrapped += maxValue;
+    }
+    return unwrapped;
+  };
+  const prevBase = prev;
+  const nextUnwrapped = unwrap(next, prevBase);
+  const valueUnwrapped = unwrap(normalizeParam(value, maxValue), prevBase);
+  const min = prevBase + minGap;
+  const max = nextUnwrapped - minGap;
+  const clamped = max < min ? min : clamp(valueUnwrapped, min, max);
+  return normalizeParam(clamped, maxValue);
+};
+
+const computeSeatAnchorsFromParams = ({ seatParams, tableShape, feltBounds, feltEllipse }) => {
   if (!feltBounds || !feltBounds.width || !feltBounds.height) {
     return [];
   }
-
-  const sideCounts = getSideSeatCounts(seatCount);
-  const minSpacingBySide = {
-    top: SEAT_SIZE.width,
-    bottom: SEAT_SIZE.width,
-    left: SEAT_SIZE.height,
-    right: SEAT_SIZE.height
-  };
-
-  return SIDE_ORDER.flatMap((side) => {
-    const count = sideCounts[side];
-    if (!count) {
-      return [];
-    }
-    const isHorizontal = side === 'top' || side === 'bottom';
-    const availableSpan = isHorizontal ? feltBounds.width : feltBounds.height;
-    const minimumSpan = minSpacingBySide[side] * (count + 1);
-    const overflow = Math.max(0, minimumSpan - availableSpan);
-    const start = isHorizontal ? feltBounds.left - overflow / 2 : feltBounds.top - overflow / 2;
-    const span = availableSpan + overflow;
-    const outwardAdjustment = overflow > 0 ? Math.min(24, overflow / (count + 1)) : 0;
-    const normal = SIDE_NORMALS[side];
-
-    return getSidePositions(count).map((t) => {
-      const axisValue = start + t * span;
-      if (isHorizontal) {
-        return {
-          x: axisValue,
-          y:
-            side === 'top'
-              ? feltBounds.top - (SEAT_GAP_PX + outwardAdjustment)
-              : feltBounds.bottom + (SEAT_GAP_PX + outwardAdjustment),
-          side,
-          angle: normal.angle
-        };
-      }
+  if (tableShape === 'oval') {
+    const ellipse = feltEllipse ?? {
+      cx: feltBounds.left + feltBounds.width / 2,
+      cy: feltBounds.top + feltBounds.height / 2,
+      rx: feltBounds.width / 2,
+      ry: feltBounds.height / 2
+    };
+    return seatParams.map((angle) => {
+      const normalizedAngle = normalizeParam(angle, TAU);
+      const normal = { x: Math.cos(normalizedAngle), y: Math.sin(normalizedAngle) };
       return {
-        x:
-          side === 'left'
-            ? feltBounds.left - (SEAT_GAP_PX + outwardAdjustment)
-            : feltBounds.right + (SEAT_GAP_PX + outwardAdjustment),
-        y: axisValue,
-        side,
-        angle: normal.angle
+        x: ellipse.cx + (ellipse.rx + SEAT_GAP_PX) * normal.x,
+        y: ellipse.cy + (ellipse.ry + SEAT_GAP_PX) * normal.y,
+        side: getSeatSideFromAngle(normalizedAngle),
+        angle: normalizedAngle
       };
     });
+  }
+
+  return seatParams.map((t) => {
+    const point = getRectPointFromT(t, feltBounds);
+    const normal = point.normal;
+    return {
+      x: point.x + normal.x * SEAT_GAP_PX,
+      y: point.y + normal.y * SEAT_GAP_PX,
+      side: point.side,
+      angle: Math.atan2(normal.y, normal.x)
+    };
   });
 };
 
@@ -129,6 +218,11 @@ const Table = () => {
   const tableFrameRef = useRef(null);
   const tableRef = useRef(null);
   const feltRef = useRef(null);
+  const seatDragRef = useRef({
+    seatIndex: null,
+    moved: false,
+    start: null
+  });
   const [tableRect, setTableRect] = useState({ width: 0, height: 0 });
   const [tableScreenRect, setTableScreenRect] = useState(null);
   const [tableScale, setTableScale] = useState(1);
@@ -166,6 +260,7 @@ const Table = () => {
   const [pickCountValue, setPickCountValue] = useState('1');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [roomSettingsOpen, setRoomSettingsOpen] = useState(false);
+  const [dragSeatIndex, setDragSeatIndex] = useState(null);
   const [occupiedSeats, setOccupiedSeats] = useState(() => {
     const initialCount = settings.roomSettings?.seatCount ?? 8;
     return Array.from({ length: initialCount }, (_, index) => index + 1).reduce(
@@ -265,6 +360,7 @@ const Table = () => {
   const seatCount = settings.roomSettings.seatCount;
   const tableStyle = settings.roomSettings.tableStyle;
   const tableShape = settings.roomSettings.tableShape;
+  const [feltBounds, setFeltBounds] = useState(null);
   const [feltEllipse, setFeltEllipse] = useState(null);
   const [feltScreenRect, setFeltScreenRect] = useState(null);
   const [debugClampPoint, setDebugClampPoint] = useState(null);
@@ -304,6 +400,54 @@ const Table = () => {
       return next;
     });
   }, [seatCount]);
+
+  const buildDefaultSeatParams = useCallback((count, shape) => {
+    if (shape === 'oval') {
+      return Array.from({ length: count }, (_, index) => (index / count) * TAU);
+    }
+    return Array.from({ length: count }, (_, index) => index / count);
+  }, []);
+
+  const normalizeSeatParams = useCallback(
+    (params, count, shape) => {
+      if (!Array.isArray(params) || params.length !== count) {
+        return buildDefaultSeatParams(count, shape);
+      }
+      const max = shape === 'oval' ? TAU : 1;
+      return params.map((value) => normalizeParam(value, max));
+    },
+    [buildDefaultSeatParams]
+  );
+
+  const seatParams = useMemo(() => {
+    const paramsByShape = settings.roomSettings.seatParams ?? {};
+    return normalizeSeatParams(paramsByShape[tableShape], seatCount, tableShape);
+  }, [normalizeSeatParams, seatCount, settings.roomSettings.seatParams, tableShape]);
+
+  useEffect(() => {
+    setSettings((prev) => {
+      const paramsByShape = prev.roomSettings.seatParams ?? {};
+      const current = paramsByShape[tableShape];
+      const next = normalizeSeatParams(current, seatCount, tableShape);
+      const isSame =
+        Array.isArray(current) &&
+        current.length === next.length &&
+        current.every((value, index) => value === next[index]);
+      if (isSame) {
+        return prev;
+      }
+      return {
+        ...prev,
+        roomSettings: {
+          ...prev.roomSettings,
+          seatParams: {
+            ...paramsByShape,
+            [tableShape]: next
+          }
+        }
+      };
+    });
+  }, [normalizeSeatParams, seatCount, tableShape]);
 
   const seats = useMemo(() => {
     const count = Math.max(2, seatCount);
@@ -375,19 +519,24 @@ const Table = () => {
       !feltHeight
     ) {
       setSeatPositions(seats.map((seat) => ({ ...seat, x: 0, y: 0 })));
+      setFeltBounds(null);
       return;
     }
 
-    const anchors = getSeatAnchors({
-      seatCount: seats.length,
-      feltBounds: {
-        left: feltOffsetX,
-        right: feltOffsetX + feltWidth,
-        top: feltOffsetY,
-        bottom: feltOffsetY + feltHeight,
-        width: feltWidth,
-        height: feltHeight
-      }
+    const nextFeltBounds = {
+      left: feltOffsetX,
+      right: feltOffsetX + feltWidth,
+      top: feltOffsetY,
+      bottom: feltOffsetY + feltHeight,
+      width: feltWidth,
+      height: feltHeight
+    };
+    setFeltBounds(nextFeltBounds);
+    const anchors = computeSeatAnchorsFromParams({
+      seatParams,
+      tableShape,
+      feltBounds: nextFeltBounds,
+      feltEllipse
     });
 
     setSeatPositions(
@@ -402,7 +551,7 @@ const Table = () => {
         };
       })
     );
-  }, [seats, tableShape]);
+  }, [feltEllipse, seatParams, seats, tableShape]);
 
   const updateTabletopScale = useCallback(() => {
     const frameNode = tableFrameRef.current;
@@ -754,6 +903,133 @@ const Table = () => {
     (event) =>
       getTablePointerPositionFromClient(event.clientX, event.clientY),
     [getTablePointerPositionFromClient]
+  );
+
+  const updateSeatParam = useCallback(
+    (seatIndex, value) => {
+      setSettings((prev) => {
+        const paramsByShape = prev.roomSettings.seatParams ?? {};
+        const params = normalizeSeatParams(paramsByShape[tableShape], seatCount, tableShape);
+        const nextParams = [...params];
+        nextParams[seatIndex] = value;
+        return {
+          ...prev,
+          roomSettings: {
+            ...prev.roomSettings,
+            seatParams: {
+              ...paramsByShape,
+              [tableShape]: nextParams
+            }
+          }
+        };
+      });
+    },
+    [normalizeSeatParams, seatCount, tableShape]
+  );
+
+  const updateSeatParamFromPointer = useCallback(
+    (event, seatIndex) => {
+      if (!feltBounds) {
+        return;
+      }
+      const position = getTablePointerPosition(event);
+      if (!position) {
+        return;
+      }
+      if (tableShape === 'oval') {
+        const ellipse = feltEllipse ?? {
+          cx: feltBounds.left + feltBounds.width / 2,
+          cy: feltBounds.top + feltBounds.height / 2,
+          rx: feltBounds.width / 2,
+          ry: feltBounds.height / 2
+        };
+        const angle = Math.atan2(position.y - ellipse.cy, position.x - ellipse.cx);
+        const approxRadius = Math.max(1, (ellipse.rx + ellipse.ry) / 2);
+        const minGapAngle = SEAT_MIN_GAP_PX / approxRadius;
+        // Clamp between neighbors so seat order never swaps and overlaps cannot occur.
+        const clampedAngle = clampSeatParamBetweenNeighbors(
+          normalizeParam(angle, TAU),
+          seatIndex,
+          seatParams,
+          minGapAngle,
+          TAU
+        );
+        updateSeatParam(seatIndex, clampedAngle);
+        return;
+      }
+      const closest = getClosestPointOnRectPerimeter(position, feltBounds);
+      const t = getRectPerimeterT(closest, feltBounds);
+      const minGapT = SEAT_MIN_GAP_PX / getRectPerimeter(feltBounds);
+      // Clamp between neighbors so seat order never swaps and overlaps cannot occur.
+      const clampedT = clampSeatParamBetweenNeighbors(
+        normalizeParam(t, 1),
+        seatIndex,
+        seatParams,
+        minGapT,
+        1
+      );
+      updateSeatParam(seatIndex, clampedT);
+    },
+    [feltBounds, feltEllipse, getTablePointerPosition, seatParams, tableShape, updateSeatParam]
+  );
+
+  const handleSeatPointerDown = useCallback(
+    (event, seatIndex) => {
+      if (heldStack.active) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const target = event.currentTarget;
+      if (target?.setPointerCapture) {
+        target.setPointerCapture(event.pointerId);
+        capturedPointerRef.current = { pointerId: event.pointerId, element: target };
+      }
+      seatDragRef.current = {
+        seatIndex,
+        moved: false,
+        start: { x: event.clientX, y: event.clientY }
+      };
+      setDragSeatIndex(seatIndex);
+      updateSeatParamFromPointer(event, seatIndex);
+    },
+    [heldStack.active, updateSeatParamFromPointer]
+  );
+
+  const handleSeatPointerMove = useCallback(
+    (event, seatIndex) => {
+      if (dragSeatIndex !== seatIndex) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (seatDragRef.current.start && !seatDragRef.current.moved) {
+        const dx = event.clientX - seatDragRef.current.start.x;
+        const dy = event.clientY - seatDragRef.current.start.y;
+        if (Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+          seatDragRef.current.moved = true;
+        }
+      }
+      updateSeatParamFromPointer(event, seatIndex);
+    },
+    [dragSeatIndex, updateSeatParamFromPointer]
+  );
+
+  const handleSeatPointerUp = useCallback(() => {
+    releaseCapturedPointer();
+    setDragSeatIndex(null);
+  }, [releaseCapturedPointer]);
+
+  const handleSeatClick = useCallback(
+    (seatId, seatIndex) => {
+      if (seatDragRef.current.moved && seatDragRef.current.seatIndex === seatIndex) {
+        seatDragRef.current = { seatIndex: null, moved: false, start: null };
+        return;
+      }
+      seatDragRef.current = { seatIndex: null, moved: false, start: null };
+      toggleSeat(seatId);
+    },
+    [toggleSeat]
   );
 
   const flushAnimation = useCallback(() => {
@@ -1915,16 +2191,20 @@ const Table = () => {
               return (
                 <div
                   key={seat.id}
-                  className={`seat seat--${seat.side} ${occupied ? 'seat--occupied' : ''} ${seatHandCount ? 'seat--has-cards' : ''}`}
+                  className={`seat seat--${seat.side} ${occupied ? 'seat--occupied' : ''} ${seatHandCount ? 'seat--has-cards' : ''} ${dragSeatIndex === i ? 'seat--dragging' : ''}`}
                   data-seat-index={i}
                   style={seatStyle}
-                  onClick={() => toggleSeat(seat.id)}
+                  onClick={() => handleSeatClick(seat.id, i)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
-                      toggleSeat(seat.id);
+                      handleSeatClick(seat.id, i);
                     }
                   }}
+                  onPointerDown={(event) => handleSeatPointerDown(event, i)}
+                  onPointerMove={(event) => handleSeatPointerMove(event, i)}
+                  onPointerUp={handleSeatPointerUp}
+                  onPointerCancel={handleSeatPointerUp}
                   role="button"
                   tabIndex={0}
                 >
