@@ -1137,6 +1137,25 @@ body,
   font-weight: 600;
 }
 
+.table-settings__range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.table-settings__range input[type='range'] {
+  flex: 1;
+  min-width: 120px;
+}
+
+.table-settings__value {
+  min-width: 44px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .table-settings__input,
 .table-settings__select {
   min-width: 120px;

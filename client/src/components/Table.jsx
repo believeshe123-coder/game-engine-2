@@ -16,7 +16,6 @@ import { useTableState } from '../state/useTableState.js';
 import { loadSettings, saveSettings } from '../state/tableSettings.js';
 import { MOVE_TO_HAND, MOVE_TO_TABLE } from '../state/protocol.js';
 
-const CARD_SCALE = 0.8;
 const RIGHT_PANEL_SAFE_WIDTH = 340;
 const TABLETOP_MARGIN = 24;
 const MIN_TABLETOP_SCALE = 0.65;
@@ -25,10 +24,8 @@ const TABLE_BASE_WIDTH = 1100;
 const TABLE_BASE_HEIGHT = 680;
 const TABLE_FOOTPRINT_SCALE = 0.9;
 const BASE_CARD_SIZE = { width: 72, height: 104 };
-const CARD_SIZE = {
-  width: BASE_CARD_SIZE.width * CARD_SCALE,
-  height: BASE_CARD_SIZE.height * CARD_SCALE
-};
+const HAND_ZONE_WIDTH_MULT = 3.4;
+const HAND_ZONE_HEIGHT_MULT = 1.5;
 const SEAT_POSITION = {
   radiusX: 46,
   radiusY: 38
@@ -46,13 +43,9 @@ const TAU = Math.PI * 2;
 const RIGHT_SWEEP_HOLD_MS = 120;
 const SWEEP_MIN_INTERVAL_MS = 40;
 const SWEEP_MIN_DIST = 30;
-const STACK_EPS = 10;
+const STACK_EPS_BASE = 10;
 const SWEEP_JITTER = 6;
-const HAND_ZONE_SIZE = {
-  width: CARD_SIZE.width * 3.4,
-  height: CARD_SIZE.height * 1.5
-};
-const HAND_ZONE_SEAT_OFFSET = 52;
+const HAND_ZONE_SEAT_OFFSET_BASE = 52;
 
 const SIDE_ORDER = ['top', 'right', 'bottom', 'left'];
 const SIDE_NORMALS = {
@@ -120,6 +113,38 @@ const Table = () => {
   const capturedPointerRef = useRef({ pointerId: null, element: null });
   const [settings, setSettings] = useState(() => loadSettings());
   const [appliedSettings, setAppliedSettings] = useState(() => loadSettings());
+  const tableZoom = settings.tableZoom ?? 1;
+  const cardScale = settings.cardScale ?? 1;
+  const viewTransform = useMemo(
+    () => ({ zoom: tableZoom, cardScale }),
+    [cardScale, tableZoom]
+  );
+  const combinedScale = useMemo(
+    () => tableScale * viewTransform.zoom,
+    [tableScale, viewTransform.zoom]
+  );
+  const cardSize = useMemo(
+    () => ({
+      width: BASE_CARD_SIZE.width * viewTransform.cardScale,
+      height: BASE_CARD_SIZE.height * viewTransform.cardScale
+    }),
+    [viewTransform.cardScale]
+  );
+  const handZoneSize = useMemo(
+    () => ({
+      width: cardSize.width * HAND_ZONE_WIDTH_MULT,
+      height: cardSize.height * HAND_ZONE_HEIGHT_MULT
+    }),
+    [cardSize.height, cardSize.width]
+  );
+  const handZoneSeatOffset = useMemo(
+    () => HAND_ZONE_SEAT_OFFSET_BASE * viewTransform.cardScale,
+    [viewTransform.cardScale]
+  );
+  const stackEps = useMemo(
+    () => STACK_EPS_BASE * viewTransform.cardScale,
+    [viewTransform.cardScale]
+  );
   const {
     cardsById,
     stacks,
@@ -128,7 +153,7 @@ const Table = () => {
     rebuildTableFromSettings
   } = useTableState(
     tableRect,
-    CARD_SIZE,
+    cardSize,
     appliedSettings
   );
   const [cardFaceOverrides, setCardFaceOverrides] = useState({});
@@ -192,26 +217,26 @@ const Table = () => {
       let adjusted = { ...position };
       const maxAttempts = 12;
       for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-        const centerX = adjusted.x + CARD_SIZE.width / 2;
-        const centerY = adjusted.y + CARD_SIZE.height / 2;
+        const centerX = adjusted.x + cardSize.width / 2;
+        const centerY = adjusted.y + cardSize.height / 2;
         const blocking = stackList.find((stack) => {
           if (stack.id === excludedId) {
             return false;
           }
-          const stackCenterX = stack.x + CARD_SIZE.width / 2;
-          const stackCenterY = stack.y + CARD_SIZE.height / 2;
-          return Math.hypot(centerX - stackCenterX, centerY - stackCenterY) < STACK_EPS;
+          const stackCenterX = stack.x + cardSize.width / 2;
+          const stackCenterY = stack.y + cardSize.height / 2;
+          return Math.hypot(centerX - stackCenterX, centerY - stackCenterY) < stackEps;
         });
         if (!blocking) {
           break;
         }
-        const blockingCenterX = blocking.x + CARD_SIZE.width / 2;
-        const blockingCenterY = blocking.y + CARD_SIZE.height / 2;
+        const blockingCenterX = blocking.x + cardSize.width / 2;
+        const blockingCenterY = blocking.y + cardSize.height / 2;
         const distance = Math.hypot(
           centerX - blockingCenterX,
           centerY - blockingCenterY
         );
-        const push = STACK_EPS - distance + 1;
+        const push = stackEps - distance + 1;
         adjusted = {
           x: adjusted.x + direction.x * push,
           y: adjusted.y + direction.y * push
@@ -219,7 +244,7 @@ const Table = () => {
       }
       return adjusted;
     },
-    []
+    [cardSize.height, cardSize.width, stackEps]
   );
 
   const resetRightSweep = useCallback(() => {
@@ -245,6 +270,14 @@ const Table = () => {
     saveSettings(settings);
   }, [settings]);
 
+  useEffect(() => {
+    const sceneRootNode = sceneRootRef.current;
+    if (sceneRootNode) {
+      sceneRootNode.style.setProperty('--tableScale', combinedScale.toString());
+    }
+    tableScaleRef.current = combinedScale;
+  }, [combinedScale]);
+
   const seatCount = settings.roomSettings.seatCount;
   const tableStyle = settings.roomSettings.tableStyle;
   const tableShape = settings.roomSettings.tableShape;
@@ -262,8 +295,8 @@ const Table = () => {
     if (!feltEllipse || !['oval', 'circle'].includes(tableShape)) {
       return null;
     }
-    const rxSafe = feltEllipse.rx - CARD_SIZE.width / 2;
-    const rySafe = feltEllipse.ry - CARD_SIZE.height / 2;
+    const rxSafe = feltEllipse.rx - cardSize.width / 2;
+    const rySafe = feltEllipse.ry - cardSize.height / 2;
     if (rxSafe <= 0 || rySafe <= 0) {
       return null;
     }
@@ -272,7 +305,7 @@ const Table = () => {
       rx: rxSafe,
       ry: rySafe
     };
-  }, [feltEllipse, tableShape]);
+  }, [cardSize.height, cardSize.width, feltEllipse, tableShape]);
 
   useEffect(() => {
     if (!showFeltDebug) {
@@ -370,13 +403,13 @@ const Table = () => {
   const handZones = useMemo(() => {
     return seatPositions.map((seat) => ({
       seatId: seat.id,
-      x: seat.x - Math.cos(seat.angle) * HAND_ZONE_SEAT_OFFSET,
-      y: seat.y - Math.sin(seat.angle) * HAND_ZONE_SEAT_OFFSET,
-      width: HAND_ZONE_SIZE.width,
-      height: HAND_ZONE_SIZE.height,
+      x: seat.x - Math.cos(seat.angle) * handZoneSeatOffset,
+      y: seat.y - Math.sin(seat.angle) * handZoneSeatOffset,
+      width: handZoneSize.width,
+      height: handZoneSize.height,
       angle: seat.angle
     }));
-  }, [seatPositions]);
+  }, [handZoneSeatOffset, handZoneSize.height, handZoneSize.width, seatPositions]);
 
   const getHandZoneAtPoint = useCallback((x, y) => {
     for (let i = 0; i < handZones.length; i += 1) {
@@ -465,8 +498,7 @@ const Table = () => {
 
   const updateTabletopScale = useCallback(() => {
     const frameNode = tableFrameRef.current;
-    const sceneRootNode = sceneRootRef.current;
-    if (!frameNode || !sceneRootNode) {
+    if (!frameNode) {
       return;
     }
     const baseWidth = frameNode.offsetWidth;
@@ -493,9 +525,7 @@ const Table = () => {
       )
     );
 
-    tableScaleRef.current = nextScale;
     setTableScale(nextScale);
-    sceneRootNode.style.setProperty('--tableScale', nextScale.toString());
   }, []);
 
   const recomputeFeltGeometry = useCallback(() => {
@@ -544,6 +574,10 @@ const Table = () => {
   }, [layoutSeats, updateTabletopScale]);
 
   useEffect(() => {
+    layoutSeats();
+  }, [combinedScale, layoutSeats]);
+
+  useEffect(() => {
     const handleResize = () => {
       layoutSeats();
       updateTabletopScale();
@@ -558,7 +592,7 @@ const Table = () => {
 
   useEffect(() => {
     recomputeFeltGeometry();
-  }, [recomputeFeltGeometry, tableRect.height, tableRect.width, tableScale, tableShape]);
+  }, [combinedScale, recomputeFeltGeometry, tableRect.height, tableRect.width, tableShape]);
 
   const getCardFace = useCallback((stack, cardId) => {
     if (!stack || !cardId) {
@@ -591,17 +625,17 @@ const Table = () => {
           continue;
         }
         const overlaps =
-          draggedX < stack.x + CARD_SIZE.width &&
-          draggedX + CARD_SIZE.width > stack.x &&
-          draggedY < stack.y + CARD_SIZE.height &&
-          draggedY + CARD_SIZE.height > stack.y;
+          draggedX < stack.x + cardSize.width &&
+          draggedX + cardSize.width > stack.x &&
+          draggedY < stack.y + cardSize.height &&
+          draggedY + cardSize.height > stack.y;
         if (overlaps) {
           return stack.id;
         }
       }
       return null;
     },
-    [tableStacks]
+    [cardSize.height, cardSize.width, tableStacks]
   );
 
   const handStacksBySeat = useMemo(() => {
@@ -626,15 +660,15 @@ const Table = () => {
     if (!zone) {
       return [];
     }
-    const fanStep = Math.max(16, CARD_SIZE.width * 0.35);
+    const fanStep = Math.max(16, cardSize.width * 0.35);
     const startX = zone.x - ((ownerStacks.length - 1) * fanStep) / 2;
-    const y = zone.y - CARD_SIZE.height / 2;
+    const y = zone.y - cardSize.height / 2;
     return ownerStacks.map((stack, index) => ({
       ...stack,
       renderX: startX + index * fanStep,
       renderY: y
     }));
-  }, [handStacksBySeat, handZones, playerSeatId]);
+  }, [cardSize.height, cardSize.width, handStacksBySeat, handZones, playerSeatId]);
 
   const interactiveStackRects = useMemo(() => {
     const rects = tableStacks.map((stack) => ({ id: stack.id, x: stack.x, y: stack.y }));
@@ -649,15 +683,15 @@ const Table = () => {
       const stack = interactiveStackRects[i];
       if (
         pointerX >= stack.x &&
-        pointerX <= stack.x + CARD_SIZE.width &&
+        pointerX <= stack.x + cardSize.width &&
         pointerY >= stack.y &&
-        pointerY <= stack.y + CARD_SIZE.height
+        pointerY <= stack.y + cardSize.height
       ) {
         return stack.id;
       }
     }
     return null;
-  }, [interactiveStackRects]);
+  }, [cardSize.height, cardSize.width, interactiveStackRects]);
 
   const bringStackToFront = useCallback((stackId) => {
     setStacks((prev) => {
@@ -756,12 +790,12 @@ const Table = () => {
       }
       const scale = tableScaleRef.current;
       const cardSizePx = {
-        width: CARD_SIZE.width * scale,
-        height: CARD_SIZE.height * scale
+        width: cardSize.width * scale,
+        height: cardSize.height * scale
       };
       const centerScreen = {
-        x: tableScreenRect.left + (topLeft.x + CARD_SIZE.width / 2) * scale,
-        y: tableScreenRect.top + (topLeft.y + CARD_SIZE.height / 2) * scale
+        x: tableScreenRect.left + (topLeft.x + cardSize.width / 2) * scale,
+        y: tableScreenRect.top + (topLeft.y + cardSize.height / 2) * scale
       };
       const inside = isPointInsideFelt(
         centerScreen.x,
@@ -791,25 +825,28 @@ const Table = () => {
         clampedCenter: clampedCenterLocal
       };
     },
-    [feltScreenRect, tableScreenRect, tableShape]
+    [cardSize.height, cardSize.width, feltScreenRect, tableScreenRect, tableShape]
   );
 
+  const screenToWorld = useCallback((clientX, clientY, playfieldRect, zoom) => {
+    if (!playfieldRect || !zoom) {
+      return null;
+    }
+    return {
+      x: (clientX - playfieldRect.left) / zoom,
+      y: (clientY - playfieldRect.top) / zoom
+    };
+  }, []);
+
   const getTablePointerPositionFromClient = useCallback((clientX, clientY) => {
-    const sceneRoot = sceneRootRef.current;
     const table = tableRef.current;
-    if (!sceneRoot || !table) {
+    if (!table) {
       return null;
     }
     const scale = tableScaleRef.current;
-    const sceneRect = sceneRoot.getBoundingClientRect();
     const tableRect = table.getBoundingClientRect();
-    const offsetX = (tableRect.left - sceneRect.left) / scale;
-    const offsetY = (tableRect.top - sceneRect.top) / scale;
-    return {
-      x: (clientX - sceneRect.left) / scale - offsetX,
-      y: (clientY - sceneRect.top) / scale - offsetY
-    };
-  }, []);
+    return screenToWorld(clientX, clientY, tableRect, scale);
+  }, [screenToWorld]);
 
   const getTablePointerPosition = useCallback(
     (event) =>
@@ -1086,8 +1123,8 @@ const Table = () => {
         const handSeatId = pointerPosition
           ? getHandZoneAtPoint(pointerPosition.x, pointerPosition.y)
           : getHandZoneAtPoint(
-              draggedX + CARD_SIZE.width / 2,
-              draggedY + CARD_SIZE.height / 2
+              draggedX + cardSize.width / 2,
+              draggedY + cardSize.height / 2
             );
         if (handSeatId && playerSeatId && handSeatId === playerSeatId) {
           const moveIntent = { type: MOVE_TO_HAND, stackId: heldStack.stackId, seatIndex: handSeatId };
@@ -1194,6 +1231,8 @@ const Table = () => {
       });
     },
     [
+      cardSize.height,
+      cardSize.width,
       getDropTransformFromPointer,
       heldStack,
       logPlacementDebug,
@@ -1309,10 +1348,10 @@ const Table = () => {
               continue;
             }
             const overlaps =
-              newStack.x < stack.x + CARD_SIZE.width &&
-              newStack.x + CARD_SIZE.width > stack.x &&
-              newStack.y < stack.y + CARD_SIZE.height &&
-              newStack.y + CARD_SIZE.height > stack.y;
+              newStack.x < stack.x + cardSize.width &&
+              newStack.x + cardSize.width > stack.x &&
+              newStack.y < stack.y + cardSize.height &&
+              newStack.y + cardSize.height > stack.y;
             if (overlaps) {
               overlapId = stack.id;
               break;
@@ -1361,6 +1400,8 @@ const Table = () => {
       }
     },
     [
+      cardSize.height,
+      cardSize.width,
       getDropTransformFromPointer,
       createStackId,
       heldStack,
@@ -1631,7 +1672,7 @@ const Table = () => {
       let origin = null;
       let heldPosition = null;
       const position = pointerEvent ? getTablePointerPosition(pointerEvent) : null;
-      const offset = { dx: CARD_SIZE.width / 2, dy: CARD_SIZE.height / 2 };
+      const offset = { dx: cardSize.width / 2, dy: cardSize.height / 2 };
       if (position) {
         heldPosition = getHeldTopLeft(position.x, position.y, offset);
       }
@@ -1682,7 +1723,15 @@ const Table = () => {
       setSelectedStackId(null);
       setPickCountOpen(false);
     },
-    [applyOwnMovement, createStackId, getHeldTopLeft, getTablePointerPosition, stacksById]
+    [
+      applyOwnMovement,
+      cardSize.height,
+      cardSize.width,
+      createStackId,
+      getHeldTopLeft,
+      getTablePointerPosition,
+      stacksById
+    ]
   );
 
   const handleStackPointerDown = useCallback(
@@ -2036,13 +2085,13 @@ const Table = () => {
       ? {
           left:
             tableScreenRect.left +
-            (selectedStack.x + CARD_SIZE.width / 2) * tableScale,
+            (selectedStack.x + cardSize.width / 2) * combinedScale,
           top:
             tableScreenRect.top +
             (menuBelow
-              ? selectedStack.y + CARD_SIZE.height + 10
+              ? selectedStack.y + cardSize.height + 10
               : selectedStack.y - 10) *
-              tableScale
+              combinedScale
         }
       : null;
   const menuStackCount = selectedStack ? selectedStack.cardIds.length : 0;
@@ -2051,8 +2100,8 @@ const Table = () => {
   const dragCardPosition =
     heldStackData && tableScreenRect
       ? {
-          x: tableScreenRect.left + heldStackData.x * tableScale,
-          y: tableScreenRect.top + heldStackData.y * tableScale
+          x: tableScreenRect.left + heldStackData.x * combinedScale,
+          y: tableScreenRect.top + heldStackData.y * combinedScale
         }
       : null;
   return (
@@ -2060,13 +2109,13 @@ const Table = () => {
       <div
         id="sceneRoot"
         ref={sceneRootRef}
-        style={{ '--tableScale': tableScale }}
+        style={{ '--tableScale': combinedScale }}
       >
         <div
           ref={tableFrameRef}
           className={`table-frame table-frame--${tableStyle} table-frame--${tableShape}`}
           style={{
-            '--card-scale': CARD_SCALE,
+            '--card-scale': viewTransform.cardScale,
             '--table-width': `${(() => {
               const footprint =
                 tableFootprintPx ?? Math.min(TABLE_BASE_WIDTH, TABLE_BASE_HEIGHT);
@@ -2317,7 +2366,7 @@ const Table = () => {
               <div
                 className="drag-layer"
                 aria-hidden="true"
-                style={{ '--card-scale': CARD_SCALE * tableScale }}
+                style={{ '--card-scale': viewTransform.cardScale * combinedScale }}
               >
                 <Card
                   id={heldStackData.id}
@@ -2381,6 +2430,48 @@ const Table = () => {
                 <option value="medieval">Medieval</option>
                 <option value="classic">Classic</option>
               </select>
+            </label>
+            <label className="table-settings__row">
+              <span className="table-settings__label">Table Zoom</span>
+              <div className="table-settings__range">
+                <input
+                  type="range"
+                  min="0.5"
+                  max="1.4"
+                  step="0.01"
+                  value={settings.tableZoom ?? 1}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      tableZoom: clamp(Number(event.target.value), 0.5, 1.4)
+                    }))
+                  }
+                />
+                <span className="table-settings__value">
+                  {Math.round((settings.tableZoom ?? 1) * 100)}%
+                </span>
+              </div>
+            </label>
+            <label className="table-settings__row">
+              <span className="table-settings__label">Card Size</span>
+              <div className="table-settings__range">
+                <input
+                  type="range"
+                  min="0.7"
+                  max="1.6"
+                  step="0.01"
+                  value={settings.cardScale ?? 1}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      cardScale: clamp(Number(event.target.value), 0.7, 1.6)
+                    }))
+                  }
+                />
+                <span className="table-settings__value">
+                  {Math.round((settings.cardScale ?? 1) * 100)}%
+                </span>
+              </div>
             </label>
             <div className="table-settings__row">
               <span className="table-settings__label">Include Jokers</span>
