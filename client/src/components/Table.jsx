@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Card from './Card.jsx';
 import InventoryPanel from './InventoryPanel.jsx';
+import ActionLog from './ActionLog.jsx';
 import SeatMenu from './SeatMenu.jsx';
 import { clamp, getFeltEllipseInTableSpace } from '../utils/geometry.js';
 import {
@@ -99,6 +100,7 @@ const Table = () => {
   const tableFrameRef = useRef(null);
   const tableRef = useRef(null);
   const feltRef = useRef(null);
+  const seatPadRefs = useRef({});
   const seatDragRef = useRef({
     seatIndex: null,
     moved: false,
@@ -192,6 +194,9 @@ const Table = () => {
     seatIndex: null,
     open: false
   });
+  const [actionLog, setActionLog] = useState([]);
+  const actionLogIdRef = useRef(1);
+  const [presence, setPresence] = useState(() => ({}));
   const rafRef = useRef(null);
   const latestPoint = useRef(null);
   const lastPointerRef = useRef({ x: 0, y: 0 });
@@ -390,36 +395,140 @@ const Table = () => {
   const [seatPositions, setSeatPositions] = useState(() =>
     seats.map((seat) => ({ ...seat, x: 0, y: 0 }))
   );
+  const [handZones, setHandZones] = useState([]);
 
 
   const mySeatIndex = useMemo(
     () => players[myPlayerId]?.seatIndex ?? null,
     [myPlayerId, players]
   );
+  const myPlayer = players[myPlayerId];
+  const myName = myPlayer?.name ?? 'Player';
 
-  const handZones = useMemo(() => {
-    return seatPositions.map((seat) => ({
-      seatId: seat.id,
-      seatIndex: seat.seatIndex,
-      x: seat.x - Math.cos(seat.angle) * handZoneSeatOffset,
-      y: seat.y - Math.sin(seat.angle) * handZoneSeatOffset,
-      width: handZoneSize.width,
-      height: handZoneSize.height,
-      angle: seat.angle
-    }));
-  }, [handZoneSeatOffset, handZoneSize.height, handZoneSize.width, seatPositions]);
-
-  const getHandZoneAtPoint = useCallback((x, y) => {
-    for (let i = 0; i < handZones.length; i += 1) {
-      const zone = handZones[i];
-      const left = zone.x - zone.width / 2;
-      const top = zone.y - zone.height / 2;
-      if (x >= left && x <= left + zone.width && y >= top && y <= top + zone.height) {
-        return zone.seatIndex;
-      }
+  const pushAction = useCallback((text) => {
+    if (!text) {
+      return;
     }
-    return null;
-  }, [handZones]);
+    setActionLog((prev) => {
+      const next = [
+        { id: actionLogIdRef.current++, ts: Date.now(), text },
+        ...prev
+      ];
+      return next.slice(0, 30);
+    });
+  }, []);
+
+  const updatePresence = useCallback(
+    (updates) => {
+      if (!myPlayerId) {
+        return;
+      }
+      setPresence((prev) => ({
+        ...prev,
+        [myPlayerId]: {
+          x: 0,
+          y: 0,
+          isDown: false,
+          holdingCount: 0,
+          ...(prev[myPlayerId] ?? {}),
+          ...updates
+        }
+      }));
+    },
+    [myPlayerId]
+  );
+
+  const getCardLabel = useCallback(
+    (cardId) => {
+      const card = cardsById[cardId];
+      if (!card) {
+        return 'Card';
+      }
+      if (card.rank && card.suit) {
+        return `${card.rank} of ${card.suit}`;
+      }
+      return card.rank ?? 'Card';
+    },
+    [cardsById]
+  );
+
+  const screenToWorld = useCallback((clientX, clientY, playfieldRect, zoom) => {
+    if (!playfieldRect || !zoom) {
+      return null;
+    }
+    return {
+      x: (clientX - playfieldRect.left) / zoom,
+      y: (clientY - playfieldRect.top) / zoom
+    };
+  }, []);
+
+  const updateHandZonesFromDom = useCallback(() => {
+    const tableNode = tableRef.current;
+    if (!tableNode) {
+      return;
+    }
+    const tableRect = tableNode.getBoundingClientRect();
+    const zoom = tableScaleRef.current || 1;
+    const insetScale = 0.94;
+    const nextZones = seatPositions.map((seat) => {
+      const seatPad = seatPadRefs.current[seat.seatIndex];
+      if (seatPad) {
+        const padRect = seatPad.getBoundingClientRect();
+        // Convert screen rect -> table-world coordinates (playfield rect + zoom).
+        const topLeft = screenToWorld(padRect.left, padRect.top, tableRect, zoom);
+        const bottomRight = screenToWorld(
+          padRect.right,
+          padRect.bottom,
+          tableRect,
+          zoom
+        );
+        if (topLeft && bottomRight) {
+          const width = Math.max(0, bottomRight.x - topLeft.x);
+          const height = Math.max(0, bottomRight.y - topLeft.y);
+          return {
+            seatId: seat.id,
+            seatIndex: seat.seatIndex,
+            x: (topLeft.x + bottomRight.x) / 2,
+            y: (topLeft.y + bottomRight.y) / 2,
+            width: width * insetScale,
+            height: height * insetScale,
+            rotation: 0
+          };
+        }
+      }
+      return {
+        seatId: seat.id,
+        seatIndex: seat.seatIndex,
+        x: seat.x - Math.cos(seat.angle) * handZoneSeatOffset,
+        y: seat.y - Math.sin(seat.angle) * handZoneSeatOffset,
+        width: handZoneSize.width,
+        height: handZoneSize.height,
+        rotation: 0
+      };
+    });
+    setHandZones(nextZones);
+  }, [
+    handZoneSeatOffset,
+    handZoneSize.height,
+    handZoneSize.width,
+    screenToWorld,
+    seatPositions
+  ]);
+
+  const getHandZoneAtPoint = useCallback(
+    (x, y) => {
+      for (let i = 0; i < handZones.length; i += 1) {
+        const zone = handZones[i];
+        const left = zone.x - zone.width / 2;
+        const top = zone.y - zone.height / 2;
+        if (x >= left && x <= left + zone.width && y >= top && y <= top + zone.height) {
+          return zone.seatIndex;
+        }
+      }
+      return null;
+    },
+    [handZones]
+  );
 
   const layoutSeats = useCallback(() => {
     const frameNode = tableFrameRef.current;
@@ -591,6 +700,32 @@ const Table = () => {
   useEffect(() => {
     recomputeFeltGeometry();
   }, [combinedScale, recomputeFeltGeometry, tableRect.height, tableRect.width, tableShape]);
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(updateHandZonesFromDom);
+    return () => cancelAnimationFrame(raf);
+  }, [combinedScale, seatPositions, tableRect.height, tableRect.width, updateHandZonesFromDom]);
+
+  useEffect(() => {
+    if (!myPlayerId) {
+      return;
+    }
+    setPresence((prev) => ({
+      ...prev,
+      [myPlayerId]: prev[myPlayerId] ?? {
+        x: 0,
+        y: 0,
+        isDown: false,
+        holdingCount: 0
+      }
+    }));
+  }, [myPlayerId]);
+
+  useEffect(() => {
+    updatePresence({
+      holdingCount: heldStack.active ? heldStack.cardIds.length : 0
+    });
+  }, [heldStack.active, heldStack.cardIds.length, updatePresence]);
 
   const getCardFace = useCallback((stack, cardId) => {
     if (!stack || !cardId) {
@@ -789,16 +924,6 @@ const Table = () => {
     },
     [cardSize.height, cardSize.width, feltScreenRect, tableScreenRect, tableShape]
   );
-
-  const screenToWorld = useCallback((clientX, clientY, playfieldRect, zoom) => {
-    if (!playfieldRect || !zoom) {
-      return null;
-    }
-    return {
-      x: (clientX - playfieldRect.left) / zoom,
-      y: (clientY - playfieldRect.top) / zoom
-    };
-  }, []);
 
   const getTablePointerPositionFromClient = useCallback((clientX, clientY) => {
     const table = tableRef.current;
@@ -1106,6 +1231,9 @@ const Table = () => {
           const draggedCards = stacksById[heldStack.stackId]?.cardIds ?? [];
           if (draggedCards.length) {
             moveToHand(mySeatIndex, draggedCards);
+            pushAction(
+              `${myName} moved ${draggedCards.length} ${draggedCards.length === 1 ? 'card' : 'cards'} to hand`
+            );
             applyOwnMovement((prev) => prev.filter((stack) => stack.id !== heldStack.stackId));
           }
           setHeldStack({
@@ -1212,7 +1340,9 @@ const Table = () => {
       getHandZoneAtPoint,
       getTablePointerPositionFromClient,
       moveToHand,
-      mySeatIndex
+      mySeatIndex,
+      myName,
+      pushAction
     ]
   );
 
@@ -1455,6 +1585,7 @@ const Table = () => {
           ownerSeatIndex: null
         })
       );
+      pushAction(`${myName} played ${getCardLabel(cardId)}`);
     },
     [
       applyOwnMovement,
@@ -1462,12 +1593,28 @@ const Table = () => {
       cardSize.width,
       clampTopLeftToFelt,
       createStackId,
+      getCardLabel,
       getHandZoneAtPoint,
       getTablePointerPositionFromClient,
       hands,
       moveFromHandToTable,
-      mySeatIndex
+      myName,
+      mySeatIndex,
+      pushAction
     ]
+  );
+
+  const handleToggleReveal = useCallback(
+    (cardId) => {
+      if (mySeatIndex === null || mySeatIndex === undefined) {
+        return;
+      }
+      const seatHand = hands?.[mySeatIndex];
+      const isRevealed = Boolean(seatHand?.revealed?.[cardId]);
+      toggleReveal(mySeatIndex, cardId);
+      pushAction(`${myName} ${isRevealed ? 'hid' : 'revealed'} ${getCardLabel(cardId)}`);
+    },
+    [getCardLabel, hands, myName, mySeatIndex, pushAction, toggleReveal]
   );
 
   useEffect(() => {
@@ -1486,6 +1633,7 @@ const Table = () => {
       if (!position) {
         return;
       }
+      updatePresence({ x: position.x, y: position.y });
       lastPointerRef.current = { x: event.clientX, y: event.clientY };
       const clamped = getHeldTopLeft(position.x, position.y, heldStack.offset);
 
@@ -1547,7 +1695,8 @@ const Table = () => {
     heldStack.active,
     heldStack.cardIds.length,
     heldStack.offset,
-    resetRightSweep
+    resetRightSweep,
+    updatePresence
   ]);
 
   useEffect(() => {
@@ -1573,6 +1722,20 @@ const Table = () => {
       window.removeEventListener('blur', handlePointerCancel);
     };
   }, [heldStack.active, resetRightSweep]);
+
+  useEffect(() => {
+    const handlePointerUp = () => {
+      updatePresence({ isDown: false });
+    };
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+    window.addEventListener('blur', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+      window.removeEventListener('blur', handlePointerUp);
+    };
+  }, [updatePresence]);
 
   useEffect(() => {
     if (pickCountOpen || settingsOpen || roomSettingsOpen) {
@@ -1888,6 +2051,7 @@ const Table = () => {
     (event) => {
       lastPointerRef.current = { x: event.clientX, y: event.clientY };
       closeSeatMenu();
+      updatePresence({ isDown: true });
       if (event.button === 2) {
         if (heldStack.active) {
           event.preventDefault();
@@ -1937,7 +2101,8 @@ const Table = () => {
       handleStackPointerDown,
       heldStack.active,
       hitTestStack,
-      placeHeldStack
+      placeHeldStack,
+      updatePresence
     ]
   );
 
@@ -1961,9 +2126,13 @@ const Table = () => {
   const handleSurfacePointerMove = useCallback(
     (event) => {
       lastPointerRef.current = { x: event.clientX, y: event.clientY };
+      const position = getTablePointerPosition(event);
+      if (position) {
+        updatePresence({ x: position.x, y: position.y });
+      }
       handlePointerMoveHover(event);
     },
-    [handlePointerMoveHover]
+    [getTablePointerPosition, handlePointerMoveHover, updatePresence]
   );
 
   const visibleBadgeStackId =
@@ -2011,7 +2180,8 @@ const Table = () => {
         return { ...stack, cardIds: nextCardIds };
       })
     );
-  }, [applyOwnMovement, selectedStackId]);
+    pushAction(`${myName} shuffled a stack`);
+  }, [applyOwnMovement, myName, pushAction, selectedStackId]);
 
   const pickUpFromStack = useCallback(
     (stackId, requestedCount) => {
@@ -2028,6 +2198,7 @@ const Table = () => {
         stack.id === stackId ? { ...stack, faceUp: !stack.faceUp } : stack
       )
     );
+    pushAction(`${myName} flipped a stack`);
     setCardFaceOverrides((prev) => {
       const stack = stacksById[stackId];
       if (!stack) {
@@ -2040,7 +2211,7 @@ const Table = () => {
       });
       return next;
     });
-  }, [applyOwnMovement, stacksById]);
+  }, [applyOwnMovement, myName, pushAction, stacksById]);
 
   const handleFlipSelected = useCallback(() => {
     if (!selectedStackId) {
@@ -2062,7 +2233,8 @@ const Table = () => {
         return next;
       });
     }
-  }, [applyOwnMovement, selectedStackId, stacksById]);
+    pushAction(`${myName} flipped a stack`);
+  }, [applyOwnMovement, myName, pushAction, selectedStackId, stacksById]);
 
   const handleMoveSelectedToHand = useCallback(() => {
     if (!selectedStackId || mySeatIndex === null || mySeatIndex === undefined) {
@@ -2073,10 +2245,21 @@ const Table = () => {
       return;
     }
     moveToHand(mySeatIndex, selected.cardIds);
+    pushAction(
+      `${myName} moved ${selected.cardIds.length} ${selected.cardIds.length === 1 ? 'card' : 'cards'} to hand`
+    );
     applyOwnMovement((prev) => prev.filter((stack) => stack.id !== selectedStackId));
     setSelectedStackId(null);
     setPickCountOpen(false);
-  }, [applyOwnMovement, moveToHand, mySeatIndex, selectedStackId, stacksById]);
+  }, [
+    applyOwnMovement,
+    moveToHand,
+    myName,
+    mySeatIndex,
+    pushAction,
+    selectedStackId,
+    stacksById
+  ]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -2259,7 +2442,13 @@ const Table = () => {
                   <div className="seat__bench">
                     <div className="seat__label">{seat.label.toUpperCase()}</div>
 
-                    <div className="seat__hand" aria-label={`${seat.label} hand zone`}>
+                    <div
+                      ref={(el) => {
+                        seatPadRefs.current[seat.seatIndex] = el;
+                      }}
+                      className="seat__hand"
+                      aria-label={`${seat.label} hand zone`}
+                    >
                       {/* hand contents render here if needed */}
                     </div>
 
@@ -2347,7 +2536,7 @@ const Table = () => {
                       top: `${zone.y}px`,
                       width: `${zone.width}px`,
                       height: `${zone.height}px`,
-                      '--zone-rotation': `${zone.angle + Math.PI / 2}rad`,
+                      '--zone-rotation': `${zone.rotation ?? 0}rad`,
                       '--seat-color': seatPlayer?.seatColor ?? null,
                       '--seat-accent': seatPlayer?.accentColor ?? null
                     }}
@@ -2415,6 +2604,31 @@ const Table = () => {
                   </div>
                 );
               })}
+              {Object.entries(presence).map(([playerId, ghost]) => {
+                if (!Number.isFinite(ghost?.x) || !Number.isFinite(ghost?.y)) {
+                  return null;
+                }
+                const player = players[playerId];
+                const label = player?.name ?? 'Player';
+                const accent = player?.accentColor ?? '#f5b96c';
+                return (
+                  <div
+                    key={`cursor-${playerId}`}
+                    className={`cursor-ghost ${ghost.isDown ? 'cursor-ghost--down' : ''}`}
+                    style={{
+                      left: `${ghost.x}px`,
+                      top: `${ghost.y}px`,
+                      '--ghost-color': accent
+                    }}
+                  >
+                    <div className="cursor-ghost__dot" />
+                    <div className="cursor-ghost__label">{label}</div>
+                    {ghost.holdingCount ? (
+                      <div className="cursor-ghost__badge">+{ghost.holdingCount}</div>
+                    ) : null}
+                  </div>
+                );
+              })}
 
               {placementGhost ? (
                 <div
@@ -2478,7 +2692,7 @@ const Table = () => {
           cardIds={hands?.[mySeatIndex]?.cardIds ?? []}
           cardsById={cardsById}
           revealed={hands?.[mySeatIndex]?.revealed ?? {}}
-          onToggleReveal={(cardId) => toggleReveal(mySeatIndex, cardId)}
+          onToggleReveal={handleToggleReveal}
           onCardDragStart={handleInventoryDragStart}
           onCardDrop={handleInventoryReorderDrop}
           onDropToEnd={handleInventoryDropToEnd}
@@ -2913,10 +3127,12 @@ const Table = () => {
                 }
                 onSit={() => {
                   sitAtSeat(seatMenuSeat.seatIndex);
+                  pushAction(`${myName} sat at ${seatMenuSeat.label}`);
                   closeSeatMenu();
                 }}
                 onStand={() => {
                   standUp();
+                  pushAction(`${myName} left ${seatMenuSeat.label}`);
                   closeSeatMenu();
                 }}
                 onUpdateColors={updatePlayerColors}
@@ -2926,6 +3142,9 @@ const Table = () => {
             uiOverlayRoot
           )
         : null}
+      {uiOverlayRoot
+        ? createPortal(<ActionLog entries={actionLog} />, uiOverlayRoot)
+        : <ActionLog entries={actionLog} />}
     </div>
   );
 };
