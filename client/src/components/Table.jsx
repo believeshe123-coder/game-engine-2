@@ -1020,6 +1020,13 @@ const Table = () => {
     setDragSeatIndex(null);
   }, [releaseCapturedPointer]);
 
+  const toggleSeat = useCallback((seatId) => {
+    setOccupiedSeats((prev) => ({
+      ...prev,
+      [seatId]: !prev[seatId]
+    }));
+  }, []);
+
   const handleSeatClick = useCallback(
     (seatId, seatIndex) => {
       if (seatDragRef.current.moved && seatDragRef.current.seatIndex === seatIndex) {
@@ -1987,13 +1994,6 @@ const Table = () => {
     setCardFaceOverrides({});
     updateTabletopScale();
   }, [rebuildTableFromSettings, resetInteractionStates, settings, updateTabletopScale]);
-
-  const toggleSeat = useCallback((seatId) => {
-    setOccupiedSeats((prev) => ({
-      ...prev,
-      [seatId]: !prev[seatId]
-    }));
-  }, []);
 
   const handleShuffleSelected = useCallback(() => {
     if (!selectedStackId) {
