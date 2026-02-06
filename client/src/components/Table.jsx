@@ -1057,7 +1057,10 @@ const Table = () => {
         if (source) {
           return prev.map((stack) =>
             stack.id === origin.stackId
-              ? { ...stack, cardIds: [...stack.cardIds, ...held.cardIds] }
+              ? {
+                  ...stack,
+                  cardIds: origin.cardIdsBefore ?? [...stack.cardIds, ...held.cardIds]
+                }
               : stack
           );
         }
@@ -1068,7 +1071,7 @@ const Table = () => {
         y: origin.y ?? 0,
         rotation: 0,
         faceUp: held.faceUp ?? true,
-        cardIds: held.cardIds,
+        cardIds: origin.cardIdsBefore ?? held.cardIds,
         zone: 'table',
         ownerSeatIndex: null
       });
@@ -1076,10 +1079,9 @@ const Table = () => {
     clearInteraction();
   }, [clearInteraction, interaction.held, setStacks]);
 
-  const pickup = useCallback(
-    (stackId, kind, n = 1, pointerId = null) => {
-      let picked = null;
-      let heldStackId = null;
+  const pickupFromStack = useCallback(
+    (stackId, count, pointerId = null) => {
+      const pointerPosition = lastPointerWorldRef.current;
       setStacks((prev) => {
         const source = prev.find((stack) => stack.id === stackId);
         if (!source) {
@@ -1089,56 +1091,37 @@ const Table = () => {
         if (!total) {
           return prev;
         }
-        let pickCount = 1;
-        if (kind === 'full') {
-          pickCount = total;
-        } else if (kind === 'half') {
-          pickCount = Math.floor(total / 2);
-        } else if (kind === 'top') {
-          pickCount = 1;
-        } else if (kind === 'n') {
-          pickCount = n;
-        }
-        const clamped = Math.max(1, Math.min(pickCount, total));
+        const requested =
+          count === 'all' ? total : Math.max(1, Number.parseInt(count, 10) || 1);
+        const clamped = Math.min(requested, total);
         const remaining = source.cardIds.slice(0, total - clamped);
         const pickedIds = source.cardIds.slice(total - clamped);
         if (!pickedIds.length) {
           return prev;
         }
-        heldStackId = createStackId();
-        picked = {
-          cardIds: pickedIds,
+        const heldStackId = createStackId();
+        const origin = {
+          stackId: source.id,
+          x: source.x,
+          y: source.y,
           faceUp: source.faceUp,
-          origin: {
-            stackId: source.id,
-            x: source.x,
-            y: source.y,
-            faceUp: source.faceUp
-          }
+          cardIdsBefore: source.cardIds
         };
-        return prev
-          .map((stack) =>
-            stack.id === stackId ? { ...stack, cardIds: remaining } : stack
-          )
-          .filter((stack) => stack.id !== stackId || remaining.length > 0);
-      });
-      if (picked && heldStackId) {
-        const pointerPosition = lastPointerWorldRef.current;
-        const originX = picked.origin.x ?? 0;
-        const originY = picked.origin.y ?? 0;
+        const originX = origin.x ?? 0;
+        const originY = origin.y ?? 0;
         const offset = pointerPosition
           ? { x: pointerPosition.x - originX, y: pointerPosition.y - originY }
           : { x: cardSize.width / 2, y: cardSize.height / 2 };
-        setInteraction((prev) => ({
-          ...prev,
+        setInteraction((prevInteraction) => ({
+          ...prevInteraction,
           mode: 'holdStack',
           pointerId,
           source: { stackId },
           held: {
             stackId: heldStackId,
-            cardIds: picked.cardIds,
-            faceUp: picked.faceUp,
-            origin: picked.origin
+            cardIds: pickedIds,
+            faceUp: source.faceUp,
+            origin
           },
           drag: {
             stackId: heldStackId,
@@ -1149,7 +1132,12 @@ const Table = () => {
           selectedStackId: null,
           menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
         }));
-      }
+        return prev
+          .map((stack) =>
+            stack.id === stackId ? { ...stack, cardIds: remaining } : stack
+          )
+          .filter((stack) => stack.id !== stackId || remaining.length > 0);
+      });
     },
     [cardSize.height, cardSize.width, createStackId, setStacks]
   );
@@ -1653,10 +1641,17 @@ const Table = () => {
       if (event.key === '1' || event.key === '5' || event.key === '0') {
         event.preventDefault();
         const pickCount = event.key === '0' ? 10 : Number(event.key);
-        pickup(interaction.selectedStackId, 'n', pickCount);
+        pickupFromStack(interaction.selectedStackId, pickCount);
       }
     },
-    [cancelDrag, closeSeatMenu, handleFlipSelected, handleShuffleSelected, interaction.selectedStackId, pickup]
+    [
+      cancelDrag,
+      closeSeatMenu,
+      handleFlipSelected,
+      handleShuffleSelected,
+      interaction.selectedStackId,
+      pickupFromStack
+    ]
   );
 
   useEffect(() => {
@@ -1838,10 +1833,10 @@ const Table = () => {
         if (distance >= DRAG_THRESHOLD) {
           pending.dragStarted = true;
           if (pending.button === 0 && pending.stackId) {
-            startDragStack(pending.stackId, pointerWorld, event.pointerId);
+            pickupFromStack(pending.stackId, 1, event.pointerId);
           }
           if (pending.button === 2 && pending.stackId) {
-            pickup(pending.stackId, 'top', 1, event.pointerId);
+            pickupFromStack(pending.stackId, 'all', event.pointerId);
           }
         }
       }
@@ -1854,8 +1849,7 @@ const Table = () => {
       handlePointerMoveHover,
       interaction.mode,
       moveHeldWithPointer,
-      pickup,
-      startDragStack,
+      pickupFromStack,
       updateDrag,
       updatePresence,
       updateSweep
@@ -1875,6 +1869,8 @@ const Table = () => {
             x: event.clientX,
             y: event.clientY
           });
+        } else if (!pending.dragStarted && pending.button === 2 && pending.stackId) {
+          pickupFromStack(pending.stackId, 'all', event.pointerId);
         }
         pointerDownRef.current = null;
       }
@@ -1900,6 +1896,7 @@ const Table = () => {
       getTablePointerPosition,
       interaction.mode,
       interaction.pointerId,
+      pickupFromStack,
       releaseCapturedPointer,
       selectStack
     ]
@@ -2809,7 +2806,7 @@ const Table = () => {
                 type="button"
                 className="stack-menu__button"
                 onClick={() => {
-                  pickup(selectedStack.id, 'full');
+                  pickupFromStack(selectedStack.id, 'all');
                   closeMenu();
                 }}
               >
@@ -2822,7 +2819,10 @@ const Table = () => {
                   if (selectedStack.cardIds.length < 2) {
                     return;
                   }
-                  pickup(selectedStack.id, 'half');
+                  pickupFromStack(
+                    selectedStack.id,
+                    Math.ceil(selectedStack.cardIds.length / 2)
+                  );
                   closeMenu();
                 }}
               >
@@ -2832,7 +2832,7 @@ const Table = () => {
                 type="button"
                 className="stack-menu__button"
                 onClick={() => {
-                  pickup(selectedStack.id, 'top');
+                  pickupFromStack(selectedStack.id, 1);
                   closeMenu();
                 }}
               >
@@ -2869,7 +2869,7 @@ const Table = () => {
                       onClick={() => {
                         const parsed = Number.parseInt(pickCountValue, 10);
                         const count = Number.isNaN(parsed) ? 1 : parsed;
-                        pickup(selectedStack.id, 'n', count);
+                        pickupFromStack(selectedStack.id, count);
                         closeMenu();
                       }}
                     >
