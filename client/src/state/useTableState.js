@@ -255,7 +255,7 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
   const [players, setPlayers] = useState(() => ({
     [playerIdRef.current]: {
       id: playerIdRef.current,
-      name: 'You',
+      name: 'Leahana',
       seatIndex: initialProfile.mySeatIndex ?? null,
       seatColor: initialProfile.seatColor,
       accentColor: initialProfile.accentColor
