@@ -10,7 +10,11 @@ const DEFAULT_SETTINGS = {
   roomSettings: {
     tableStyle: 'medieval',
     tableShape: 'rectangle',
-    seatCount: 8
+    seatCount: 8,
+    seatParams: {
+      rectangle: [],
+      oval: []
+    }
   }
 };
 
@@ -50,6 +54,17 @@ const normalizeSettings = (settings) => {
   } else {
     roomSettings.seatCount = Math.min(12, Math.max(2, seatCount));
   }
+  const normalizeSeatParamList = (list) =>
+    Array.isArray(list)
+      ? list
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value))
+      : [];
+  const seatParams = roomSettings.seatParams ?? {};
+  roomSettings.seatParams = {
+    rectangle: normalizeSeatParamList(seatParams.rectangle),
+    oval: normalizeSeatParamList(seatParams.oval)
+  };
   next.roomSettings = roomSettings;
   next.resetFaceDown = Boolean(next.resetFaceDown);
   next.includeJokers = Boolean(next.includeJokers);

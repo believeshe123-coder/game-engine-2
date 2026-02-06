@@ -1179,10 +1179,18 @@ body,
   transform: translate(-50%, -50%);
   transform-origin: center center;
   pointer-events: auto;
-  cursor: pointer;
+  cursor: grab;
   border: none;
   background: transparent;
   padding: 0;
+}
+
+.seat--dragging {
+  cursor: grabbing;
+}
+
+.seat--dragging .seat__bench {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6), var(--seat-shadow-soft);
 }
 
 .seat__base {
