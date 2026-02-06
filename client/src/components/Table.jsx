@@ -3,6 +3,11 @@ import { createPortal } from 'react-dom';
 import Card from './Card.jsx';
 import { clamp, getFeltEllipseInTableSpace } from '../utils/geometry.js';
 import {
+  clampParamBetweenNeighbors,
+  paramFromPointer,
+  pointFromParam
+} from '../utils/tablePerimeter.js';
+import {
   clampPointToFelt,
   getFeltRect,
   isPointInsideFelt
@@ -73,142 +78,18 @@ const getSeatSideFromAngle = (angle) => {
   return 'top';
 };
 
-const getRectPerimeter = (bounds) =>
-  Math.max(1, 2 * (bounds.width + bounds.height));
-
-const getRectPointFromT = (t, bounds) => {
-  const perimeter = getRectPerimeter(bounds);
-  const distance = normalizeParam(t, 1) * perimeter;
-  const w = bounds.width;
-  const h = bounds.height;
-  if (distance <= w) {
-    return {
-      x: bounds.left + distance,
-      y: bounds.top,
-      side: 'top',
-      normal: { x: 0, y: -1 }
-    };
-  }
-  if (distance <= w + h) {
-    return {
-      x: bounds.right,
-      y: bounds.top + (distance - w),
-      side: 'right',
-      normal: { x: 1, y: 0 }
-    };
-  }
-  if (distance <= w + h + w) {
-    return {
-      x: bounds.right - (distance - w - h),
-      y: bounds.bottom,
-      side: 'bottom',
-      normal: { x: 0, y: 1 }
-    };
-  }
-  return {
-    x: bounds.left,
-    y: bounds.bottom - (distance - w - h - w),
-    side: 'left',
-    normal: { x: -1, y: 0 }
-  };
-};
-
-const getRectPerimeterT = (point, bounds) => {
-  const w = bounds.width;
-  const h = bounds.height;
-  if (point.side === 'top') {
-    return (point.x - bounds.left) / getRectPerimeter(bounds);
-  }
-  if (point.side === 'right') {
-    return (w + (point.y - bounds.top)) / getRectPerimeter(bounds);
-  }
-  if (point.side === 'bottom') {
-    return (w + h + (bounds.right - point.x)) / getRectPerimeter(bounds);
-  }
-  return (w + h + w + (bounds.bottom - point.y)) / getRectPerimeter(bounds);
-};
-
-const getClosestPointOnRectPerimeter = (position, bounds) => {
-  const clampedX = clamp(position.x, bounds.left, bounds.right);
-  const clampedY = clamp(position.y, bounds.top, bounds.bottom);
-  const distances = [
-    { side: 'top', distance: Math.abs(position.y - bounds.top) },
-    { side: 'right', distance: Math.abs(position.x - bounds.right) },
-    { side: 'bottom', distance: Math.abs(position.y - bounds.bottom) },
-    { side: 'left', distance: Math.abs(position.x - bounds.left) }
-  ];
-  distances.sort((a, b) => a.distance - b.distance);
-  const closestSide = distances[0].side;
-  if (closestSide === 'top') {
-    return { x: clampedX, y: bounds.top, side: 'top' };
-  }
-  if (closestSide === 'right') {
-    return { x: bounds.right, y: clampedY, side: 'right' };
-  }
-  if (closestSide === 'bottom') {
-    return { x: clampedX, y: bounds.bottom, side: 'bottom' };
-  }
-  return { x: bounds.left, y: clampedY, side: 'left' };
-};
-
-const clampSeatParamBetweenNeighbors = (value, index, params, minGap, maxValue) => {
-  const count = params.length;
-  if (count < 2) {
-    return normalizeParam(value, maxValue);
-  }
-  const prevIndex = (index - 1 + count) % count;
-  const nextIndex = (index + 1) % count;
-  const prev = normalizeParam(params[prevIndex], maxValue);
-  const next = normalizeParam(params[nextIndex], maxValue);
-
-  // Unwrap neighbors into a monotonic range so we can clamp without swapping order.
-  const unwrap = (candidate, base) => {
-    let unwrapped = candidate;
-    while (unwrapped <= base) {
-      unwrapped += maxValue;
-    }
-    return unwrapped;
-  };
-  const prevBase = prev;
-  const nextUnwrapped = unwrap(next, prevBase);
-  const valueUnwrapped = unwrap(normalizeParam(value, maxValue), prevBase);
-  const min = prevBase + minGap;
-  const max = nextUnwrapped - minGap;
-  const clamped = max < min ? min : clamp(valueUnwrapped, min, max);
-  return normalizeParam(clamped, maxValue);
-};
-
-const computeSeatAnchorsFromParams = ({ seatParams, tableShape, feltBounds, feltEllipse }) => {
+const computeSeatAnchorsFromParams = ({ seatParams, tableShape, feltBounds }) => {
   if (!feltBounds || !feltBounds.width || !feltBounds.height) {
     return [];
   }
-  if (tableShape === 'oval') {
-    const ellipse = feltEllipse ?? {
-      cx: feltBounds.left + feltBounds.width / 2,
-      cy: feltBounds.top + feltBounds.height / 2,
-      rx: feltBounds.width / 2,
-      ry: feltBounds.height / 2
-    };
-    return seatParams.map((angle) => {
-      const normalizedAngle = normalizeParam(angle, TAU);
-      const normal = { x: Math.cos(normalizedAngle), y: Math.sin(normalizedAngle) };
-      return {
-        x: ellipse.cx + (ellipse.rx + SEAT_GAP_PX) * normal.x,
-        y: ellipse.cy + (ellipse.ry + SEAT_GAP_PX) * normal.y,
-        side: getSeatSideFromAngle(normalizedAngle),
-        angle: normalizedAngle
-      };
-    });
-  }
-
-  return seatParams.map((t) => {
-    const point = getRectPointFromT(t, feltBounds);
-    const normal = point.normal;
+  return seatParams.map((param) => {
+    const point = pointFromParam(tableShape, feltBounds, param, SEAT_GAP_PX);
+    const angle = Math.atan2(point.ny, point.nx);
     return {
-      x: point.x + normal.x * SEAT_GAP_PX,
-      y: point.y + normal.y * SEAT_GAP_PX,
-      side: point.side,
-      angle: Math.atan2(normal.y, normal.x)
+      x: point.x,
+      y: point.y,
+      side: getSeatSideFromAngle(angle),
+      angle
     };
   });
 };
@@ -401,20 +282,26 @@ const Table = () => {
     });
   }, [seatCount]);
 
-  const buildDefaultSeatParams = useCallback((count, shape) => {
-    if (shape === 'oval') {
-      return Array.from({ length: count }, (_, index) => (index / count) * TAU);
-    }
-    return Array.from({ length: count }, (_, index) => index / count);
-  }, []);
+  const buildDefaultSeatParams = useCallback(
+    (count) => Array.from({ length: count }, (_, index) => index / count),
+    []
+  );
 
   const normalizeSeatParams = useCallback(
     (params, count, shape) => {
       if (!Array.isArray(params) || params.length !== count) {
         return buildDefaultSeatParams(count, shape);
       }
-      const max = shape === 'oval' ? TAU : 1;
-      return params.map((value) => normalizeParam(value, max));
+      return params.map((value) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) {
+          return 0;
+        }
+        if (shape === 'oval' && Math.abs(numeric) > 1) {
+          return ((numeric / TAU) % 1 + 1) % 1;
+        }
+        return ((numeric % 1) + 1) % 1;
+      });
     },
     [buildDefaultSeatParams]
   );
@@ -535,8 +422,7 @@ const Table = () => {
     const anchors = computeSeatAnchorsFromParams({
       seatParams,
       tableShape,
-      feltBounds: nextFeltBounds,
-      feltEllipse
+      feltBounds: nextFeltBounds
     });
 
     setSeatPositions(
@@ -551,7 +437,7 @@ const Table = () => {
         };
       })
     );
-  }, [feltEllipse, seatParams, seats, tableShape]);
+  }, [seatParams, seats, tableShape]);
 
   const updateTabletopScale = useCallback(() => {
     const frameNode = tableFrameRef.current;
@@ -936,41 +822,19 @@ const Table = () => {
       if (!position) {
         return;
       }
-      if (tableShape === 'oval') {
-        const ellipse = feltEllipse ?? {
-          cx: feltBounds.left + feltBounds.width / 2,
-          cy: feltBounds.top + feltBounds.height / 2,
-          rx: feltBounds.width / 2,
-          ry: feltBounds.height / 2
-        };
-        const angle = Math.atan2(position.y - ellipse.cy, position.x - ellipse.cx);
-        const approxRadius = Math.max(1, (ellipse.rx + ellipse.ry) / 2);
-        const minGapAngle = SEAT_MIN_GAP_PX / approxRadius;
-        // Clamp between neighbors so seat order never swaps and overlaps cannot occur.
-        const clampedAngle = clampSeatParamBetweenNeighbors(
-          normalizeParam(angle, TAU),
-          seatIndex,
-          seatParams,
-          minGapAngle,
-          TAU
-        );
-        updateSeatParam(seatIndex, clampedAngle);
-        return;
-      }
-      const closest = getClosestPointOnRectPerimeter(position, feltBounds);
-      const t = getRectPerimeterT(closest, feltBounds);
-      const minGapT = SEAT_MIN_GAP_PX / getRectPerimeter(feltBounds);
-      // Clamp between neighbors so seat order never swaps and overlaps cannot occur.
-      const clampedT = clampSeatParamBetweenNeighbors(
-        normalizeParam(t, 1),
+      const candidate = paramFromPointer(tableShape, feltBounds, position);
+      const nextParams = [...seatParams];
+      nextParams[seatIndex] = candidate;
+      const clamped = clampParamBetweenNeighbors(
+        nextParams,
         seatIndex,
-        seatParams,
-        minGapT,
-        1
+        SEAT_MIN_GAP_PX,
+        tableShape,
+        feltBounds
       );
-      updateSeatParam(seatIndex, clampedT);
+      updateSeatParam(seatIndex, clamped);
     },
-    [feltBounds, feltEllipse, getTablePointerPosition, seatParams, tableShape, updateSeatParam]
+    [feltBounds, getTablePointerPosition, seatParams, tableShape, updateSeatParam]
   );
 
   const handleSeatPointerDown = useCallback(
