@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Card from './Card.jsx';
+import InventoryPanel from './InventoryPanel.jsx';
+import SeatMenu from './SeatMenu.jsx';
 import { clamp, getFeltEllipseInTableSpace } from '../utils/geometry.js';
 import {
   clampParamBetweenNeighbors,
@@ -14,7 +16,6 @@ import {
 } from '../geometry/feltBounds.js';
 import { useTableState } from '../state/useTableState.js';
 import { loadSettings, saveSettings } from '../state/tableSettings.js';
-import { MOVE_TO_HAND, MOVE_TO_TABLE } from '../state/protocol.js';
 
 const RIGHT_PANEL_SAFE_WIDTH = 340;
 const TABLETOP_MARGIN = 24;
@@ -145,16 +146,29 @@ const Table = () => {
     () => STACK_EPS_BASE * viewTransform.cardScale,
     [viewTransform.cardScale]
   );
+  const seatCount = settings.roomSettings.seatCount;
   const {
     cardsById,
     stacks,
     setStacks,
     createStackId,
-    rebuildTableFromSettings
+    rebuildTableFromSettings,
+    players,
+    seatAssignments,
+    hands,
+    myPlayerId,
+    sitAtSeat,
+    standUp,
+    updatePlayerColors,
+    moveToHand,
+    moveFromHandToTable,
+    reorderHand,
+    toggleReveal
   } = useTableState(
     tableRect,
     cardSize,
-    appliedSettings
+    appliedSettings,
+    seatCount
   );
   const [cardFaceOverrides, setCardFaceOverrides] = useState({});
   const [heldStack, setHeldStack] = useState({
@@ -174,15 +188,9 @@ const Table = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [roomSettingsOpen, setRoomSettingsOpen] = useState(false);
   const [dragSeatIndex, setDragSeatIndex] = useState(null);
-  const [occupiedSeats, setOccupiedSeats] = useState(() => {
-    const initialCount = settings.roomSettings?.seatCount ?? 8;
-    return Array.from({ length: initialCount }, (_, index) => index + 1).reduce(
-      (acc, seatId) => {
-        acc[seatId] = false;
-        return acc;
-      },
-      {}
-    );
+  const [seatMenuState, setSeatMenuState] = useState({
+    seatIndex: null,
+    open: false
   });
   const rafRef = useRef(null);
   const latestPoint = useRef(null);
@@ -278,7 +286,6 @@ const Table = () => {
     tableScaleRef.current = combinedScale;
   }, [combinedScale]);
 
-  const seatCount = settings.roomSettings.seatCount;
   const tableStyle = settings.roomSettings.tableStyle;
   const tableShape = settings.roomSettings.tableShape;
   const [feltBounds, setFeltBounds] = useState(null);
@@ -312,16 +319,6 @@ const Table = () => {
       setDebugClampPoint(null);
     }
   }, [showFeltDebug]);
-
-  useEffect(() => {
-    setOccupiedSeats((prev) => {
-      const next = {};
-      for (let seatId = 1; seatId <= seatCount; seatId += 1) {
-        next[seatId] = prev[seatId] ?? false;
-      }
-      return next;
-    });
-  }, [seatCount]);
 
   const buildDefaultSeatParams = useCallback(
     (count) => Array.from({ length: count }, (_, index) => index / count),
@@ -382,6 +379,7 @@ const Table = () => {
     return Array.from({ length: count }, (_, index) => {
       return {
         id: index + 1,
+        seatIndex: index,
         label: `Seat ${index + 1}`,
         angle: -Math.PI / 2,
         side: 'top'
@@ -394,15 +392,15 @@ const Table = () => {
   );
 
 
-  const playerSeatId = useMemo(() => {
-    const occupiedSeat = Object.entries(occupiedSeats)
-      .find(([, occupied]) => occupied)?.[0];
-    return occupiedSeat ? Number(occupiedSeat) : null;
-  }, [occupiedSeats]);
+  const mySeatIndex = useMemo(
+    () => players[myPlayerId]?.seatIndex ?? null,
+    [myPlayerId, players]
+  );
 
   const handZones = useMemo(() => {
     return seatPositions.map((seat) => ({
       seatId: seat.id,
+      seatIndex: seat.seatIndex,
       x: seat.x - Math.cos(seat.angle) * handZoneSeatOffset,
       y: seat.y - Math.sin(seat.angle) * handZoneSeatOffset,
       width: handZoneSize.width,
@@ -417,7 +415,7 @@ const Table = () => {
       const left = zone.x - zone.width / 2;
       const top = zone.y - zone.height / 2;
       if (x >= left && x <= left + zone.width && y >= top && y <= top + zone.height) {
-        return zone.seatId;
+        return zone.seatIndex;
       }
     }
     return null;
@@ -638,45 +636,9 @@ const Table = () => {
     [cardSize.height, cardSize.width, tableStacks]
   );
 
-  const handStacksBySeat = useMemo(() => {
-    return stacks
-      .filter((stack) => stack.zone === 'hand' && stack.ownerSeatIndex)
-      .reduce((acc, stack) => {
-        const seatId = stack.ownerSeatIndex;
-        if (!acc[seatId]) {
-          acc[seatId] = [];
-        }
-        acc[seatId].push(stack);
-        return acc;
-      }, {});
-  }, [stacks]);
-
-  const ownerHandRenderStacks = useMemo(() => {
-    if (!playerSeatId) {
-      return [];
-    }
-    const ownerStacks = handStacksBySeat[playerSeatId] ?? [];
-    const zone = handZones.find((entry) => entry.seatId === playerSeatId);
-    if (!zone) {
-      return [];
-    }
-    const fanStep = Math.max(16, cardSize.width * 0.35);
-    const startX = zone.x - ((ownerStacks.length - 1) * fanStep) / 2;
-    const y = zone.y - cardSize.height / 2;
-    return ownerStacks.map((stack, index) => ({
-      ...stack,
-      renderX: startX + index * fanStep,
-      renderY: y
-    }));
-  }, [cardSize.height, cardSize.width, handStacksBySeat, handZones, playerSeatId]);
-
   const interactiveStackRects = useMemo(() => {
-    const rects = tableStacks.map((stack) => ({ id: stack.id, x: stack.x, y: stack.y }));
-    ownerHandRenderStacks.forEach((stack) => {
-      rects.push({ id: stack.id, x: stack.renderX, y: stack.renderY });
-    });
-    return rects;
-  }, [ownerHandRenderStacks, tableStacks]);
+    return tableStacks.map((stack) => ({ id: stack.id, x: stack.x, y: stack.y }));
+  }, [tableStacks]);
 
   const hitTestStack = useCallback((pointerX, pointerY) => {
     for (let i = interactiveStackRects.length - 1; i >= 0; i -= 1) {
@@ -947,23 +909,24 @@ const Table = () => {
     setDragSeatIndex(null);
   }, [releaseCapturedPointer]);
 
-  const toggleSeat = useCallback((seatId) => {
-    setOccupiedSeats((prev) => ({
-      ...prev,
-      [seatId]: !prev[seatId]
-    }));
+  const openSeatMenu = useCallback((seatIndex) => {
+    setSeatMenuState({ seatIndex, open: true });
+  }, []);
+
+  const closeSeatMenu = useCallback(() => {
+    setSeatMenuState({ seatIndex: null, open: false });
   }, []);
 
   const handleSeatClick = useCallback(
-    (seatId, seatIndex) => {
+    (seatIndex) => {
       if (seatDragRef.current.moved && seatDragRef.current.seatIndex === seatIndex) {
         seatDragRef.current = { seatIndex: null, moved: false, start: null };
         return;
       }
       seatDragRef.current = { seatIndex: null, moved: false, start: null };
-      toggleSeat(seatId);
+      openSeatMenu(seatIndex);
     },
-    [toggleSeat]
+    [openSeatMenu]
   );
 
   const flushAnimation = useCallback(() => {
@@ -1088,11 +1051,19 @@ const Table = () => {
       }
       setSelectedStackId(null);
       setPickCountOpen(false);
+      closeSeatMenu();
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [heldStack.active, heldStack.origin, heldStack.stackId, setStacks, undoLastOwnMovement]);
+  }, [
+    closeSeatMenu,
+    heldStack.active,
+    heldStack.origin,
+    heldStack.stackId,
+    setStacks,
+    undoLastOwnMovement
+  ]);
 
   const placeHeldStack = useCallback(
     (clientX, clientY) => {
@@ -1120,28 +1091,23 @@ const Table = () => {
         const draggedX = finalX ?? draggedStack?.x ?? heldStack.origin?.x ?? 0;
         const draggedY = finalY ?? draggedStack?.y ?? heldStack.origin?.y ?? 0;
         const pointerPosition = getTablePointerPositionFromClient(clientX, clientY);
-        const handSeatId = pointerPosition
+        const handSeatIndex = pointerPosition
           ? getHandZoneAtPoint(pointerPosition.x, pointerPosition.y)
           : getHandZoneAtPoint(
               draggedX + cardSize.width / 2,
               draggedY + cardSize.height / 2
             );
-        if (handSeatId && playerSeatId && handSeatId === playerSeatId) {
-          const moveIntent = { type: MOVE_TO_HAND, stackId: heldStack.stackId, seatIndex: handSeatId };
-          void moveIntent;
-          applyOwnMovement((prev) =>
-            prev.map((stack) =>
-              stack.id === heldStack.stackId
-                ? {
-                    ...stack,
-                    zone: 'hand',
-                    ownerSeatIndex: handSeatId,
-                    x: undefined,
-                    y: undefined
-                  }
-                : stack
-            )
-          );
+        if (
+          handSeatIndex !== null &&
+          handSeatIndex !== undefined &&
+          mySeatIndex !== null &&
+          handSeatIndex === mySeatIndex
+        ) {
+          const draggedCards = stacksById[heldStack.stackId]?.cardIds ?? [];
+          if (draggedCards.length) {
+            moveToHand(mySeatIndex, draggedCards);
+            applyOwnMovement((prev) => prev.filter((stack) => stack.id !== heldStack.stackId));
+          }
           setHeldStack({
             active: false,
             stackId: null,
@@ -1153,8 +1119,13 @@ const Table = () => {
           });
           return;
         }
-        if (handSeatId && handSeatId !== playerSeatId) {
-          setStacks((prev) =>
+        if (
+          handSeatIndex !== null &&
+          handSeatIndex !== undefined &&
+          mySeatIndex !== null &&
+          handSeatIndex !== mySeatIndex
+        ) {
+          applyOwnMovement((prev) =>
             prev.map((stack) =>
               stack.id === heldStack.stackId
                 ? { ...stack, x: heldStack.origin?.x ?? stack.x, y: heldStack.origin?.y ?? stack.y }
@@ -1208,8 +1179,6 @@ const Table = () => {
               .concat(merged);
           });
         } else if (finalX !== null && finalX !== undefined) {
-          const moveIntent = { type: MOVE_TO_TABLE, stackId: heldStack.stackId, dropX: finalX, dropY: finalY };
-          void moveIntent;
           applyOwnMovement((prev) =>
             prev.map((stack) =>
               stack.id === heldStack.stackId
@@ -1231,18 +1200,19 @@ const Table = () => {
       });
     },
     [
+      applyOwnMovement,
       cardSize.height,
       cardSize.width,
       getDropTransformFromPointer,
       heldStack,
       logPlacementDebug,
-      setStacks,
       showFeltDebug,
       stacks,
       stacksById,
       getHandZoneAtPoint,
       getTablePointerPositionFromClient,
-      playerSeatId
+      moveToHand,
+      mySeatIndex
     ]
   );
 
@@ -1409,6 +1379,94 @@ const Table = () => {
       setStacks,
       showFeltDebug,
       stacks
+    ]
+  );
+
+  const handleInventoryDragStart = useCallback((event, cardId) => {
+    if (!event.dataTransfer) {
+      return;
+    }
+    event.dataTransfer.setData('text/plain', cardId);
+    event.dataTransfer.effectAllowed = 'move';
+  }, []);
+
+  const handleInventoryReorderDrop = useCallback(
+    (draggedId, targetIndex) => {
+      if (mySeatIndex === null || mySeatIndex === undefined) {
+        return;
+      }
+      reorderHand(mySeatIndex, draggedId, targetIndex);
+    },
+    [mySeatIndex, reorderHand]
+  );
+
+  const handleInventoryDropToEnd = useCallback(
+    (draggedId) => {
+      if (mySeatIndex === null || mySeatIndex === undefined) {
+        return;
+      }
+      const seatHandCount = hands?.[mySeatIndex]?.cardIds?.length ?? 0;
+      reorderHand(mySeatIndex, draggedId, seatHandCount);
+    },
+    [hands, mySeatIndex, reorderHand]
+  );
+
+  const handleTableDragOver = useCallback((event) => {
+    if (event.dataTransfer?.types?.includes('text/plain')) {
+      event.preventDefault();
+    }
+  }, []);
+
+  const handleTableDrop = useCallback(
+    (event) => {
+      event.preventDefault();
+      const cardId = event.dataTransfer?.getData('text/plain');
+      if (!cardId || mySeatIndex === null || mySeatIndex === undefined) {
+        return;
+      }
+      const seatHand = hands?.[mySeatIndex]?.cardIds ?? [];
+      if (!seatHand.includes(cardId)) {
+        return;
+      }
+      const pointer = getTablePointerPositionFromClient(event.clientX, event.clientY);
+      if (!pointer) {
+        return;
+      }
+      const handSeatIndex = getHandZoneAtPoint(pointer.x, pointer.y);
+      if (handSeatIndex !== null && handSeatIndex !== undefined) {
+        return;
+      }
+      const rawPlacement = {
+        x: pointer.x - cardSize.width / 2,
+        y: pointer.y - cardSize.height / 2
+      };
+      const clamped = clampTopLeftToFelt(rawPlacement);
+      const placement = clamped.position ?? rawPlacement;
+      moveFromHandToTable(mySeatIndex, cardId);
+      applyOwnMovement((prev) =>
+        prev.concat({
+          id: createStackId(),
+          x: placement.x,
+          y: placement.y,
+          rotation: 0,
+          faceUp: true,
+          cardIds: [cardId],
+          zone: 'table',
+          ownerSeatIndex: null
+        })
+      );
+    },
+    [
+      applyOwnMovement,
+      cardSize.height,
+      cardSize.width,
+      clampTopLeftToFelt,
+      createStackId,
+      getHandZoneAtPoint,
+      getTablePointerPositionFromClient,
+      hands,
+      moveFromHandToTable,
+      mySeatIndex
     ]
   );
 
@@ -1829,6 +1887,7 @@ const Table = () => {
   const handleSurfacePointerDown = useCallback(
     (event) => {
       lastPointerRef.current = { x: event.clientX, y: event.clientY };
+      closeSeatMenu();
       if (event.button === 2) {
         if (heldStack.active) {
           event.preventDefault();
@@ -1872,6 +1931,7 @@ const Table = () => {
       setPickCountOpen(false);
     },
     [
+      closeSeatMenu,
       dealOneFromHeld,
       getTablePointerPosition,
       handleStackPointerDown,
@@ -2004,6 +2064,20 @@ const Table = () => {
     }
   }, [applyOwnMovement, selectedStackId, stacksById]);
 
+  const handleMoveSelectedToHand = useCallback(() => {
+    if (!selectedStackId || mySeatIndex === null || mySeatIndex === undefined) {
+      return;
+    }
+    const selected = stacksById[selectedStackId];
+    if (!selected) {
+      return;
+    }
+    moveToHand(mySeatIndex, selected.cardIds);
+    applyOwnMovement((prev) => prev.filter((stack) => stack.id !== selectedStackId));
+    setSelectedStackId(null);
+    setPickCountOpen(false);
+  }, [applyOwnMovement, moveToHand, mySeatIndex, selectedStackId, stacksById]);
+
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.repeat) {
@@ -2095,6 +2169,24 @@ const Table = () => {
         }
       : null;
   const menuStackCount = selectedStack ? selectedStack.cardIds.length : 0;
+  const seatMenuSeat =
+    seatMenuState.open && seatMenuState.seatIndex !== null
+      ? seatPositions[seatMenuState.seatIndex]
+      : null;
+  const seatMenuPosition =
+    seatMenuSeat && tableScreenRect
+      ? {
+          left: tableScreenRect.left + seatMenuSeat.x * combinedScale,
+          top: tableScreenRect.top + seatMenuSeat.y * combinedScale
+        }
+      : null;
+  const seatMenuPlayerId =
+    seatMenuSeat && seatMenuSeat.seatIndex !== undefined
+      ? seatAssignments[seatMenuSeat.seatIndex]
+      : null;
+  const seatMenuPlayer = seatMenuPlayerId ? players[seatMenuPlayerId] : null;
+  const seatMenuIsMine = seatMenuPlayerId === myPlayerId;
+  const seatMenuIsOccupied = Boolean(seatMenuPlayerId);
   const uiOverlayRoot =
     typeof document !== 'undefined' ? document.getElementById('ui-overlay') : null;
   const dragCardPosition =
@@ -2109,7 +2201,10 @@ const Table = () => {
       <div
         id="sceneRoot"
         ref={sceneRootRef}
-        style={{ '--tableScale': combinedScale }}
+        style={{
+          '--tableScale': combinedScale,
+          '--player-accent': players[myPlayerId]?.accentColor ?? '#efd8a0'
+        }}
       >
         <div
           ref={tableFrameRef}
@@ -2128,31 +2223,33 @@ const Table = () => {
           }}
         >
           <div id="seatLayer" className="table__seats" aria-label="Table seats">
-            {seatPositions.map((seat, i) => {
-              const occupied = occupiedSeats[seat.id];
-              const seatHandCount = (handStacksBySeat[seat.id] ?? []).reduce(
-                (acc, stack) => acc + stack.cardIds.length,
-                0
-              );
+            {seatPositions.map((seat) => {
+              const seatPlayerId = seatAssignments[seat.seatIndex];
+              const seatPlayer = seatPlayerId ? players[seatPlayerId] : null;
+              const occupied = Boolean(seatPlayerId);
+              const isMine = seatPlayerId === myPlayerId;
+              const seatHandCount = hands?.[seat.seatIndex]?.cardIds?.length ?? 0;
               const seatStyle = {
                 left: `${seat.x}px`,
-                top: `${seat.y}px`
+                top: `${seat.y}px`,
+                '--seat-color': seatPlayer?.seatColor ?? null,
+                '--seat-accent': seatPlayer?.accentColor ?? null
               };
               return (
                 <div
                   key={seat.id}
-                  className={`seat seat--${seat.side} ${occupied ? 'seat--occupied' : ''} ${seatHandCount ? 'seat--has-cards' : ''} ${dragSeatIndex === i ? 'seat--dragging' : ''}`}
-                  data-seat-index={i}
+                  className={`seat seat--${seat.side} ${occupied ? 'seat--occupied' : ''} ${isMine ? 'seat--mine' : ''} ${seatHandCount ? 'seat--has-cards' : ''} ${dragSeatIndex === seat.seatIndex ? 'seat--dragging' : ''}`}
+                  data-seat-index={seat.seatIndex}
                   style={seatStyle}
-                  onClick={() => handleSeatClick(seat.id, i)}
+                  onClick={() => handleSeatClick(seat.seatIndex)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
-                      handleSeatClick(seat.id, i);
+                      handleSeatClick(seat.seatIndex);
                     }
                   }}
-                  onPointerDown={(event) => handleSeatPointerDown(event, i)}
-                  onPointerMove={(event) => handleSeatPointerMove(event, i)}
+                  onPointerDown={(event) => handleSeatPointerDown(event, seat.seatIndex)}
+                  onPointerMove={(event) => handleSeatPointerMove(event, seat.seatIndex)}
                   onPointerUp={handleSeatPointerUp}
                   onPointerCancel={handleSeatPointerUp}
                   role="button"
@@ -2160,9 +2257,9 @@ const Table = () => {
                 >
                   <div className="seat__base" />
                   <div className="seat__bench">
-                    <div className="seat__label">SEAT {i + 1}</div>
+                    <div className="seat__label">{seat.label.toUpperCase()}</div>
 
-                    <div className="seat__hand" aria-label={`Seat ${i + 1} hand zone`}>
+                    <div className="seat__hand" aria-label={`${seat.label} hand zone`}>
                       {/* hand contents render here if needed */}
                     </div>
 
@@ -2179,6 +2276,8 @@ const Table = () => {
               onPointerDown={handleSurfacePointerDown}
               onPointerMove={handleSurfacePointerMove}
               onContextMenu={(event) => event.preventDefault()}
+              onDragOver={handleTableDragOver}
+              onDrop={handleTableDrop}
             >
               <div
                 ref={feltRef}
@@ -2230,11 +2329,15 @@ const Table = () => {
                 </svg>
               ) : null}
               {handZones.map((zone) => {
-                const isOwnerZone = playerSeatId === zone.seatId;
-                const isDragHover = heldStack.active && hoverHandSeatId === zone.seatId;
+                const isOwnerZone = mySeatIndex === zone.seatIndex;
+                const isDragHover = heldStack.active && hoverHandSeatId === zone.seatIndex;
                 const isValidDropZone = isDragHover && isOwnerZone;
                 const isInvalidDropZone =
-                  isDragHover && playerSeatId !== null && zone.seatId !== playerSeatId;
+                  isDragHover && mySeatIndex !== null && zone.seatIndex !== mySeatIndex;
+                const seatHand = hands?.[zone.seatIndex] ?? { cardIds: [], revealed: {} };
+                const count = seatHand.cardIds.length;
+                const seatPlayerId = seatAssignments[zone.seatIndex];
+                const seatPlayer = seatPlayerId ? players[seatPlayerId] : null;
                 return (
                   <div
                     key={`hand-zone-${zone.seatId}`}
@@ -2244,65 +2347,74 @@ const Table = () => {
                       top: `${zone.y}px`,
                       width: `${zone.width}px`,
                       height: `${zone.height}px`,
-                      '--zone-rotation': `${zone.angle + Math.PI / 2}rad`
-                    }}
-                  />
-                );
-              })}
-              {(playerSeatId ? ownerHandRenderStacks : []).map((stack, index) => {
-                const topCardId = stack.cardIds[stack.cardIds.length - 1];
-                const topCard = cardsById[topCardId];
-                const isHeld = heldStack.active && stack.id === heldStack.stackId;
-                if (isHeld && heldStackData) {
-                  return null;
-                }
-                return (
-                  <div
-                    key={`hand-stack-${stack.id}`}
-                    className="stack-entity"
-                    style={{
-                      transform: `translate(${stack.renderX}px, ${stack.renderY}px) rotate(${stack.rotation}deg)`,
-                      zIndex: 120 + index
+                      '--zone-rotation': `${zone.angle + Math.PI / 2}rad`,
+                      '--seat-color': seatPlayer?.seatColor ?? null,
+                      '--seat-accent': seatPlayer?.accentColor ?? null
                     }}
                   >
-                    <Card
-                      id={stack.id}
-                      x={0}
-                      y={0}
-                      rotation={0}
-                      faceUp={getCardFace(stack, topCardId)}
-                      cardStyle={appliedSettings.cardStyle}
-                      zIndex={1}
-                      rank={topCard?.rank}
-                      suit={topCard?.suit}
-                      color={topCard?.color}
-                      isHeld={isHeld}
-                      isSelected={stack.id === selectedStackId}
-                      onPointerDown={handleStackPointerDown}
-                      onDoubleClick={handleStackDoubleClick}
-                    />
+                    <div className="hand-zone__count">
+                      Hand {count ? `(${count})` : ''}
+                    </div>
                   </div>
                 );
               })}
-              {handZones
-                .filter((zone) => zone.seatId !== playerSeatId)
-                .map((zone) => {
-                  const seatStacks = handStacksBySeat[zone.seatId] ?? [];
-                  const count = seatStacks.reduce((acc, stack) => acc + stack.cardIds.length, 0);
-                  if (!count) {
-                    return null;
-                  }
-                  return (
-                    <div
-                      key={`hand-proxy-${zone.seatId}`}
-                      className="hand-proxy"
-                      style={{ left: `${zone.x}px`, top: `${zone.y}px` }}
-                    >
-                      <div className="hand-proxy__cards" />
-                      <div className="hand-proxy__count">{count}</div>
-                    </div>
-                  );
-                })}
+              {handZones.map((zone) => {
+                const seatHand = hands?.[zone.seatIndex] ?? { cardIds: [], revealed: {} };
+                const count = seatHand.cardIds.length;
+                const isOwnerZone = mySeatIndex === zone.seatIndex;
+                const revealedIds = seatHand.cardIds.filter(
+                  (cardId) => seatHand.revealed?.[cardId]
+                );
+                if (!count && revealedIds.length === 0) {
+                  return null;
+                }
+                return (
+                  <div key={`hand-visual-${zone.seatId}`}>
+                    {!isOwnerZone && count ? (
+                      <div
+                        className="hand-proxy"
+                        style={{ left: `${zone.x}px`, top: `${zone.y}px` }}
+                      >
+                        <div className="hand-proxy__cards" />
+                        <div className="hand-proxy__count">{count}</div>
+                      </div>
+                    ) : null}
+                    {revealedIds.length ? (
+                      <div
+                        className="hand-reveal"
+                        style={{ left: `${zone.x}px`, top: `${zone.y}px` }}
+                      >
+                        {revealedIds.map((cardId, index) => {
+                          const card = cardsById[cardId];
+                          return (
+                            <div
+                              key={`hand-reveal-${zone.seatId}-${cardId}`}
+                              className="hand-reveal__card"
+                              style={{
+                                transform: `translate(${index * cardSize.width * 0.35}px, 0)`
+                              }}
+                            >
+                              <Card
+                                id={`reveal-${cardId}`}
+                                x={0}
+                                y={0}
+                                rotation={0}
+                                faceUp
+                                cardStyle={appliedSettings.cardStyle}
+                                zIndex={1}
+                                rank={card?.rank}
+                                suit={card?.suit}
+                                color={card?.color}
+                                onPointerDown={() => {}}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
 
               {placementGhost ? (
                 <div
@@ -2359,11 +2471,24 @@ const Table = () => {
                 );
               })}
             </div>
-          </div>
         </div>
-        {heldStackData && uiOverlayRoot && dragCardPosition
-          ? createPortal(
-              <div
+      </div>
+      {mySeatIndex !== null ? (
+        <InventoryPanel
+          cardIds={hands?.[mySeatIndex]?.cardIds ?? []}
+          cardsById={cardsById}
+          revealed={hands?.[mySeatIndex]?.revealed ?? {}}
+          onToggleReveal={(cardId) => toggleReveal(mySeatIndex, cardId)}
+          onCardDragStart={handleInventoryDragStart}
+          onCardDrop={handleInventoryReorderDrop}
+          onDropToEnd={handleInventoryDropToEnd}
+          accentColor={players[myPlayerId]?.accentColor}
+          cardStyle={appliedSettings.cardStyle}
+        />
+      ) : null}
+      {heldStackData && uiOverlayRoot && dragCardPosition
+        ? createPortal(
+            <div
                 className="drag-layer"
                 aria-hidden="true"
                 style={{ '--card-scale': viewTransform.cardScale * combinedScale }}
@@ -2740,6 +2865,15 @@ const Table = () => {
                   </div>
                 </div>
               ) : null}
+              {mySeatIndex !== null ? (
+                <button
+                  type="button"
+                  className="stack-menu__button"
+                  onClick={handleMoveSelectedToHand}
+                >
+                  Move to Hand
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="stack-menu__button"
@@ -2754,6 +2888,40 @@ const Table = () => {
               >
                 Shuffle
               </button>
+            </div>,
+            uiOverlayRoot
+          )
+        : null}
+      {seatMenuSeat && seatMenuPosition && uiOverlayRoot
+        ? createPortal(
+            <div
+              className="seat-menu__wrapper"
+              style={{
+                left: `${seatMenuPosition.left}px`,
+                top: `${seatMenuPosition.top}px`
+              }}
+            >
+              <SeatMenu
+                seatLabel={seatMenuSeat.label}
+                isMine={seatMenuIsMine}
+                isOccupied={seatMenuIsOccupied}
+                seatColor={
+                  seatMenuPlayer?.seatColor ?? players[myPlayerId]?.seatColor ?? '#6a8dff'
+                }
+                accentColor={
+                  seatMenuPlayer?.accentColor ?? players[myPlayerId]?.accentColor ?? '#f5b96c'
+                }
+                onSit={() => {
+                  sitAtSeat(seatMenuSeat.seatIndex);
+                  closeSeatMenu();
+                }}
+                onStand={() => {
+                  standUp();
+                  closeSeatMenu();
+                }}
+                onUpdateColors={updatePlayerColors}
+                onClose={closeSeatMenu}
+              />
             </div>,
             uiOverlayRoot
           )
