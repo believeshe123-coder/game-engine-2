@@ -1070,6 +1070,32 @@ const Table = () => {
     rafRef.current = null;
   }, [heldStack.active, heldStack.stackId, setStacks]);
 
+  const getPointerPositionForHold = useCallback(
+    (pointerEvent, fallbackStack) => {
+      const pointerPosition = pointerEvent
+        ? getTablePointerPosition(pointerEvent)
+        : getTablePointerPositionFromClient(
+            lastPointerRef.current.x,
+            lastPointerRef.current.y
+          );
+      if (!pointerPosition || !fallbackStack) {
+        return { pointerPosition: null, isOverStack: false };
+      }
+      const isOverStack =
+        pointerPosition.x >= fallbackStack.x &&
+        pointerPosition.x <= fallbackStack.x + cardSize.width &&
+        pointerPosition.y >= fallbackStack.y &&
+        pointerPosition.y <= fallbackStack.y + cardSize.height;
+      return { pointerPosition, isOverStack };
+    },
+    [
+      cardSize.height,
+      cardSize.width,
+      getTablePointerPosition,
+      getTablePointerPositionFromClient
+    ]
+  );
+
   const getDropTransformFromPointer = useCallback(
     (clientX, clientY, heldStackState, options = {}) => {
       const { sweepDirection = null, applySweepSpacing = false } = options;
@@ -1668,8 +1694,21 @@ const Table = () => {
           );
           const elapsed = now - sweep.lastDropAtMs;
           if (distance >= SWEEP_MIN_DIST && elapsed >= SWEEP_MIN_INTERVAL_MS) {
+            const directionLength = Math.hypot(
+              sweepPointer.x - lastPos.x,
+              sweepPointer.y - lastPos.y
+            );
+            const sweepDirection =
+              directionLength > 0
+                ? {
+                    x: (sweepPointer.x - lastPos.x) / directionLength,
+                    y: (sweepPointer.y - lastPos.y) / directionLength
+                  }
+                : null;
             dealOneFromHeld(lastPointerRef.current.x, lastPointerRef.current.y, {
-              skipMerge: true
+              skipMerge: true,
+              applySweepSpacing: true,
+              sweepDirection
             });
             sweep.lastDropAtMs = now;
             sweep.lastDropPos = sweepPointer;
@@ -1743,16 +1782,12 @@ const Table = () => {
     }
   }, [pickCountOpen, resetRightSweep, roomSettingsOpen, settingsOpen]);
 
-  const startHeldTopCard = useCallback(
+  const startHeldStack = useCallback(
     (stackId, pointerX, pointerY) => {
       const stack = stacksById[stackId];
-      const topCardId = stack?.cardIds?.length
-        ? stack.cardIds[stack.cardIds.length - 1]
-        : null;
-      if (!stack || !topCardId) {
+      if (!stack || !stack.cardIds.length) {
         return;
       }
-      const heldStackId = createStackId();
       const offset = {
         dx: pointerX - stack.x,
         dy: pointerY - stack.y
@@ -1761,40 +1796,17 @@ const Table = () => {
       const originX = visualStack?.x ?? stack.x ?? 0;
       const originY = visualStack?.y ?? stack.y ?? 0;
       latestPoint.current = { x: originX, y: originY };
-      applyOwnMovement((prev) => {
-        const current = prev.find((item) => item.id === stackId);
-        if (!current) {
-          return prev;
-        }
-        const nextCardIds = current.cardIds.slice(0, -1);
-        const next = prev
-          .map((item) =>
-            item.id === stackId ? { ...item, cardIds: nextCardIds } : item
-          )
-          .filter((item) => item.id !== stackId || item.cardIds.length > 0);
-        next.push({
-          id: heldStackId,
-          x: originX,
-          y: originY,
-          rotation: current.rotation,
-          faceUp: getCardFace(current, topCardId),
-          cardIds: [topCardId],
-          zone: 'table',
-          ownerSeatIndex: null
-        });
-        return next;
-      });
       setHeldStack({
         active: true,
-        stackId: heldStackId,
-        cardIds: [topCardId],
-        sourceStackId: stackId,
+        stackId,
+        cardIds: [...stack.cardIds],
+        sourceStackId: null,
         offset,
         origin: { x: originX, y: originY },
         mode: 'stack'
       });
     },
-    [applyOwnMovement, createStackId, getCardFace, interactiveStackRects, stacksById]
+    [interactiveStackRects, stacksById]
   );
 
   useEffect(() => {
@@ -1829,7 +1841,7 @@ const Table = () => {
       setSelectedStackId(null);
       setPickCountOpen(false);
       bringStackToFront(pending.stackId);
-      startHeldTopCard(pending.stackId, pointerX, pointerY);
+      startHeldStack(pending.stackId, pointerX, pointerY);
     };
 
     const handlePendingPointerUp = (event) => {
@@ -1874,7 +1886,7 @@ const Table = () => {
     getTablePointerPosition,
     pendingDragActive,
     releaseCapturedPointer,
-    startHeldTopCard
+    startHeldStack
   ]);
 
   const pickUpStack = useCallback(
@@ -1887,15 +1899,24 @@ const Table = () => {
       if (!source) {
         return;
       }
+      const { pointerPosition, isOverStack } = getPointerPositionForHold(
+        pointerEvent,
+        source
+      );
       const clampedCount = Math.max(1, Math.min(requestedCount, source.cardIds.length));
       const newStackId = createStackId();
       let pickedCardIds = [];
       let origin = null;
       let heldPosition = null;
-      const position = pointerEvent ? getTablePointerPosition(pointerEvent) : null;
-      const offset = { dx: cardSize.width / 2, dy: cardSize.height / 2 };
-      if (position) {
-        heldPosition = getHeldTopLeft(position.x, position.y, offset);
+      const offset =
+        pointerPosition && isOverStack
+          ? {
+              dx: pointerPosition.x - source.x,
+              dy: pointerPosition.y - source.y
+            }
+          : { dx: cardSize.width / 2, dy: cardSize.height / 2 };
+      if (pointerPosition && isOverStack) {
+        heldPosition = getHeldTopLeft(pointerPosition.x, pointerPosition.y, offset);
       }
 
       applyOwnMovement((prev) => {
@@ -1950,7 +1971,7 @@ const Table = () => {
       cardSize.width,
       createStackId,
       getHeldTopLeft,
-      getTablePointerPosition,
+      getPointerPositionForHold,
       stacksById
     ]
   );
@@ -2677,6 +2698,7 @@ const Table = () => {
                       isSelected={stack.id === selectedStackId}
                       onPointerDown={handleStackPointerDown}
                       onDoubleClick={handleStackDoubleClick}
+                      onContextMenu={(event) => event.preventDefault()}
                     />
                     {showBadge ? (
                       <div className="stackCountBadge">Stack: {stack.cardIds.length}</div>
@@ -2721,6 +2743,7 @@ const Table = () => {
                   isHeld
                   isSelected={false}
                   onPointerDown={handleStackPointerDown}
+                  onContextMenu={(event) => event.preventDefault()}
                 />
               </div>,
               uiOverlayRoot
