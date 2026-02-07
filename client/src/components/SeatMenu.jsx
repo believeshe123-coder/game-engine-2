@@ -1,17 +1,16 @@
-import { useState } from 'react';
-
 const SeatMenu = ({
   seatLabel,
   isMine,
   isOccupied,
+  playerName,
   seatColor,
   accentColor,
   onSit,
   onStand,
+  onUpdateName,
   onUpdateColors,
   onClose
 }) => {
-  const [showSettings, setShowSettings] = useState(true);
   return (
     <div className="seat-menu" onPointerDown={(event) => event.stopPropagation()}>
       <div className="seat-menu__header">
@@ -43,44 +42,46 @@ const SeatMenu = ({
             Stand Up
           </button>
         ) : null}
-        {isOccupied && isMine ? (
-          <button
-            type="button"
-            className="seat-menu__button"
-            onClick={() => setShowSettings((prev) => !prev)}
-          >
-            Seat Settings
-          </button>
-        ) : null}
       </div>
-      {isOccupied && isMine && showSettings ? (
-        <div className="seat-menu__settings">
-          <div className="seat-menu__setting">
-            <label className="seat-menu__label" htmlFor="seat-color">
-              Seat color
-            </label>
-            <input
-              id="seat-color"
-              className="seat-menu__color"
-              type="color"
-              value={seatColor}
-              onChange={(event) => onUpdateColors?.({ seatColor: event.target.value })}
-            />
-          </div>
-          <div className="seat-menu__setting">
-            <label className="seat-menu__label" htmlFor="accent-color">
-              Highlight color
-            </label>
-            <input
-              id="accent-color"
-              className="seat-menu__color"
-              type="color"
-              value={accentColor}
-              onChange={(event) => onUpdateColors?.({ accentColor: event.target.value })}
-            />
-          </div>
+      <div className="seat-menu__settings">
+        <div className="seat-menu__setting seat-menu__setting--stacked">
+          <label className="seat-menu__label" htmlFor="player-name">
+            Name
+          </label>
+          <input
+            id="player-name"
+            className="seat-menu__input"
+            type="text"
+            maxLength={20}
+            value={playerName}
+            onChange={(event) => onUpdateName?.(event.target.value)}
+          />
         </div>
-      ) : null}
+        <div className="seat-menu__setting">
+          <label className="seat-menu__label" htmlFor="seat-color">
+            Seat color
+          </label>
+          <input
+            id="seat-color"
+            className="seat-menu__color"
+            type="color"
+            value={seatColor}
+            onChange={(event) => onUpdateColors?.({ seatColor: event.target.value })}
+          />
+        </div>
+        <div className="seat-menu__setting">
+          <label className="seat-menu__label" htmlFor="accent-color">
+            Highlight color
+          </label>
+          <input
+            id="accent-color"
+            className="seat-menu__color"
+            type="color"
+            value={accentColor}
+            onChange={(event) => onUpdateColors?.({ accentColor: event.target.value })}
+          />
+        </div>
+      </div>
       <div className="seat-menu__footer">
         <button type="button" className="seat-menu__link" onClick={onClose}>
           Close

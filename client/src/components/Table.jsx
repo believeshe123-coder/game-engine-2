@@ -163,6 +163,7 @@ const Table = () => {
     presence,
     sitAtSeat,
     standUp,
+    setPlayerName,
     setSeatColor,
     setAccentColor,
     logAction,
@@ -2611,7 +2612,7 @@ const Table = () => {
                     key={`cursor-${playerId}`}
                     ghost={ghost}
                     label={presencePlayer?.name ?? 'Player'}
-                    accentColor={presencePlayer?.accentColor ?? '#f5b96c'}
+                    accentColor={presencePlayer?.accentColor ?? '#ffd36a'}
                   />
                 );
               })}
@@ -3146,11 +3147,12 @@ const Table = () => {
                 seatLabel={seatMenuSeat.label}
                 isMine={seatMenuIsMine}
                 isOccupied={seatMenuIsOccupied}
+                playerName={players[myPlayerId]?.name ?? 'Player'}
                 seatColor={
-                  seatMenuPlayer?.seatColor ?? players[myPlayerId]?.seatColor ?? '#6a8dff'
+                  seatMenuPlayer?.seatColor ?? players[myPlayerId]?.seatColor ?? '#6aa9ff'
                 }
                 accentColor={
-                  seatMenuPlayer?.accentColor ?? players[myPlayerId]?.accentColor ?? '#f5b96c'
+                  seatMenuPlayer?.accentColor ?? players[myPlayerId]?.accentColor ?? '#ffd36a'
                 }
                 onSit={() => {
                   sitAtSeat(seatMenuSeat.seatIndex);
@@ -3170,6 +3172,7 @@ const Table = () => {
                     setAccentColor(colors.accentColor);
                   }
                 }}
+                onUpdateName={setPlayerName}
                 onClose={closeSeatMenu}
               />
             </div>,
