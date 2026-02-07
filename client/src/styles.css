@@ -565,6 +565,52 @@ body,
   width: calc(var(--card-base-width) * var(--card-scale));
   height: calc(var(--card-base-height) * var(--card-scale));
   transform-origin: top left;
+  overflow: visible;
+}
+
+.stack-entity::after {
+  content: '';
+  position: absolute;
+  inset: calc(-6px * var(--card-scale));
+  border-radius: calc(14px * var(--card-scale));
+  border: 2px solid transparent;
+  box-shadow: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  z-index: 2;
+}
+
+.stack-entity.selected::after,
+.stack-entity.menu-target::after {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--player-accent, #efd8a0) 70%, #ffffff);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--player-accent, #efd8a0) 65%, transparent),
+    0 0 18px color-mix(in srgb, var(--player-accent, #efd8a0) 70%, transparent);
+}
+
+.stack-entity.hovered::after {
+  opacity: 1;
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
+}
+
+.stack-entity.held::after {
+  opacity: 1;
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--player-accent, #efd8a0) 80%, #ffffff);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--player-accent, #efd8a0) 70%, transparent),
+    0 0 20px color-mix(in srgb, var(--player-accent, #efd8a0) 80%, transparent);
+}
+
+.stack-entity.merge-target::after {
+  opacity: 1;
+  border-color: rgba(132, 253, 197, 0.85);
+  box-shadow:
+    0 0 0 2px rgba(132, 253, 197, 0.65),
+    0 0 18px rgba(62, 222, 152, 0.6);
 }
 
 .stackCountBadge {
@@ -747,6 +793,9 @@ body,
     calc(8px * var(--card-scale))
     rgba(0, 0, 0, 0.45)
   );
+  outline: calc(2px * var(--card-scale)) dashed
+    color-mix(in srgb, var(--player-accent, #efd8a0) 75%, #ffffff);
+  outline-offset: calc(2px * var(--card-scale));
 }
 
 .card__surface {
@@ -1250,10 +1299,6 @@ body,
     0 6px 14px rgba(0, 0, 0, 0.24);
 }
 
-.stack-entity--merge-target .card {
-  box-shadow: 0 0 0 2px rgba(132, 253, 197, 0.75), 0 0 18px rgba(62, 222, 152, 0.65);
-  border-radius: calc(12px * var(--card-scale));
-}
 
 .hand-proxy {
   position: absolute;
