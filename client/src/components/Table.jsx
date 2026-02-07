@@ -748,6 +748,30 @@ const Table = () => {
     }, {});
   }, [stacks]);
 
+  useEffect(() => {
+    if (!interaction.selectedStackId) {
+      return;
+    }
+    if (stacksById[interaction.selectedStackId]) {
+      return;
+    }
+    setInteraction((prev) => ({
+      ...prev,
+      selectedStackId: null,
+      menu: { ...prev.menu, open: false, stackId: null }
+    }));
+  }, [interaction.selectedStackId, setInteraction, stacksById]);
+
+  useEffect(() => {
+    if (!hoveredStackId) {
+      return;
+    }
+    if (stacksById[hoveredStackId]) {
+      return;
+    }
+    setHoveredStackId(null);
+  }, [hoveredStackId, stacksById]);
+
   const tableStacks = useMemo(
     () => stacks.filter((stack) => (stack.zone ?? 'table') === 'table'),
     [stacks]
@@ -1016,8 +1040,9 @@ const Table = () => {
     }
   }, []);
 
-  const clearInteraction = useCallback(() => {
+  const clearInteraction = useCallback((options = {}) => {
     clearRmbHoldTimer();
+    const { nextSelectedStackId = null, preserveSelection = true } = options;
     setInteraction((prev) => ({
       ...prev,
       mode: 'idle',
@@ -1026,7 +1051,9 @@ const Table = () => {
       held: null,
       drag: null,
       ...defaultRmbState,
-      selectedStackId: null,
+      selectedStackId: preserveSelection
+        ? nextSelectedStackId ?? prev.selectedStackId
+        : nextSelectedStackId,
       menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
     }));
   }, [clearRmbHoldTimer, defaultRmbState]);
@@ -1035,8 +1062,7 @@ const Table = () => {
     setPickCountOpen(false);
     setInteraction((prev) => ({
       ...prev,
-      menu: { ...prev.menu, open: false, stackId: null },
-      selectedStackId: null
+      menu: { ...prev.menu, open: false, stackId: null }
     }));
   }, []);
 
@@ -1140,7 +1166,10 @@ const Table = () => {
             originXY: { x: originX, y: originY }
           },
           ...defaultRmbState,
-          selectedStackId: null,
+          selectedStackId:
+            remaining.length === 0 && prevInteraction.selectedStackId === stackId
+              ? null
+              : prevInteraction.selectedStackId,
           menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
         }));
         return prev
@@ -1175,7 +1204,6 @@ const Table = () => {
           originXY: { x: stack.x, y: stack.y }
         },
         ...defaultRmbState,
-        selectedStackId: null,
         menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
       }));
     },
@@ -1263,7 +1291,7 @@ const Table = () => {
         pushAction(
           `${myName} moved ${held.cardIds.length} ${held.cardIds.length === 1 ? 'card' : 'cards'} to hand`
         );
-        clearInteraction();
+        clearInteraction({ preserveSelection: false });
         return;
       }
       if (
@@ -1288,6 +1316,15 @@ const Table = () => {
           };
           return prev.filter((stack) => stack.id !== overlapId).concat(merged);
         });
+        clearInteraction({
+          preserveSelection: true,
+          nextSelectedStackId:
+            interaction.selectedStackId === held.origin?.stackId ||
+            interaction.selectedStackId === held.stackId
+              ? overlapId
+              : interaction.selectedStackId
+        });
+        return;
       } else {
         setStacks((prev) =>
           prev.concat({
@@ -1302,7 +1339,7 @@ const Table = () => {
           })
         );
       }
-      clearInteraction();
+      clearInteraction({ preserveSelection: true });
     },
     [
       cardSize.height,
@@ -1314,6 +1351,7 @@ const Table = () => {
       getHeldTopLeft,
       interaction.drag,
       interaction.held,
+      interaction.selectedStackId,
       moveToHand,
       myName,
       mySeatIndex,
@@ -1331,7 +1369,7 @@ const Table = () => {
       const draggedId = interaction.drag.stackId;
       const draggedStack = stacksById[draggedId];
       if (!draggedStack) {
-        clearInteraction();
+        clearInteraction({ preserveSelection: false });
         return;
       }
       const placement = { x: draggedStack.x, y: draggedStack.y };
@@ -1366,14 +1404,22 @@ const Table = () => {
               : stack
           )
         );
-        clearInteraction();
+        clearInteraction({ preserveSelection: true });
         return;
       }
       const overlapId = findTableOverlapStackId(placement.x, placement.y, draggedId);
       if (overlapId) {
         mergeStacks(draggedId, overlapId);
+        clearInteraction({
+          preserveSelection: true,
+          nextSelectedStackId:
+            interaction.selectedStackId === draggedId
+              ? overlapId
+              : interaction.selectedStackId
+        });
+        return;
       }
-      clearInteraction();
+      clearInteraction({ preserveSelection: true });
     },
     [
       cardSize.height,
@@ -1383,6 +1429,7 @@ const Table = () => {
       getHandZoneAtPoint,
       interaction.drag,
       interaction.mode,
+      interaction.selectedStackId,
       mergeStacks,
       moveToHand,
       myName,
@@ -1407,7 +1454,7 @@ const Table = () => {
       return;
     }
     pointerDownRef.current = null;
-    clearInteraction();
+    clearInteraction({ preserveSelection: true });
   }, [clearInteraction, interaction.drag, interaction.held, interaction.mode, restoreHeldToOrigin, setStacks]);
 
   const placeOneFromHeld = useCallback(
@@ -1427,7 +1474,7 @@ const Table = () => {
       const remaining = [...interaction.held.cardIds];
       const placedCard = remaining.pop();
       if (!placedCard) {
-        clearInteraction();
+        clearInteraction({ preserveSelection: true });
         return;
       }
       const placedStackId = createStackId();
@@ -1457,7 +1504,7 @@ const Table = () => {
       });
       pushAction(`${myName} placed 1 card`);
       if (remaining.length === 0) {
-        clearInteraction();
+        clearInteraction({ preserveSelection: true });
       } else {
         setInteraction((prev) => ({
           ...prev,
@@ -1568,7 +1615,7 @@ const Table = () => {
       }
 
       if (placements.length === 0) {
-        clearInteraction();
+        clearInteraction({ preserveSelection: true });
         return;
       }
 
@@ -1576,7 +1623,7 @@ const Table = () => {
       pushAction(`${myName} placed ${placements.length} card${placements.length === 1 ? '' : 's'}`);
 
       if (remaining.length === 0) {
-        clearInteraction();
+        clearInteraction({ preserveSelection: true });
       } else {
         const carryRemainder = Math.max(
           0,
@@ -2223,7 +2270,7 @@ const Table = () => {
     settings.stackCountDisplayMode === 'hover' ? hoveredStackId : null;
 
   const resetInteractionStates = useCallback(() => {
-    clearInteraction();
+    clearInteraction({ preserveSelection: false });
     setHoveredStackId(null);
     setPickCountOpen(false);
     setPickCountValue('1');
@@ -2637,9 +2684,25 @@ const Table = () => {
               {tableStacks.map((stack, index) => {
                 const topCardId = stack.cardIds[stack.cardIds.length - 1];
                 const topCard = cardsById[topCardId];
-                const isHeld =
+                const isSelectedStack = stack.id === interaction.selectedStackId;
+                const isHeldStack =
                   interaction.mode === 'dragStack' &&
                   interaction.drag?.stackId === stack.id;
+                const isHoveredStack = stack.id === hoveredStackId;
+                const isMenuTarget =
+                  interaction.menu.open && interaction.menu.stackId === stack.id;
+                const isMergeTarget = stack.id === mergeHighlightStackId;
+                const highlightState = isHeldStack
+                  ? 'held'
+                  : isSelectedStack
+                    ? 'selected'
+                    : isMenuTarget
+                      ? 'menu-target'
+                      : isHoveredStack
+                        ? 'hovered'
+                        : isMergeTarget
+                          ? 'merge-target'
+                          : '';
                 const zIndex = index + 1;
                 const showBadge =
                   stack.cardIds.length > 1 &&
@@ -2649,7 +2712,12 @@ const Table = () => {
                 return (
                   <div
                     key={stack.id}
-                    className={`stack-entity ${stack.id === mergeHighlightStackId ? 'stack-entity--merge-target' : ''}`}
+                    className={`stack-entity ${highlightState}`}
+                    data-selected={isSelectedStack}
+                    data-held={isHeldStack}
+                    data-hovered={isHoveredStack}
+                    data-menu-target={isMenuTarget}
+                    data-merge-target={isMergeTarget}
                     style={{
                       transform: `translate(${stack.x}px, ${stack.y}px) rotate(${stack.rotation}deg)`,
                       zIndex
@@ -2666,8 +2734,8 @@ const Table = () => {
                       rank={topCard?.rank}
                       suit={topCard?.suit}
                       color={topCard?.color}
-                      isHeld={isHeld}
-                      isSelected={stack.id === interaction.selectedStackId}
+                      isHeld={false}
+                      isSelected={false}
                       onPointerDown={() => {}}
                       onDoubleClick={handleStackDoubleClick}
                       onContextMenu={(event) => event.preventDefault()}
