@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clampStackToFelt, getFeltShape } from '../utils/geometry.js';
 import { DEFAULT_SETTINGS, normalizeSettings } from './tableSettings.js';
-import { loadPlayerProfile, savePlayerProfile } from './playerProfile.js';
+import {
+  loadMySeatIndex,
+  loadPlayerProfile,
+  saveMySeatIndex,
+  savePlayerProfile
+} from './playerProfile.js';
 
 const SUITS = [
   { id: 'S', name: 'Spades' },
@@ -10,6 +15,16 @@ const SUITS = [
   { id: 'D', name: 'Diamonds' }
 ];
 const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+const MAX_NAME_LENGTH = 20;
+const FALLBACK_NAME = 'Player';
+
+const normalizeName = (value) => {
+  if (typeof value !== 'string') {
+    return FALLBACK_NAME;
+  }
+  const trimmed = value.trim().slice(0, MAX_NAME_LENGTH);
+  return trimmed || FALLBACK_NAME;
+};
 
 const createDeck = ({ includeJokers, deckIndex }) => {
   const cards = [];
@@ -228,15 +243,20 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
   const initializedRef = useRef(false);
   const nextStackIdRef = useRef(21);
   const initialProfile = useMemo(() => loadPlayerProfile(), []);
-  const playerIdRef = useRef(initialProfile.playerId);
+  const playerIdRef = useRef(initialProfile.id);
+  const initialSeatIndex = useMemo(() => {
+    const count = seatCount ?? DEFAULT_SETTINGS.roomSettings.seatCount;
+    const stored = loadMySeatIndex();
+    return Number.isFinite(stored) && stored >= 0 && stored < count ? stored : null;
+  }, [seatCount]);
   const [actionLog, setActionLog] = useState([]);
   const actionLogIdRef = useRef(1);
   const [presence, setPresence] = useState(() => ({}));
   const [players, setPlayers] = useState(() => ({
     [playerIdRef.current]: {
       id: playerIdRef.current,
-      name: 'Leahana',
-      seatIndex: initialProfile.mySeatIndex ?? null,
+      name: initialProfile.name,
+      seatIndex: initialSeatIndex,
       seatColor: initialProfile.seatColor,
       accentColor: initialProfile.accentColor
     }
@@ -244,7 +264,7 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
   const [seatAssignments, setSeatAssignments] = useState(() => {
     const count = seatCount ?? DEFAULT_SETTINGS.roomSettings.seatCount;
     return Array.from({ length: count }, (_, index) =>
-      index === initialProfile.mySeatIndex ? playerIdRef.current : null
+      index === initialSeatIndex ? playerIdRef.current : null
     );
   });
   const [hands, setHands] = useState(() => {
@@ -370,7 +390,7 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
       }
       return next;
     });
-      const currentSeatIndex = players[playerIdRef.current]?.seatIndex ?? null;
+    const currentSeatIndex = players[playerIdRef.current]?.seatIndex ?? null;
     if (currentSeatIndex !== null && currentSeatIndex >= count) {
       setPlayers((prev) => ({
         ...prev,
@@ -388,11 +408,12 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
       return;
     }
     savePlayerProfile({
-      playerId: profile.id,
-      mySeatIndex: profile.seatIndex ?? null,
+      id: profile.id,
+      name: normalizeName(profile.name),
       seatColor: profile.seatColor,
       accentColor: profile.accentColor
     });
+    saveMySeatIndex(profile.seatIndex ?? null);
   }, [players]);
 
   const logAction = useCallback((text) => {
@@ -482,6 +503,17 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     },
     []
   );
+
+  const setPlayerName = useCallback((name) => {
+    const normalized = normalizeName(name);
+    setPlayers((prev) => ({
+      ...prev,
+      [playerIdRef.current]: {
+        ...prev[playerIdRef.current],
+        name: normalized
+      }
+    }));
+  }, []);
 
   const setAccentColor = useCallback(
     (accentColor) => {
@@ -616,6 +648,7 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     presence,
     sitAtSeat,
     standUp,
+    setPlayerName,
     setSeatColor,
     setAccentColor,
     updatePlayerColors,
