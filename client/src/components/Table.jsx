@@ -42,7 +42,7 @@ const SEAT_DIAMETER_PX = Math.max(SEAT_SIZE.width, SEAT_SIZE.height);
 const SEAT_DRAG_PADDING_PX = 10;
 const SEAT_MIN_GAP_PX = SEAT_DIAMETER_PX + SEAT_DRAG_PADDING_PX;
 const TAU = Math.PI * 2;
-const SWEEP_MIN_INTERVAL_MS = 40;
+const SLIDE_MAX_DROPS_PER_TICK = 6;
 const HOLD_DELAY_MS = 140;
 const HOLD_MOVE_PX = 10;
 const SLIDE_SPACING_PX = 60;
@@ -186,14 +186,13 @@ const Table = () => {
     slideIndex: 0,
     slideTrail: [],
     lastSlidePlace: null,
+    slideLastPos: null,
+    slideCarryDist: 0,
     selectedStackId: null,
     menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
   });
   const [hoveredStackId, setHoveredStackId] = useState(null);
   const pointerDownRef = useRef(null);
-  const sweepRef = useRef({
-    lastDropAtMs: 0
-  });
   const rmbHoldTimerRef = useRef(null);
   const lastPointerWorldRef = useRef(null);
   const lastPointerRef = useRef({ x: 0, y: 0 });
@@ -993,7 +992,9 @@ const Table = () => {
       slidePerp: null,
       slideIndex: 0,
       slideTrail: [],
-      lastSlidePlace: null
+      lastSlidePlace: null,
+      slideLastPos: null,
+      slideCarryDist: 0
     }),
     []
   );
@@ -1478,9 +1479,9 @@ const Table = () => {
     ]
   );
 
-  const slidePlaceOneFromHeld = useCallback(
+  const slidePlaceFromHeld = useCallback(
     (pointerWorld) => {
-      if (!interaction.held || !interaction.drag) {
+      if (!interaction.held || !interaction.drag || !interaction.isSliding) {
         return;
       }
       const pointerPosition = pointerWorld ?? lastPointerWorldRef.current;
@@ -1492,44 +1493,68 @@ const Table = () => {
         return;
       }
       const currentTopLeft = clampTopLeftToFelt(nextTopLeft).position ?? nextTopLeft;
-      const basePos = interaction.slideOrigin ?? currentTopLeft;
-      let direction = interaction.slideDir;
-      let perp = interaction.slidePerp;
-      let shouldLockDirection = false;
-
-      // Lock slide direction on the first meaningful movement to keep a tidy line.
-      if (!direction) {
-        const dx = currentTopLeft.x - basePos.x;
-        const dy = currentTopLeft.y - basePos.y;
-        const length = Math.hypot(dx, dy);
-        if (length >= SLIDE_START_DIR_THRESHOLD_PX) {
-          direction = { x: dx / length, y: dy / length };
-          perp = { x: -direction.y, y: direction.x };
-          shouldLockDirection = true;
-        }
-      }
-
-      let placement = basePos;
-      if (direction) {
-        const jitter = (Math.random() * 2 - 1) * SLIDE_JITTER_PX;
-        placement = {
-          x: basePos.x + direction.x * SLIDE_SPACING_PX * interaction.slideIndex + perp.x * jitter,
-          y: basePos.y + direction.y * SLIDE_SPACING_PX * interaction.slideIndex + perp.y * jitter
-        };
-      }
-      placement = clampTopLeftToFelt(placement).position ?? placement;
-      placement = adjustSlideSeparation(placement, direction, interaction.slideTrail);
-      placement = clampTopLeftToFelt(placement).position ?? placement;
-
-      const remaining = [...interaction.held.cardIds];
-      const placedCard = remaining.pop();
-      if (!placedCard) {
-        clearInteraction();
+      const lastPos = interaction.slideLastPos;
+      if (!lastPos) {
+        setInteraction((prev) => ({
+          ...prev,
+          slideLastPos: currentTopLeft
+        }));
         return;
       }
-      const placedStackId = createStackId();
-      setStacks((prev) =>
-        prev.concat({
+
+      const dx = currentTopLeft.x - lastPos.x;
+      const dy = currentTopLeft.y - lastPos.y;
+      const travelDistance = Math.hypot(dx, dy);
+      if (travelDistance <= 0) {
+        setInteraction((prev) => ({
+          ...prev,
+          slideLastPos: currentTopLeft
+        }));
+        return;
+      }
+
+      const movementDir = { x: dx / travelDistance, y: dy / travelDistance };
+      const shouldLockDirection = travelDistance >= SLIDE_START_DIR_THRESHOLD_PX;
+      const lockedDir = shouldLockDirection ? movementDir : interaction.slideDir;
+      const placementDir = movementDir ?? interaction.slideDir;
+      // Accumulate travel distance so drops are gated by actual movement, not pointer events.
+      const updatedCarry = (interaction.slideCarryDist ?? 0) + travelDistance;
+      let drops = Math.floor(updatedCarry / SLIDE_SPACING_PX);
+      if (drops <= 0) {
+        setInteraction((prev) => ({
+          ...prev,
+          slideLastPos: currentTopLeft,
+          slideCarryDist: updatedCarry,
+          slideDir: lockedDir
+        }));
+        return;
+      }
+
+      drops = Math.min(drops, interaction.held.cardIds.length, SLIDE_MAX_DROPS_PER_TICK);
+      const remaining = [...interaction.held.cardIds];
+      const placements = [];
+      let trail = interaction.slideTrail;
+
+      for (let i = 0; i < drops; i += 1) {
+        const placedCard = remaining.pop();
+        if (!placedCard) {
+          break;
+        }
+        const dropsRemaining = drops - i;
+        let placement = currentTopLeft;
+        if (placementDir) {
+          const jitter = (Math.random() * 2 - 1) * SLIDE_JITTER_PX;
+          const backOffset = SLIDE_SPACING_PX * 0.9 * dropsRemaining;
+          placement = {
+            x: currentTopLeft.x - placementDir.x * backOffset + -placementDir.y * jitter,
+            y: currentTopLeft.y - placementDir.y * backOffset + placementDir.x * jitter
+          };
+        }
+        placement = clampTopLeftToFelt(placement).position ?? placement;
+        placement = adjustSlideSeparation(placement, placementDir, trail);
+        placement = clampTopLeftToFelt(placement).position ?? placement;
+        const placedStackId = createStackId();
+        placements.push({
           id: placedStackId,
           x: placement.x,
           y: placement.y,
@@ -1538,21 +1563,35 @@ const Table = () => {
           cardIds: [placedCard],
           zone: 'table',
           ownerSeatIndex: null
-        })
-      );
-      pushAction(`${myName} placed 1 card`);
+        });
+        trail = trail.concat(placement);
+      }
+
+      if (placements.length === 0) {
+        clearInteraction();
+        return;
+      }
+
+      setStacks((prev) => prev.concat(placements));
+      pushAction(`${myName} placed ${placements.length} card${placements.length === 1 ? '' : 's'}`);
+
       if (remaining.length === 0) {
         clearInteraction();
       } else {
+        const carryRemainder = Math.max(
+          0,
+          updatedCarry - placements.length * SLIDE_SPACING_PX
+        );
         setInteraction((prev) => ({
           ...prev,
           held: prev.held ? { ...prev.held, cardIds: remaining } : prev.held,
-          slideOrigin: prev.slideOrigin ?? basePos,
-          slideDir: shouldLockDirection ? direction : prev.slideDir,
-          slidePerp: shouldLockDirection ? perp : prev.slidePerp,
-          slideIndex: prev.slideIndex + 1,
-          lastSlidePlace: placement,
-          slideTrail: prev.slideTrail.concat(placement)
+          slideLastPos: currentTopLeft,
+          slideCarryDist: carryRemainder,
+          slideDir: lockedDir,
+          lastSlidePlace: placements[placements.length - 1]
+            ? { x: placements[placements.length - 1].x, y: placements[placements.length - 1].y }
+            : prev.lastSlidePlace,
+          slideTrail: trail
         }));
       }
     },
@@ -1564,12 +1603,11 @@ const Table = () => {
       getHeldTopLeft,
       interaction.drag,
       interaction.held,
-      interaction.lastSlidePlace,
       interaction.slideDir,
-      interaction.slideIndex,
-      interaction.slideOrigin,
-      interaction.slidePerp,
+      interaction.slideCarryDist,
+      interaction.slideLastPos,
       interaction.slideTrail,
+      interaction.isSliding,
       myName,
       pushAction,
       setStacks
@@ -1584,25 +1622,21 @@ const Table = () => {
       if (!interaction.drag) {
         return;
       }
-      const nextTopLeft = getHeldTopLeft(pointerWorld, interaction.drag.offset);
-      const slideOrigin = nextTopLeft
-        ? clampTopLeftToFelt(nextTopLeft).position ?? nextTopLeft
-        : null;
       clearRmbHoldTimer();
       setInteraction((prev) => ({
         ...prev,
         isSliding: true,
-        slideOrigin,
+        slideOrigin: null,
         slideDir: null,
         slidePerp: null,
         slideIndex: 0,
         slideTrail: [],
-        lastSlidePlace: null
+        lastSlidePlace: null,
+        slideLastPos: null,
+        slideCarryDist: 0
       }));
-      sweepRef.current.lastDropAtMs = performance.now();
-      slidePlaceOneFromHeld(pointerWorld);
     },
-    [clampTopLeftToFelt, clearRmbHoldTimer, getHeldTopLeft, interaction.drag, slidePlaceOneFromHeld]
+    [clearRmbHoldTimer, interaction.drag]
   );
 
   const sweepPlaceFromHeld = useCallback(
@@ -1613,18 +1647,13 @@ const Table = () => {
       if (!pointerWorld) {
         return;
       }
-      const now = performance.now();
-      if (now - sweepRef.current.lastDropAtMs < SWEEP_MIN_INTERVAL_MS) {
-        return;
-      }
-      slidePlaceOneFromHeld(pointerWorld);
-      sweepRef.current.lastDropAtMs = now;
+      slidePlaceFromHeld(pointerWorld);
     },
     [
       interaction.drag,
       interaction.held,
       interaction.isSliding,
-      slidePlaceOneFromHeld
+      slidePlaceFromHeld
     ]
   );
 
@@ -1818,9 +1847,10 @@ const Table = () => {
             isSliding: false,
             rmbStartWorld: pointerWorld,
             slideTrail: [],
-            lastSlidePlace: null
+            lastSlidePlace: null,
+            slideLastPos: null,
+            slideCarryDist: 0
           }));
-          sweepRef.current.lastDropAtMs = 0;
           clearRmbHoldTimer();
           rmbHoldTimerRef.current = setTimeout(() => {
             const pointerPosition = lastPointerWorldRef.current ?? pointerWorld;
@@ -1832,12 +1862,17 @@ const Table = () => {
                 ...prev,
                 isSliding: true,
                 slideTrail: [],
-                lastSlidePlace: null
+                lastSlidePlace: null,
+                slideLastPos: null,
+                slideCarryDist: 0
               };
             });
             if (pointerPosition) {
-              sweepRef.current.lastDropAtMs = performance.now();
-              slidePlaceOneFromHeld(pointerPosition);
+              setInteraction((prev) => ({
+                ...prev,
+                slideLastPos: null,
+                slideCarryDist: 0
+              }));
             }
           }, HOLD_DELAY_MS);
           return;
@@ -1920,7 +1955,6 @@ const Table = () => {
       hitTestStack,
       interaction.held,
       interaction.menu.open,
-      slidePlaceOneFromHeld,
       setInteraction,
       updatePresence
     ]
