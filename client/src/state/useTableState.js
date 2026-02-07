@@ -229,6 +229,9 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
   const nextStackIdRef = useRef(21);
   const initialProfile = useMemo(() => loadPlayerProfile(), []);
   const playerIdRef = useRef(initialProfile.playerId);
+  const [actionLog, setActionLog] = useState([]);
+  const actionLogIdRef = useRef(1);
+  const [presence, setPresence] = useState(() => ({}));
   const [players, setPlayers] = useState(() => ({
     [playerIdRef.current]: {
       id: playerIdRef.current,
@@ -367,7 +370,7 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
       }
       return next;
     });
-    const currentSeatIndex = players[playerIdRef.current]?.seatIndex ?? null;
+      const currentSeatIndex = players[playerIdRef.current]?.seatIndex ?? null;
     if (currentSeatIndex !== null && currentSeatIndex >= count) {
       setPlayers((prev) => ({
         ...prev,
@@ -391,6 +394,36 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
       accentColor: profile.accentColor
     });
   }, [players]);
+
+  const logAction = useCallback((text) => {
+    if (!text) {
+      return;
+    }
+    setActionLog((prev) => {
+      const next = [
+        { id: actionLogIdRef.current++, ts: Date.now(), text },
+        ...prev
+      ];
+      return next.slice(0, 30);
+    });
+  }, []);
+
+  const updatePresence = useCallback((updates) => {
+    if (!playerIdRef.current) {
+      return;
+    }
+    setPresence((prev) => ({
+      ...prev,
+      [playerIdRef.current]: {
+        x: 0,
+        y: 0,
+        isDown: false,
+        holdingCount: 0,
+        ...(prev[playerIdRef.current] ?? {}),
+        ...updates
+      }
+    }));
+  }, []);
 
   const sitAtSeat = useCallback(
     (seatIndex) => {
@@ -434,6 +467,38 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     }));
   }, []);
 
+  const setSeatColor = useCallback(
+    (seatColor) => {
+      if (!seatColor) {
+        return;
+      }
+      setPlayers((prev) => ({
+        ...prev,
+        [playerIdRef.current]: {
+          ...prev[playerIdRef.current],
+          seatColor
+        }
+      }));
+    },
+    []
+  );
+
+  const setAccentColor = useCallback(
+    (accentColor) => {
+      if (!accentColor) {
+        return;
+      }
+      setPlayers((prev) => ({
+        ...prev,
+        [playerIdRef.current]: {
+          ...prev[playerIdRef.current],
+          accentColor
+        }
+      }));
+    },
+    []
+  );
+
   const updatePlayerColors = useCallback((colors) => {
     setPlayers((prev) => ({
       ...prev,
@@ -458,6 +523,13 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
       return next;
     });
   }, []);
+
+  const moveCardIdsToHand = useCallback(
+    (seatIndex, cardIds) => {
+      moveToHand(seatIndex, cardIds);
+    },
+    [moveToHand]
+  );
 
   const moveFromHandToTable = useCallback((seatIndex, cardId) => {
     setHands((prev) => {
@@ -524,6 +596,9 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     });
   }, []);
 
+  const player = players[playerIdRef.current];
+  const mySeatIndex = player?.seatIndex ?? null;
+
   return {
     cardsById,
     allCardIds,
@@ -532,12 +607,21 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     createStackId,
     rebuildTableFromSettings,
     players,
+    player,
+    mySeatIndex,
     seatAssignments,
-    hands,
+    handsBySeat: hands,
     myPlayerId: playerIdRef.current,
+    actionLog,
+    presence,
     sitAtSeat,
     standUp,
+    setSeatColor,
+    setAccentColor,
     updatePlayerColors,
+    logAction,
+    updatePresence,
+    moveCardIdsToHand,
     moveToHand,
     moveFromHandToTable,
     reorderHand,

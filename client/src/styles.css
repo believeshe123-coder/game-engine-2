@@ -223,7 +223,7 @@
 
 .hand-zone::before,
 .handZone::before {
-  content: 'Hand';
+  content: 'HAND';
   position: absolute;
   top: 8px;
   left: 12px;
@@ -1441,7 +1441,8 @@ body,
   white-space: nowrap;
 }
 
-.seat__hand {
+.seat__hand,
+.seatPad {
   position: absolute;
   inset: 10px;
   min-width: 160px;
@@ -1452,7 +1453,8 @@ body,
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
-.seat__hand:hover {
+.seat__hand:hover,
+.seatPad:hover {
   border-color: var(--hand-border-hover);
   background: rgba(255, 255, 255, 0.24);
 }
