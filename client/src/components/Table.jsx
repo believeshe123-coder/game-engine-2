@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import Card from './Card.jsx';
 import InventoryPanel from './InventoryPanel.jsx';
 import ActionLog from './ActionLog.jsx';
+import CursorGhost from './CursorGhost.jsx';
 import SeatMenu from './SeatMenu.jsx';
 import { clamp, getFeltEllipseInTableSpace } from '../utils/geometry.js';
 import {
@@ -153,13 +154,20 @@ const Table = () => {
     createStackId,
     rebuildTableFromSettings,
     players,
+    player,
+    mySeatIndex,
     seatAssignments,
-    hands,
+    handsBySeat,
     myPlayerId,
+    actionLog,
+    presence,
     sitAtSeat,
     standUp,
-    updatePlayerColors,
-    moveToHand,
+    setSeatColor,
+    setAccentColor,
+    logAction,
+    updatePresence,
+    moveCardIdsToHand,
     moveFromHandToTable,
     reorderHand,
     toggleReveal
@@ -169,6 +177,7 @@ const Table = () => {
     appliedSettings,
     seatCount
   );
+  const hands = handsBySeat;
   const [cardFaceOverrides, setCardFaceOverrides] = useState({});
   const [interaction, setInteraction] = useState({
     mode: 'idle',
@@ -205,9 +214,7 @@ const Table = () => {
     seatIndex: null,
     open: false
   });
-  const [actionLog, setActionLog] = useState([]);
-  const actionLogIdRef = useRef(1);
-  const [presence, setPresence] = useState(() => ({}));
+  const myName = player?.name ?? 'Player';
 
   useEffect(() => {
     if (process.env.NODE_ENV === 'production') {
@@ -401,45 +408,6 @@ const Table = () => {
   const [handZones, setHandZones] = useState([]);
 
 
-  const mySeatIndex = useMemo(
-    () => players[myPlayerId]?.seatIndex ?? null,
-    [myPlayerId, players]
-  );
-  const myPlayer = players[myPlayerId];
-  const myName = myPlayer?.name ?? 'Player';
-
-  const pushAction = useCallback((text) => {
-    if (!text) {
-      return;
-    }
-    setActionLog((prev) => {
-      const next = [
-        { id: actionLogIdRef.current++, ts: Date.now(), text },
-        ...prev
-      ];
-      return next.slice(0, 30);
-    });
-  }, []);
-
-  const updatePresence = useCallback(
-    (updates) => {
-      if (!myPlayerId) {
-        return;
-      }
-      setPresence((prev) => ({
-        ...prev,
-        [myPlayerId]: {
-          x: 0,
-          y: 0,
-          isDown: false,
-          holdingCount: 0,
-          ...(prev[myPlayerId] ?? {}),
-          ...updates
-        }
-      }));
-    },
-    [myPlayerId]
-  );
 
   const getCardLabel = useCallback(
     (cardId) => {
@@ -472,7 +440,6 @@ const Table = () => {
     }
     const tableRect = tableNode.getBoundingClientRect();
     const zoom = tableScaleRef.current || 1;
-    const insetScale = 0.94;
     const nextZones = seatPositions.map((seat) => {
       const seatPad = seatPadRefs.current[seat.seatIndex];
       if (seatPad) {
@@ -493,8 +460,8 @@ const Table = () => {
             seatIndex: seat.seatIndex,
             x: (topLeft.x + bottomRight.x) / 2,
             y: (topLeft.y + bottomRight.y) / 2,
-            width: width * insetScale,
-            height: height * insetScale,
+            width,
+            height,
             rotation: 0
           };
         }
@@ -710,19 +677,8 @@ const Table = () => {
   }, [combinedScale, seatPositions, tableRect.height, tableRect.width, updateHandZonesFromDom]);
 
   useEffect(() => {
-    if (!myPlayerId) {
-      return;
-    }
-    setPresence((prev) => ({
-      ...prev,
-      [myPlayerId]: prev[myPlayerId] ?? {
-        x: 0,
-        y: 0,
-        isDown: false,
-        holdingCount: 0
-      }
-    }));
-  }, [myPlayerId]);
+    updatePresence({});
+  }, [updatePresence]);
 
   useEffect(() => {
     updatePresence({
@@ -1287,8 +1243,8 @@ const Table = () => {
         mySeatIndex !== null &&
         handSeatIndex === mySeatIndex
       ) {
-        moveToHand(mySeatIndex, held.cardIds);
-        pushAction(
+        moveCardIdsToHand(mySeatIndex, held.cardIds);
+        logAction(
           `${myName} moved ${held.cardIds.length} ${held.cardIds.length === 1 ? 'card' : 'cards'} to hand`
         );
         clearInteraction({ preserveSelection: false });
@@ -1352,10 +1308,10 @@ const Table = () => {
       interaction.drag,
       interaction.held,
       interaction.selectedStackId,
-      moveToHand,
+      moveCardIdsToHand,
       myName,
       mySeatIndex,
-      pushAction,
+      logAction,
       restoreHeldToOrigin,
       setStacks
     ]
@@ -1383,8 +1339,8 @@ const Table = () => {
         mySeatIndex !== null &&
         handSeatIndex === mySeatIndex
       ) {
-        moveToHand(mySeatIndex, draggedStack.cardIds);
-        pushAction(
+        moveCardIdsToHand(mySeatIndex, draggedStack.cardIds);
+        logAction(
           `${myName} moved ${draggedStack.cardIds.length} ${draggedStack.cardIds.length === 1 ? 'card' : 'cards'} to hand`
         );
         setStacks((prev) => prev.filter((stack) => stack.id !== draggedId));
@@ -1431,10 +1387,10 @@ const Table = () => {
       interaction.mode,
       interaction.selectedStackId,
       mergeStacks,
-      moveToHand,
+      moveCardIdsToHand,
       myName,
       mySeatIndex,
-      pushAction,
+      logAction,
       setStacks,
       stacksById
     ]
@@ -1502,7 +1458,7 @@ const Table = () => {
         }
         return next;
       });
-      pushAction(`${myName} placed 1 card`);
+      logAction(`${myName} placed 1 card`);
       if (remaining.length === 0) {
         clearInteraction({ preserveSelection: true });
       } else {
@@ -1521,7 +1477,7 @@ const Table = () => {
       interaction.drag,
       interaction.held,
       myName,
-      pushAction,
+      logAction,
       setStacks
     ]
   );
@@ -1620,7 +1576,7 @@ const Table = () => {
       }
 
       setStacks((prev) => prev.concat(placements));
-      pushAction(`${myName} placed ${placements.length} card${placements.length === 1 ? '' : 's'}`);
+      logAction(`${myName} placed ${placements.length} card${placements.length === 1 ? '' : 's'}`);
 
       if (remaining.length === 0) {
         clearInteraction({ preserveSelection: true });
@@ -1656,7 +1612,7 @@ const Table = () => {
       interaction.slideTrail,
       interaction.isSliding,
       myName,
-      pushAction,
+      logAction,
       setStacks
     ]
   );
@@ -1748,8 +1704,8 @@ const Table = () => {
         return next;
       });
     }
-    pushAction(`${myName} flipped a stack`);
-  }, [interaction.selectedStackId, myName, pushAction, setStacks, stacksById]);
+    logAction(`${myName} flipped a stack`);
+  }, [interaction.selectedStackId, myName, logAction, setStacks, stacksById]);
 
   const handleShuffleSelected = useCallback(() => {
     if (!interaction.selectedStackId) {
@@ -1768,8 +1724,8 @@ const Table = () => {
         return { ...stack, cardIds: nextCardIds };
       })
     );
-    pushAction(`${myName} shuffled a stack`);
-  }, [interaction.selectedStackId, myName, pushAction, setStacks]);
+    logAction(`${myName} shuffled a stack`);
+  }, [interaction.selectedStackId, myName, logAction, setStacks]);
 
   const handleKeyDown = useCallback(
     (event) => {
@@ -2214,7 +2170,7 @@ const Table = () => {
           ownerSeatIndex: null
         })
       );
-      pushAction(`${myName} played ${getCardLabel(cardId)}`);
+      logAction(`${myName} played ${getCardLabel(cardId)}`);
     },
     [
       cardSize.height,
@@ -2226,7 +2182,7 @@ const Table = () => {
       moveFromHandToTable,
       myName,
       mySeatIndex,
-      pushAction,
+      logAction,
       setStacks
     ]
   );
@@ -2261,9 +2217,9 @@ const Table = () => {
       const seatHand = hands?.[mySeatIndex];
       const isRevealed = Boolean(seatHand?.revealed?.[cardId]);
       toggleReveal(mySeatIndex, cardId);
-      pushAction(`${myName} ${isRevealed ? 'hid' : 'revealed'} ${getCardLabel(cardId)}`);
+      logAction(`${myName} ${isRevealed ? 'hid' : 'revealed'} ${getCardLabel(cardId)}`);
     },
-    [getCardLabel, hands, myName, mySeatIndex, pushAction, toggleReveal]
+    [getCardLabel, hands, myName, mySeatIndex, logAction, toggleReveal]
   );
 
   const visibleBadgeStackId =
@@ -2292,7 +2248,7 @@ const Table = () => {
         stack.id === stackId ? { ...stack, faceUp: !stack.faceUp } : stack
       )
     );
-    pushAction(`${myName} flipped a stack`);
+    logAction(`${myName} flipped a stack`);
     setCardFaceOverrides((prev) => {
       const stack = stacksById[stackId];
       if (!stack) {
@@ -2305,7 +2261,7 @@ const Table = () => {
       });
       return next;
     });
-  }, [myName, pushAction, setStacks, stacksById]);
+  }, [myName, logAction, setStacks, stacksById]);
 
   const handleMoveSelectedToHand = useCallback(() => {
     if (
@@ -2319,8 +2275,8 @@ const Table = () => {
     if (!selected) {
       return;
     }
-    moveToHand(mySeatIndex, selected.cardIds);
-    pushAction(
+    moveCardIdsToHand(mySeatIndex, selected.cardIds);
+    logAction(
       `${myName} moved ${selected.cardIds.length} ${selected.cardIds.length === 1 ? 'card' : 'cards'} to hand`
     );
     setStacks((prev) =>
@@ -2334,10 +2290,10 @@ const Table = () => {
     setPickCountOpen(false);
   }, [
     interaction.selectedStackId,
-    moveToHand,
+    moveCardIdsToHand,
     myName,
     mySeatIndex,
-    pushAction,
+    logAction,
     setInteraction,
     setStacks,
     stacksById
@@ -2485,7 +2441,7 @@ const Table = () => {
                       ref={(el) => {
                         seatPadRefs.current[seat.seatIndex] = el;
                       }}
-                      className="seat__hand"
+                      className="seatPad seat__hand"
                       aria-label={`${seat.label} hand zone`}
                     >
                       {/* hand contents render here if needed */}
@@ -2649,25 +2605,14 @@ const Table = () => {
                 if (!Number.isFinite(ghost?.x) || !Number.isFinite(ghost?.y)) {
                   return null;
                 }
-                const player = players[playerId];
-                const label = player?.name ?? 'Player';
-                const accent = player?.accentColor ?? '#f5b96c';
+                const presencePlayer = players[playerId];
                 return (
-                  <div
+                  <CursorGhost
                     key={`cursor-${playerId}`}
-                    className={`cursor-ghost ${ghost.isDown ? 'cursor-ghost--down' : ''}`}
-                    style={{
-                      left: `${ghost.x}px`,
-                      top: `${ghost.y}px`,
-                      '--ghost-color': accent
-                    }}
-                  >
-                    <div className="cursor-ghost__dot" />
-                    <div className="cursor-ghost__label">{label}</div>
-                    {ghost.holdingCount ? (
-                      <div className="cursor-ghost__badge">+{ghost.holdingCount}</div>
-                    ) : null}
-                  </div>
+                    ghost={ghost}
+                    label={presencePlayer?.name ?? 'Player'}
+                    accentColor={presencePlayer?.accentColor ?? '#f5b96c'}
+                  />
                 );
               })}
 
@@ -3209,15 +3154,22 @@ const Table = () => {
                 }
                 onSit={() => {
                   sitAtSeat(seatMenuSeat.seatIndex);
-                  pushAction(`${myName} sat at ${seatMenuSeat.label}`);
+                  logAction(`${myName} sat at ${seatMenuSeat.label}`);
                   closeSeatMenu();
                 }}
                 onStand={() => {
                   standUp();
-                  pushAction(`${myName} left ${seatMenuSeat.label}`);
+                  logAction(`${myName} left ${seatMenuSeat.label}`);
                   closeSeatMenu();
                 }}
-                onUpdateColors={updatePlayerColors}
+                onUpdateColors={(colors) => {
+                  if (colors?.seatColor) {
+                    setSeatColor(colors.seatColor);
+                  }
+                  if (colors?.accentColor) {
+                    setAccentColor(colors.accentColor);
+                  }
+                }}
                 onClose={closeSeatMenu}
               />
             </div>,
