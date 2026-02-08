@@ -560,6 +560,13 @@ body,
   z-index: 999998;
 }
 
+.seat-card-preview {
+  position: fixed;
+  pointer-events: none;
+  z-index: 999999;
+  filter: drop-shadow(0 16px 24px rgba(0, 0, 0, 0.35));
+}
+
 .stack-entity {
   position: absolute;
   width: calc(var(--card-base-width) * var(--card-scale));
@@ -1487,11 +1494,11 @@ body,
   display: flex;
   align-items: center;
   gap: 6px;
-  pointer-events: none;
-  --seat-card-scale: 0.22;
-  --seat-card-gap: 6px;
+  pointer-events: auto;
+  --seat-card-scale: var(--card-scale);
+  --seat-card-gap: 22px;
+  --seat-card-rise: 6px;
   --seat-card-count: 0;
-  --card-scale: var(--seat-card-scale);
   width: max(
     0px,
     calc(
@@ -1510,10 +1517,13 @@ body,
   position: relative;
   width: 100%;
   height: 100%;
+  pointer-events: auto;
 }
 
 .seat__handCard {
   position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
 }
 
 .seat__handIndicator .card {
@@ -1530,6 +1540,7 @@ body,
   font-size: 10px;
   font-weight: 700;
   text-align: center;
+  pointer-events: none;
 }
 
 .seat__bench::before {
@@ -1560,8 +1571,9 @@ body,
 }
 
 .seat--top .seat__handIndicator {
-  right: 14px;
-  top: 14px;
+  left: 50%;
+  top: 100%;
+  transform: translate(-50%, 12px);
 }
 
 .seat--bottom {
@@ -1581,8 +1593,9 @@ body,
 }
 
 .seat--bottom .seat__handIndicator {
-  right: 14px;
-  bottom: 14px;
+  left: 50%;
+  bottom: 100%;
+  transform: translate(-50%, -12px);
 }
 
 .seat--left {
@@ -1617,8 +1630,9 @@ body,
 }
 
 .seat--left .seat__handIndicator {
-  left: 14px;
-  top: 14px;
+  left: 100%;
+  top: 50%;
+  transform: translate(12px, -50%);
 }
 
 .seat--right {
@@ -1653,8 +1667,9 @@ body,
 }
 
 .seat--right .seat__handIndicator {
-  right: 14px;
-  top: 14px;
+  right: 100%;
+  top: 50%;
+  transform: translate(-12px, -50%);
 }
 
 .hand-reveal {

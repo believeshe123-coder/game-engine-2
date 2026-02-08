@@ -238,6 +238,7 @@ const Table = () => {
     open: false
   });
   const [hoverSeatDropIndex, setHoverSeatDropIndex] = useState(null);
+  const [hoverSeatCard, setHoverSeatCard] = useState(null);
   const myName = player?.name ?? 'Player';
 
   useEffect(() => {
@@ -330,10 +331,10 @@ const Table = () => {
   }, [combinedScale]);
 
   useEffect(() => {
-    if (!interaction.held && hoverSeatDropIndex !== null) {
+    if (!interaction.held && interaction.mode !== 'dragStack' && hoverSeatDropIndex !== null) {
       setHoverSeatDropIndex(null);
     }
-  }, [hoverSeatDropIndex, interaction.held]);
+  }, [hoverSeatDropIndex, interaction.held, interaction.mode]);
 
   const tableStyle = settings.roomSettings.tableStyle;
   const tableShape = settings.roomSettings.tableShape;
@@ -958,7 +959,7 @@ const Table = () => {
 
   const updateSeatDropHover = useCallback(
     (clientX, clientY) => {
-      if (!interaction.held) {
+      if (!interaction.held && interaction.mode !== 'dragStack') {
         if (hoverSeatDropIndex !== null) {
           setHoverSeatDropIndex(null);
         }
@@ -967,7 +968,7 @@ const Table = () => {
       const seatIndex = getSeatIndexAtScreenPoint(clientX, clientY);
       setHoverSeatDropIndex(seatIndex);
     },
-    [getSeatIndexAtScreenPoint, hoverSeatDropIndex, interaction.held]
+    [getSeatIndexAtScreenPoint, hoverSeatDropIndex, interaction.held, interaction.mode]
   );
 
   const clampInventoryPosition = useCallback((position, rect) => {
@@ -1976,6 +1977,8 @@ const Table = () => {
       lastPointerRef.current = { x: event.clientX, y: event.clientY };
       if (interaction.held) {
         setHeldScreenPos({ x: event.clientX, y: event.clientY });
+      }
+      if (interaction.held || interaction.mode === 'dragStack') {
         updateSeatDropHover(event.clientX, event.clientY);
       }
     };
@@ -1983,7 +1986,7 @@ const Table = () => {
     return () => {
       window.removeEventListener('pointermove', handlePointerMove);
     };
-  }, [interaction.held, updateSeatDropHover]);
+  }, [interaction.held, interaction.mode, updateSeatDropHover]);
 
   useEffect(() => {
     if (!interaction.held) {
@@ -2578,6 +2581,26 @@ const Table = () => {
   const seatMenuIsOccupied = Boolean(seatMenuPlayerId);
   const uiOverlayRoot =
     typeof document !== 'undefined' ? document.getElementById('ui-overlay') : null;
+  const hoverSeatCardInfo = (() => {
+    if (!hoverSeatCard) {
+      return null;
+    }
+    const seatHand = hands?.[hoverSeatCard.seatIndex];
+    if (!seatHand) {
+      return null;
+    }
+    const seatPlayerId = seatAssignments[hoverSeatCard.seatIndex];
+    const isOwner = seatPlayerId === myPlayerId;
+    const isRevealed = Boolean(seatHand.revealed?.[hoverSeatCard.cardId]);
+    const card = cardsById[hoverSeatCard.cardId];
+    return {
+      card,
+      cardId: hoverSeatCard.cardId,
+      faceUp: isOwner || isRevealed,
+      x: hoverSeatCard.x,
+      y: hoverSeatCard.y
+    };
+  })();
   const dragCardPosition =
     interaction.held && heldScreenPos
       ? {
@@ -2685,18 +2708,42 @@ const Table = () => {
                         {visibleCardIds.map((cardId, index) => {
                           const card = cardsById[cardId];
                           const isRevealed = Boolean(seatHand.revealed?.[cardId]);
+                          const canReveal = isMine || isRevealed;
                           return (
                             <div
                               key={`seat-card-${seat.seatIndex}-${cardId}`}
                               className="seat__handCard"
-                              style={{ left: `${index * 6}px`, top: `${index * -1}px` }}
+                              style={{
+                                left: `calc(${index} * var(--seat-card-gap))`,
+                                top: `calc(${index} * var(--seat-card-rise) * -1)`
+                              }}
+                              onMouseEnter={(event) =>
+                                setHoverSeatCard({
+                                  seatIndex: seat.seatIndex,
+                                  cardId,
+                                  x: event.clientX,
+                                  y: event.clientY
+                                })
+                              }
+                              onMouseMove={(event) =>
+                                setHoverSeatCard((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        x: event.clientX,
+                                        y: event.clientY
+                                      }
+                                    : prev
+                                )
+                              }
+                              onMouseLeave={() => setHoverSeatCard(null)}
                             >
                               <Card
                                 id={cardId}
                                 x={0}
                                 y={0}
                                 rotation={0}
-                                faceUp={isRevealed}
+                                faceUp={canReveal}
                                 cardStyle={appliedSettings.cardStyle}
                                 zIndex={index + 1}
                                 rank={card?.rank}
@@ -2977,6 +3024,34 @@ const Table = () => {
           isDragging={Boolean(inventoryDrag)}
         />
       ) : null}
+      {hoverSeatCardInfo && uiOverlayRoot
+        ? createPortal(
+            <div
+              className="seat-card-preview"
+              aria-hidden="true"
+              style={{
+                left: `${hoverSeatCardInfo.x + 16}px`,
+                top: `${hoverSeatCardInfo.y + 16}px`,
+                '--card-scale': viewTransform.cardScale * 1.2
+              }}
+            >
+              <Card
+                id={`seat-preview-${hoverSeatCardInfo.cardId ?? 'card'}`}
+                x={0}
+                y={0}
+                rotation={0}
+                faceUp={hoverSeatCardInfo.faceUp}
+                cardStyle={appliedSettings.cardStyle}
+                zIndex={999999}
+                rank={hoverSeatCardInfo.card?.rank}
+                suit={hoverSeatCardInfo.card?.suit}
+                color={hoverSeatCardInfo.card?.color}
+                onPointerDown={() => {}}
+              />
+            </div>,
+            uiOverlayRoot
+          )
+        : null}
       {interaction.held && uiOverlayRoot && dragCardPosition
         ? createPortal(
             <div
