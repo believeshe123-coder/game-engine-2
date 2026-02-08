@@ -298,6 +298,14 @@ const Table = () => {
   const [hoverSeatCard, setHoverSeatCard] = useState(null);
   const myName = player?.name ?? 'Player';
 
+  // All actions must be added to actionsRef.current. Do not add standalone const handleX callbacks that are referenced by memos/effects above.
+  const actionsRef = useRef(null);
+  const interactionRef = useRef(interaction);
+
+  useEffect(() => {
+    interactionRef.current = interaction;
+  }, [interaction]);
+
   // Interaction helpers (keep before any configs/effects that reference them).
   const defaultRmbState = useMemo(
     () => ({
@@ -872,14 +880,14 @@ const Table = () => {
           height: entry.contentRect.height
         });
         layoutSeats();
-        updateTabletopScale();
+        actionsRef.current?.updateTabletopScale?.();
       }
     });
 
     tableObserver.observe(tableRef.current);
     const frameObserver = new ResizeObserver(() => {
       layoutSeats();
-      updateTabletopScale();
+      actionsRef.current?.updateTabletopScale?.();
     });
     frameObserver.observe(tableFrameRef.current);
     return () => {
@@ -890,8 +898,8 @@ const Table = () => {
 
   useEffect(() => {
     layoutSeats();
-    updateTabletopScale();
-  }, [layoutSeats, updateTabletopScale]);
+    actionsRef.current?.updateTabletopScale?.();
+  }, [layoutSeats]);
 
   useEffect(() => {
     layoutSeats();
@@ -900,15 +908,15 @@ const Table = () => {
   useEffect(() => {
     const handleResize = () => {
       layoutSeats();
-      updateTabletopScale();
+      actionsRef.current?.updateTabletopScale?.();
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [layoutSeats, updateTabletopScale]);
+  }, [layoutSeats]);
 
   useEffect(() => {
-    updateTabletopScale();
-  }, [seatCount, tableShape, updateTabletopScale]);
+    actionsRef.current?.updateTabletopScale?.();
+  }, [seatCount, tableShape]);
 
   useEffect(() => {
     recomputeFeltGeometry();
@@ -1307,7 +1315,7 @@ const Table = () => {
   const handleSeatPointerMove = useCallback(
     (event, seatIndex) => {
       if (interaction.held && dragSeatIndex !== seatIndex) {
-        updateSeatDropHover(event.clientX, event.clientY);
+        actionsRef.current?.updateSeatDropHover?.(event.clientX, event.clientY);
         return;
       }
       if (dragSeatIndex !== seatIndex) {
@@ -1324,7 +1332,7 @@ const Table = () => {
       }
       updateSeatParamFromPointer(event, seatIndex);
     },
-    [dragSeatIndex, interaction.held, updateSeatDropHover, updateSeatParamFromPointer]
+    [dragSeatIndex, interaction.held, updateSeatParamFromPointer]
   );
 
   const handleSeatPointerUp = useCallback(() => {
@@ -1359,9 +1367,9 @@ const Table = () => {
         }
         return;
       }
-      openSeatMenu(seatIndex);
+      actionsRef.current?.openSeatMenu?.(seatIndex);
     },
-    [clearInteraction, interaction.held, interaction.mode, logDealt, moveCardIdsToHand, openSeatMenu]
+    [clearInteraction, interaction.held, interaction.mode, logDealt, moveCardIdsToHand]
   );
 
   const restoreHeldToOrigin = useCallback(() => {
@@ -2039,8 +2047,8 @@ const Table = () => {
       }
       if (event.key === 'Escape') {
         event.preventDefault();
-        cancelDrag();
-        closeSeatMenu();
+        actionsRef.current?.cancelDrag?.();
+        actionsRef.current?.closeSeatMenu?.();
         return;
       }
       const isFormElement =
@@ -2055,48 +2063,45 @@ const Table = () => {
       const lowerKey = event.key.toLowerCase();
       if (lowerKey === 'f') {
         event.preventDefault();
-        handleFlipSelected();
+        actionsRef.current?.handleFlipSelected?.();
         return;
       }
       if (lowerKey === 's') {
         event.preventDefault();
-        handleShuffleSelected();
+        actionsRef.current?.handleShuffleSelected?.();
         return;
       }
       if (event.key === '1' || event.key === '5' || event.key === '0') {
         event.preventDefault();
         const pickCount = event.key === '0' ? 10 : Number(event.key);
-        pickupFromStack(interaction.selectedStackId, pickCount);
+        actionsRef.current?.pickupFromStack?.(interaction.selectedStackId, pickCount);
       }
     },
     [
-      cancelDrag,
-      closeSeatMenu,
-      handleFlipSelected,
-      handleShuffleSelected,
-      interaction.selectedStackId,
-      pickupFromStack
+      interaction.selectedStackId
     ]
   );
 
   useEffect(() => {
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown]);
+    const handleKeyDownEvent = (event) => actionsRef.current?.handleKeyDown?.(event);
+    window.addEventListener('keydown', handleKeyDownEvent);
+    return () => window.removeEventListener('keydown', handleKeyDownEvent);
+  }, []);
 
   useEffect(() => {
-    const handleCancel = () => {
-      if (interaction.mode !== 'idle') {
-        cancelDrag();
+    const handleCancelEvent = () => {
+      const currentInteraction = interactionRef.current;
+      if (currentInteraction?.mode !== 'idle') {
+        actionsRef.current?.cancelDrag?.();
       }
     };
-    window.addEventListener('pointercancel', handleCancel);
-    window.addEventListener('blur', handleCancel);
+    window.addEventListener('pointercancel', handleCancelEvent);
+    window.addEventListener('blur', handleCancelEvent);
     return () => {
-      window.removeEventListener('pointercancel', handleCancel);
-      window.removeEventListener('blur', handleCancel);
+      window.removeEventListener('pointercancel', handleCancelEvent);
+      window.removeEventListener('blur', handleCancelEvent);
     };
-  }, [cancelDrag, interaction.mode]);
+  }, []);
 
   useEffect(() => {
     const handlePointerUp = () => {
@@ -2113,20 +2118,21 @@ const Table = () => {
   }, [updatePresence]);
 
   useEffect(() => {
-    const handlePointerMove = (event) => {
+    const handlePointerMoveEvent = (event) => {
       lastPointerRef.current = { x: event.clientX, y: event.clientY };
-      if (interaction.held) {
+      const currentInteraction = interactionRef.current;
+      if (currentInteraction?.held) {
         setHeldScreenPos({ x: event.clientX, y: event.clientY });
       }
-      if (interaction.held || interaction.mode === 'dragStack') {
-        updateSeatDropHover(event.clientX, event.clientY);
+      if (currentInteraction?.held || currentInteraction?.mode === 'dragStack') {
+        actionsRef.current?.updateSeatDropHover?.(event.clientX, event.clientY);
       }
     };
-    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointermove', handlePointerMoveEvent);
     return () => {
-      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointermove', handlePointerMoveEvent);
     };
-  }, [interaction.held, interaction.mode, updateSeatDropHover]);
+  }, []);
 
   useEffect(() => {
     if (!interaction.held) {
@@ -2159,9 +2165,9 @@ const Table = () => {
       event.preventDefault();
       lastPointerWorldRef.current = pointerWorld;
       updatePresence({ isDown: true, x: pointerWorld.x, y: pointerWorld.y });
-      closeSeatMenu();
+      actionsRef.current?.closeSeatMenu?.();
       if (interaction.menu.open) {
-        closeMenu();
+        actionsRef.current?.closeMenu?.();
       }
       const stackId = hitTestStack(pointerWorld.x, pointerWorld.y);
       if (event.button === 2) {
@@ -2303,7 +2309,7 @@ const Table = () => {
       lastPointerRef.current = { x: event.clientX, y: event.clientY };
       lastPointerWorldRef.current = pointerWorld;
       updatePresence({ x: pointerWorld.x, y: pointerWorld.y });
-      updateSeatDropHover(event.clientX, event.clientY);
+      actionsRef.current?.updateSeatDropHover?.(event.clientX, event.clientY);
 
       if (interaction.mode === 'dragStack') {
         updateDrag(pointerWorld);
@@ -2345,10 +2351,10 @@ const Table = () => {
         if (distance >= DRAG_THRESHOLD) {
           pending.dragStarted = true;
           if (pending.button === 0 && pending.stackId) {
-            pickupFromStack(pending.stackId, 1, event.pointerId);
+            actionsRef.current?.pickupFromStack?.(pending.stackId, 1, event.pointerId);
           }
           if (pending.button === 2 && pending.stackId) {
-            pickupFromStack(pending.stackId, 'all', event.pointerId);
+            actionsRef.current?.pickupFromStack?.(pending.stackId, 'all', event.pointerId);
           }
         }
       }
@@ -2387,12 +2393,12 @@ const Table = () => {
       const pending = pointerDownRef.current;
       if (pending && pending.pointerId === event.pointerId) {
         if (!pending.dragStarted && pending.button === 0 && pending.stackId) {
-          selectStack(pending.stackId, {
+          actionsRef.current?.selectStack?.(pending.stackId, {
             x: event.clientX,
             y: event.clientY
           });
         } else if (!pending.dragStarted && pending.button === 2 && pending.stackId) {
-          pickupFromStack(pending.stackId, 'all', event.pointerId);
+          actionsRef.current?.pickupFromStack?.(pending.stackId, 'all', event.pointerId);
         }
         pointerDownRef.current = null;
       }
@@ -2619,15 +2625,14 @@ const Table = () => {
       setCardFaceOverrides({});
     }
     if (shouldRecomputeGeometry) {
-      updateTabletopScale();
+      actionsRef.current?.updateTabletopScale?.();
     }
     setAppliedSettings(settings);
   }, [
     appliedSettings,
     clampStacksToFeltShape,
     rebuildTableSurfacePreservingHands,
-    settings,
-    updateTabletopScale
+    settings
   ]);
 
   const handleHardResetToBaseDefaults = useCallback(() => {
@@ -2637,19 +2642,18 @@ const Table = () => {
     setAppliedSettings(BASE_DEFAULTS);
     saveSettings(BASE_DEFAULTS);
     hardResetTableState(BASE_DEFAULTS);
-    resetInteractionStates();
-    resetInteractionToDefaults();
+    actionsRef.current?.resetInteractionStates?.();
+    actionsRef.current?.resetInteractionToDefaults?.();
     setCardFaceOverrides({});
     setSettingsOpen(false);
-    updateTabletopScale();
+    actionsRef.current?.updateTabletopScale?.();
     logAction('Reset table to defaults');
     setResetConfirmOpen(false);
   }, [
     hardResetTableState,
     logAction,
     resetInteractionStates,
-    resetInteractionToDefaults,
-    updateTabletopScale
+    resetInteractionToDefaults
   ]);
 
   const handleStackDoubleClick = useCallback((event, stackId) => {
@@ -2709,6 +2713,82 @@ const Table = () => {
     setInteraction,
     setStacks,
     stacksById
+  ]);
+
+  useEffect(() => {
+    actionsRef.current = {
+      applySettings,
+      cancelDrag,
+      clearInteraction,
+      clearRmbHoldTimer,
+      closeMenu,
+      closeSeatMenu,
+      handleFlipSelected,
+      handleHardResetToBaseDefaults,
+      handleInventoryDragStart,
+      handleInventoryDropToEnd,
+      handleInventoryHeaderPointerDown,
+      handleInventoryReorderDrop,
+      handleKeyDown,
+      handleMoveSelectedToHand,
+      handleSeatClick,
+      handleSeatPointerDown,
+      handleSeatPointerMove,
+      handleSeatPointerUp,
+      handleShuffleSelected,
+      handleStackDoubleClick,
+      handleSurfacePointerDown,
+      handleSurfacePointerMove,
+      handleSurfacePointerUp,
+      handleTableDragOver,
+      handleTableDrop,
+      handleToggleReveal,
+      openSeatMenu,
+      pickupFromStack,
+      releaseCapturedPointer,
+      resetInteractionStates,
+      resetInteractionToDefaults,
+      resetInventoryPosition,
+      selectStack,
+      updateSeatDropHover,
+      updateTabletopScale
+    };
+  }, [
+    applySettings,
+    cancelDrag,
+    clearInteraction,
+    clearRmbHoldTimer,
+    closeMenu,
+    closeSeatMenu,
+    handleFlipSelected,
+    handleHardResetToBaseDefaults,
+    handleInventoryDragStart,
+    handleInventoryDropToEnd,
+    handleInventoryHeaderPointerDown,
+    handleInventoryReorderDrop,
+    handleKeyDown,
+    handleMoveSelectedToHand,
+    handleSeatClick,
+    handleSeatPointerDown,
+    handleSeatPointerMove,
+    handleSeatPointerUp,
+    handleShuffleSelected,
+    handleStackDoubleClick,
+    handleSurfacePointerDown,
+    handleSurfacePointerMove,
+    handleSurfacePointerUp,
+    handleTableDragOver,
+    handleTableDrop,
+    handleToggleReveal,
+    openSeatMenu,
+    pickupFromStack,
+    releaseCapturedPointer,
+    resetInteractionStates,
+    resetInteractionToDefaults,
+    resetInventoryPosition,
+    selectStack,
+    updateSeatDropHover,
+    updateTabletopScale
   ]);
 
   const selectedStack = interaction.selectedStackId
@@ -2885,17 +2965,21 @@ const Table = () => {
                   className={`seat seat--${seat.side} ${occupied ? 'seat--occupied' : ''} ${isMine ? 'seat--mine' : ''} ${seatHandCount ? 'seat--has-cards' : ''} ${dragSeatIndex === seat.seatIndex ? 'seat--dragging' : ''} ${hoverSeatDropIndex === seat.seatIndex ? 'dropTarget' : ''}`}
                   data-seat-index={seat.seatIndex}
                   style={seatStyle}
-                  onClick={() => handleSeatClick(seat.seatIndex)}
+                  onClick={() => actionsRef.current?.handleSeatClick?.(seat.seatIndex)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
-                      handleSeatClick(seat.seatIndex);
+                      actionsRef.current?.handleSeatClick?.(seat.seatIndex);
                     }
                   }}
-                  onPointerDown={(event) => handleSeatPointerDown(event, seat.seatIndex)}
-                  onPointerMove={(event) => handleSeatPointerMove(event, seat.seatIndex)}
-                  onPointerUp={handleSeatPointerUp}
-                  onPointerCancel={handleSeatPointerUp}
+                  onPointerDown={(event) =>
+                    actionsRef.current?.handleSeatPointerDown?.(event, seat.seatIndex)
+                  }
+                  onPointerMove={(event) =>
+                    actionsRef.current?.handleSeatPointerMove?.(event, seat.seatIndex)
+                  }
+                  onPointerUp={() => actionsRef.current?.handleSeatPointerUp?.()}
+                  onPointerCancel={() => actionsRef.current?.handleSeatPointerUp?.()}
                   role="button"
                   tabIndex={0}
                 >
@@ -2981,13 +3065,13 @@ const Table = () => {
             <div
               ref={tableRef}
               className={`table__surface table__surface--${tableStyle} table__surface--${tableShape}`}
-              onPointerDown={handleSurfacePointerDown}
-              onPointerMove={handleSurfacePointerMove}
-              onPointerUp={handleSurfacePointerUp}
-              onPointerCancel={handleSurfacePointerUp}
+              onPointerDown={(event) => actionsRef.current?.handleSurfacePointerDown?.(event)}
+              onPointerMove={(event) => actionsRef.current?.handleSurfacePointerMove?.(event)}
+              onPointerUp={(event) => actionsRef.current?.handleSurfacePointerUp?.(event)}
+              onPointerCancel={(event) => actionsRef.current?.handleSurfacePointerUp?.(event)}
               onContextMenu={(event) => event.preventDefault()}
-              onDragOver={handleTableDragOver}
-              onDrop={handleTableDrop}
+              onDragOver={(event) => actionsRef.current?.handleTableDragOver?.(event)}
+              onDrop={(event) => actionsRef.current?.handleTableDrop?.(event)}
             >
               <div
                 ref={feltRef}
@@ -3207,7 +3291,9 @@ const Table = () => {
                         isHeld={false}
                         isSelected={false}
                         onPointerDown={() => {}}
-                        onDoubleClick={handleStackDoubleClick}
+                        onDoubleClick={(event) =>
+                          actionsRef.current?.handleStackDoubleClick?.(event, stack.id)
+                        }
                         onContextMenu={(event) => event.preventDefault()}
                       />
                     )}
@@ -3226,11 +3312,19 @@ const Table = () => {
           cardIds={hands?.[mySeatIndex]?.cardIds ?? []}
           cardsById={cardsById}
           revealed={hands?.[mySeatIndex]?.revealed ?? {}}
-          onToggleReveal={handleToggleReveal}
-          onCardDragStart={handleInventoryDragStart}
-          onCardDrop={handleInventoryReorderDrop}
-          onDropToEnd={handleInventoryDropToEnd}
-          onHeaderPointerDown={handleInventoryHeaderPointerDown}
+          onToggleReveal={(cardId) => actionsRef.current?.handleToggleReveal?.(cardId)}
+          onCardDragStart={(event, cardId) =>
+            actionsRef.current?.handleInventoryDragStart?.(event, cardId)
+          }
+          onCardDrop={(draggedId, targetIndex) =>
+            actionsRef.current?.handleInventoryReorderDrop?.(draggedId, targetIndex)
+          }
+          onDropToEnd={(draggedId) =>
+            actionsRef.current?.handleInventoryDropToEnd?.(draggedId)
+          }
+          onHeaderPointerDown={(event) =>
+            actionsRef.current?.handleInventoryHeaderPointerDown?.(event)
+          }
           seatColor={players[myPlayerId]?.seatColor}
           cardStyle={appliedSettings.cardStyle}
           panelStyle={inventoryPanelStyle}
@@ -3377,12 +3471,12 @@ const Table = () => {
                         <span>Enabled</span>
                       </label>
                     </div>
-                    <button
-                      className="table-settings__button table-settings__button--secondary"
-                      type="button"
-                      onClick={resetInventoryPosition}
-                      disabled={!inventoryPos}
-                    >
+          <button
+            className="table-settings__button table-settings__button--secondary"
+            type="button"
+            onClick={() => actionsRef.current?.resetInventoryPosition?.()}
+            disabled={!inventoryPos}
+          >
                       Reset inventory position
                     </button>
                     {mySeatIndex !== null && mySeatIndex !== undefined ? (
@@ -3675,7 +3769,7 @@ const Table = () => {
                       className="table-settings__button"
                       type="button"
                       title="Rebuilds table using current room/table settings"
-                      onClick={applySettings}
+                      onClick={() => actionsRef.current?.applySettings?.()}
                     >
                       Apply Changes
                     </button>
@@ -3720,7 +3814,7 @@ const Table = () => {
                   <button
                     className="modal__button modal__button--danger"
                     type="button"
-                    onClick={handleHardResetToBaseDefaults}
+                    onClick={() => actionsRef.current?.handleHardResetToBaseDefaults?.()}
                   >
                     Reset Table
                   </button>
@@ -3748,8 +3842,8 @@ const Table = () => {
                 type="button"
                 className="stack-menu__button"
                 onClick={() => {
-                  pickupFromStack(selectedStack.id, 'all');
-                  closeMenu();
+                  actionsRef.current?.pickupFromStack?.(selectedStack.id, 'all');
+                  actionsRef.current?.closeMenu?.();
                 }}
               >
                 Pick up full stack
@@ -3761,11 +3855,11 @@ const Table = () => {
                   if (selectedStack.cardIds.length < 2) {
                     return;
                   }
-                  pickupFromStack(
+                  actionsRef.current?.pickupFromStack?.(
                     selectedStack.id,
                     Math.ceil(selectedStack.cardIds.length / 2)
                   );
-                  closeMenu();
+                  actionsRef.current?.closeMenu?.();
                 }}
               >
                 Pick up half stack
@@ -3774,8 +3868,8 @@ const Table = () => {
                 type="button"
                 className="stack-menu__button"
                 onClick={() => {
-                  pickupFromStack(selectedStack.id, 1);
-                  closeMenu();
+                  actionsRef.current?.pickupFromStack?.(selectedStack.id, 1);
+                  actionsRef.current?.closeMenu?.();
                 }}
               >
                 Pick up 1 card
@@ -3811,8 +3905,8 @@ const Table = () => {
                       onClick={() => {
                         const parsed = Number.parseInt(pickCountValue, 10);
                         const count = Number.isNaN(parsed) ? 1 : parsed;
-                        pickupFromStack(selectedStack.id, count);
-                        closeMenu();
+                        actionsRef.current?.pickupFromStack?.(selectedStack.id, count);
+                        actionsRef.current?.closeMenu?.();
                       }}
                     >
                       Pick up
@@ -3832,8 +3926,8 @@ const Table = () => {
                 type="button"
                 className="stack-menu__button"
                 onClick={() => {
-                  handleMoveSelectedToHand();
-                  closeMenu();
+                  actionsRef.current?.handleMoveSelectedToHand?.();
+                  actionsRef.current?.closeMenu?.();
                 }}
               >
                 Move to Hand
@@ -3843,8 +3937,8 @@ const Table = () => {
               type="button"
               className="stack-menu__button"
               onClick={() => {
-                handleFlipSelected();
-                closeMenu();
+                actionsRef.current?.handleFlipSelected?.();
+                actionsRef.current?.closeMenu?.();
               }}
             >
               Flip
@@ -3853,8 +3947,8 @@ const Table = () => {
               type="button"
               className="stack-menu__button"
               onClick={() => {
-                handleShuffleSelected();
-                closeMenu();
+                actionsRef.current?.handleShuffleSelected?.();
+                actionsRef.current?.closeMenu?.();
               }}
             >
               Shuffle
@@ -3880,7 +3974,7 @@ const Table = () => {
                   console.log('Sit click', seatMenuIndex, myPlayerId);
                   sitAtSeat(seatMenuIndex);
                   logAction(`${myName} sat at ${seatMenuSeat.label}`);
-                  closeSeatMenu();
+                  actionsRef.current?.closeSeatMenu?.();
                 }}
               />
             </div>,
