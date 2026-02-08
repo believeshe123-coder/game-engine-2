@@ -9,10 +9,12 @@ const DEFAULT_SETTINGS = {
   stackCountDisplayMode: 'always',
   tableZoom: 1,
   cardScale: 1,
+  inventoryDragEnabled: true,
   roomSettings: {
     tableStyle: 'medieval',
     tableShape: 'rectangle',
     seatCount: 8,
+    seatLock: false,
     seatParams: {
       rectangle: [],
       oval: [],
@@ -51,6 +53,10 @@ const normalizeSettings = (settings) => {
   if (!['always', 'hover'].includes(next.stackCountDisplayMode)) {
     next.stackCountDisplayMode = DEFAULT_SETTINGS.stackCountDisplayMode;
   }
+  next.inventoryDragEnabled =
+    typeof next.inventoryDragEnabled === 'boolean'
+      ? next.inventoryDragEnabled
+      : DEFAULT_SETTINGS.inventoryDragEnabled;
   const roomSettings = {
     ...DEFAULT_SETTINGS.roomSettings,
     ...(next.roomSettings ?? {})
@@ -61,6 +67,10 @@ const normalizeSettings = (settings) => {
   if (!['rectangle', 'oval', 'circle'].includes(roomSettings.tableShape)) {
     roomSettings.tableShape = DEFAULT_SETTINGS.roomSettings.tableShape;
   }
+  roomSettings.seatLock =
+    typeof roomSettings.seatLock === 'boolean'
+      ? roomSettings.seatLock
+      : DEFAULT_SETTINGS.roomSettings.seatLock;
   const seatCount = Number.parseInt(roomSettings.seatCount, 10);
   if (Number.isNaN(seatCount)) {
     roomSettings.seatCount = DEFAULT_SETTINGS.roomSettings.seatCount;
