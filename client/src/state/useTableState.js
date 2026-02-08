@@ -415,6 +415,31 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     [buildTableSurface, seatCount]
   );
 
+  const hardResetTableState = useCallback(
+    (settingsInput) => {
+      const settings = normalizeSettings(settingsInput ?? DEFAULT_SETTINGS);
+      const built = buildTableSurface(settings);
+      if (!built) {
+        return;
+      }
+      const count = settings.roomSettings?.seatCount ?? DEFAULT_SETTINGS.roomSettings.seatCount;
+      const nextHands = {};
+      for (let index = 0; index < count; index += 1) {
+        nextHands[index] = createEmptyHand();
+      }
+      setCardsById(built.nextCardsById);
+      setAllCardIds(built.allCardIds);
+      setStacks(built.nextStacks);
+      setHands(nextHands);
+      setSeatState({
+        mySeatIndex: null,
+        seatAssignments: Array.from({ length: count }, () => null)
+      });
+      initializedRef.current = true;
+    },
+    [buildTableSurface]
+  );
+
   const rebuildTableSurfacePreservingHands = useCallback(
     (settingsInput) => {
       const built = buildTableSurface(settingsInput);
@@ -778,6 +803,7 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     reorderHand,
     toggleReveal,
     resetTableSurface,
-    rebuildTableSurfacePreservingHands
+    rebuildTableSurfacePreservingHands,
+    hardResetTableState
   };
 };
