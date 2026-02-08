@@ -51,6 +51,7 @@ const SLIDE_JITTER_PX = 3;
 const SLIDE_MIN_SEPARATION_PX = 40;
 const SLIDE_START_DIR_THRESHOLD_PX = 10;
 const HAND_ZONE_SEAT_OFFSET_BASE = 52;
+const HELD_STACK_ID = '__HELD__';
 
 const SIDE_ORDER = ['top', 'right', 'bottom', 'left'];
 const SIDE_NORMALS = {
@@ -1274,11 +1275,7 @@ const Table = () => {
         });
         clearInteraction({
           preserveSelection: true,
-          nextSelectedStackId:
-            interaction.selectedStackId === held.origin?.stackId ||
-            interaction.selectedStackId === held.stackId
-              ? overlapId
-              : interaction.selectedStackId
+          nextSelectedStackId: overlapId
         });
         return;
       } else {
@@ -1295,7 +1292,10 @@ const Table = () => {
           })
         );
       }
-      clearInteraction({ preserveSelection: true });
+      clearInteraction({
+        preserveSelection: true,
+        nextSelectedStackId: held.stackId
+      });
     },
     [
       cardSize.height,
@@ -2302,6 +2302,7 @@ const Table = () => {
   const selectedStack = interaction.selectedStackId
     ? stacksById[interaction.selectedStackId]
     : null;
+  const highlightStackId = interaction.held ? HELD_STACK_ID : interaction.selectedStackId;
   const heldTopCardId = interaction.held?.cardIds?.[
     (interaction.held?.cardIds?.length ?? 1) - 1
   ];
@@ -2325,6 +2326,21 @@ const Table = () => {
     interaction.held && heldWorldPosition
       ? { x: heldWorldPosition.x, y: heldWorldPosition.y, rot: 0 }
       : null;
+  const heldStackVisual =
+    interaction.held && heldWorldPosition
+      ? {
+          id: HELD_STACK_ID,
+          x: heldWorldPosition.x,
+          y: heldWorldPosition.y,
+          rotation: 0,
+          faceUp: interaction.held.faceUp ?? true,
+          cardIds: interaction.held.cardIds,
+          zone: 'table',
+          ownerSeatIndex: null,
+          isHeldVisual: true
+        }
+      : null;
+  const renderStacks = heldStackVisual ? [...tableStacks, heldStackVisual] : tableStacks;
   const hoverHandSeatId =
     interaction.held && heldWorldPosition
       ? getHandZoneAtPoint(
@@ -2628,13 +2644,14 @@ const Table = () => {
                   }}
                 />
               ) : null}
-              {tableStacks.map((stack, index) => {
+              {renderStacks.map((stack, index) => {
                 const topCardId = stack.cardIds[stack.cardIds.length - 1];
                 const topCard = cardsById[topCardId];
-                const isSelectedStack = stack.id === interaction.selectedStackId;
+                const isSelectedStack = stack.id === highlightStackId;
                 const isHeldStack =
-                  interaction.mode === 'dragStack' &&
-                  interaction.drag?.stackId === stack.id;
+                  stack.id === HELD_STACK_ID ||
+                  (interaction.mode === 'dragStack' &&
+                    interaction.drag?.stackId === stack.id);
                 const isHoveredStack = stack.id === hoveredStackId;
                 const isMenuTarget =
                   interaction.menu.open && interaction.menu.stackId === stack.id;
@@ -2652,6 +2669,7 @@ const Table = () => {
                           : '';
                 const zIndex = index + 1;
                 const showBadge =
+                  !stack.isHeldVisual &&
                   stack.cardIds.length > 1 &&
                   (settings.stackCountDisplayMode === 'always' ||
                     (settings.stackCountDisplayMode === 'hover' &&
@@ -2670,23 +2688,25 @@ const Table = () => {
                       zIndex
                     }}
                   >
-                    <Card
-                      id={stack.id}
-                      x={0}
-                      y={0}
-                      rotation={0}
-                      faceUp={getCardFace(stack, topCardId)}
-                      cardStyle={appliedSettings.cardStyle}
-                      zIndex={1}
-                      rank={topCard?.rank}
-                      suit={topCard?.suit}
-                      color={topCard?.color}
-                      isHeld={false}
-                      isSelected={false}
-                      onPointerDown={() => {}}
-                      onDoubleClick={handleStackDoubleClick}
-                      onContextMenu={(event) => event.preventDefault()}
-                    />
+                    {stack.isHeldVisual ? null : (
+                      <Card
+                        id={stack.id}
+                        x={0}
+                        y={0}
+                        rotation={0}
+                        faceUp={getCardFace(stack, topCardId)}
+                        cardStyle={appliedSettings.cardStyle}
+                        zIndex={1}
+                        rank={topCard?.rank}
+                        suit={topCard?.suit}
+                        color={topCard?.color}
+                        isHeld={false}
+                        isSelected={false}
+                        onPointerDown={() => {}}
+                        onDoubleClick={handleStackDoubleClick}
+                        onContextMenu={(event) => event.preventDefault()}
+                      />
+                    )}
                     {showBadge ? (
                       <div className="stackCountBadge">Stack: {stack.cardIds.length}</div>
                     ) : null}
