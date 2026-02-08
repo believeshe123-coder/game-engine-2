@@ -3153,10 +3153,10 @@ const Table = () => {
                 isOccupied={seatMenuIsOccupied}
                 playerName={players[myPlayerId]?.name ?? 'Player'}
                 seatColor={
-                  seatMenuPlayer?.seatColor ?? players[myPlayerId]?.seatColor ?? '#6aa9ff'
+                  seatMenuPlayer?.seatColor ?? players[myPlayerId]?.seatColor
                 }
                 accentColor={
-                  seatMenuPlayer?.accentColor ?? players[myPlayerId]?.accentColor ?? '#ffd36a'
+                  seatMenuPlayer?.accentColor ?? players[myPlayerId]?.accentColor
                 }
                 onSit={() => {
                   // eslint-disable-next-line no-console

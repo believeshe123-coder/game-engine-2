@@ -239,11 +239,11 @@
 }
 
 .hand-zone--owner {
-  border-color: var(--seat-color, rgba(247, 228, 176, 0.9));
+  border-color: var(--seat-color);
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--seat-color, #f7e4b0) 50%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--seat-color, #f7e4b0) 30%, transparent),
-    0 0 18px color-mix(in srgb, var(--seat-color, #f7e4b0) 35%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--seat-color) 50%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--seat-color) 30%, transparent),
+    0 0 18px color-mix(in srgb, var(--seat-color) 35%, transparent);
 }
 
 .hand-zone__count {
@@ -1271,8 +1271,8 @@ body,
 }
 
 .hand-zone--owner {
-  border-color: color-mix(in srgb, var(--seat-color, #f7e4b0) 70%, rgba(22, 22, 22, 0.65));
-  background: color-mix(in srgb, var(--seat-color, #f7e4b0) 18%, rgba(255, 255, 255, 0.2));
+  border-color: color-mix(in srgb, var(--seat-color) 70%, rgba(22, 22, 22, 0.65));
+  background: color-mix(in srgb, var(--seat-color) 18%, rgba(255, 255, 255, 0.2));
 }
 
 .hand-zone--hover {
@@ -1374,7 +1374,7 @@ body,
   border: none;
   background: transparent;
   padding: 0;
-  --seat-outline: var(--seat-color, rgba(255, 255, 255, 0.4));
+  --seat-outline: var(--seat-color);
 }
 
 .seat--dragging {
@@ -1382,7 +1382,7 @@ body,
 }
 
 .seat--dragging .seat__bench {
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6), var(--seat-shadow-soft);
+  box-shadow: 0 0 0 2px var(--seat-outline), var(--seat-shadow-soft);
 }
 
 .seat--occupied .seat__bench,
