@@ -575,8 +575,7 @@ const Table = () => {
     setSettingsOpen,
     setCardFaceOverrides,
     setResetConfirmOpen,
-    updateTabletopScale
-  ]);
+    updateTabletopScale,
     handZoneSeatOffset,
     handZoneSize.height,
     handZoneSize.width,
