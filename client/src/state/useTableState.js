@@ -4,8 +4,10 @@ import { DEFAULT_SETTINGS, normalizeSettings } from './tableSettings.js';
 import {
   loadMySeatIndex,
   loadPlayerProfile,
+  loadSeatAssignments,
   saveMySeatIndex,
-  savePlayerProfile
+  savePlayerProfile,
+  saveSeatAssignments
 } from './playerProfile.js';
 
 const SUITS = [
@@ -244,10 +246,29 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
   const nextStackIdRef = useRef(21);
   const initialProfile = useMemo(() => loadPlayerProfile(), []);
   const playerIdRef = useRef(initialProfile.id);
-  const initialSeatIndex = useMemo(() => {
+  const initialSeatState = useMemo(() => {
     const count = seatCount ?? DEFAULT_SETTINGS.roomSettings.seatCount;
-    const stored = loadMySeatIndex();
-    return Number.isFinite(stored) && stored >= 0 && stored < count ? stored : null;
+    const storedSeatIndex = loadMySeatIndex();
+    const storedAssignments = loadSeatAssignments();
+    const seatAssignments = Array.from({ length: count }, (_, index) =>
+      storedAssignments?.[index] ?? null
+    );
+    let mySeatIndex =
+      Number.isFinite(storedSeatIndex) && storedSeatIndex >= 0 && storedSeatIndex < count
+        ? storedSeatIndex
+        : null;
+    const existingIndex = seatAssignments.findIndex((id) => id === playerIdRef.current);
+    if (existingIndex !== -1) {
+      mySeatIndex = existingIndex;
+    } else if (mySeatIndex !== null) {
+      const occupant = seatAssignments[mySeatIndex];
+      if (occupant && occupant !== playerIdRef.current) {
+        mySeatIndex = null;
+      } else {
+        seatAssignments[mySeatIndex] = playerIdRef.current;
+      }
+    }
+    return { seatAssignments, mySeatIndex };
   }, [seatCount]);
   const [actionLog, setActionLog] = useState([]);
   const actionLogIdRef = useRef(1);
@@ -256,17 +277,15 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     [playerIdRef.current]: {
       id: playerIdRef.current,
       name: initialProfile.name,
-      seatIndex: initialSeatIndex,
+      seatIndex: initialSeatState.mySeatIndex,
       seatColor: initialProfile.seatColor,
       accentColor: initialProfile.accentColor
     }
   }));
-  const [seatAssignments, setSeatAssignments] = useState(() => {
-    const count = seatCount ?? DEFAULT_SETTINGS.roomSettings.seatCount;
-    return Array.from({ length: count }, (_, index) =>
-      index === initialSeatIndex ? playerIdRef.current : null
-    );
-  });
+  const [seatState, setSeatState] = useState(() => ({
+    mySeatIndex: initialSeatState.mySeatIndex,
+    seatAssignments: initialSeatState.seatAssignments
+  }));
   const [hands, setHands] = useState(() => {
     const count = seatCount ?? DEFAULT_SETTINGS.roomSettings.seatCount;
     return Array.from({ length: count }, (_, index) => index).reduce((acc, index) => {
@@ -368,16 +387,22 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
 
   useEffect(() => {
     const count = seatCount ?? DEFAULT_SETTINGS.roomSettings.seatCount;
-    setSeatAssignments((prev) => {
-      const next = Array.from({ length: count }, (_, index) => prev?.[index] ?? null);
-      const myIndex = next.findIndex((id) => id === playerIdRef.current);
-      if (myIndex === -1) {
-        const profileSeat = players[playerIdRef.current]?.seatIndex ?? null;
-        if (profileSeat !== null && profileSeat < count) {
-          next[profileSeat] = playerIdRef.current;
+    setSeatState((prev) => {
+      const nextAssignments = Array.from({ length: count }, (_, index) =>
+        prev.seatAssignments?.[index] ?? null
+      );
+      let nextSeatIndex = prev.mySeatIndex;
+      if (nextSeatIndex !== null && nextSeatIndex >= count) {
+        if (nextAssignments[nextSeatIndex] === playerIdRef.current) {
+          nextAssignments[nextSeatIndex] = null;
         }
+        nextSeatIndex = null;
       }
-      return next;
+      return {
+        ...prev,
+        mySeatIndex: nextSeatIndex,
+        seatAssignments: nextAssignments
+      };
     });
     setHands((prev) => {
       const next = {};
@@ -390,17 +415,7 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
       }
       return next;
     });
-    const currentSeatIndex = players[playerIdRef.current]?.seatIndex ?? null;
-    if (currentSeatIndex !== null && currentSeatIndex >= count) {
-      setPlayers((prev) => ({
-        ...prev,
-        [playerIdRef.current]: {
-          ...prev[playerIdRef.current],
-          seatIndex: null
-        }
-      }));
-    }
-  }, [players, seatCount]);
+  }, [seatCount]);
 
   useEffect(() => {
     const profile = players[playerIdRef.current];
@@ -413,8 +428,28 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
       seatColor: profile.seatColor,
       accentColor: profile.accentColor
     });
-    saveMySeatIndex(profile.seatIndex ?? null);
   }, [players]);
+
+  useEffect(() => {
+    saveMySeatIndex(seatState.mySeatIndex ?? null);
+    saveSeatAssignments(seatState.seatAssignments);
+  }, [seatState.mySeatIndex, seatState.seatAssignments]);
+
+  useEffect(() => {
+    setPlayers((prev) => {
+      const current = prev[playerIdRef.current];
+      if (!current || current.seatIndex === seatState.mySeatIndex) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [playerIdRef.current]: {
+          ...current,
+          seatIndex: seatState.mySeatIndex
+        }
+      };
+    });
+  }, [seatState.mySeatIndex]);
 
   const logAction = useCallback((text) => {
     if (!text) {
@@ -446,45 +481,55 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     }));
   }, []);
 
-  const sitAtSeat = useCallback(
-    (seatIndex) => {
-      let didAssign = false;
-      setSeatAssignments((prev) => {
-        const count = prev.length;
-        if (!Number.isInteger(seatIndex) || seatIndex < 0 || seatIndex >= count) {
-          return prev;
-        }
-        const next = Array.from({ length: count }, (_, index) => prev[index] ?? null);
-        const occupiedBy = next[seatIndex];
-        if (occupiedBy && occupiedBy !== playerIdRef.current) {
-          return prev;
-        }
-        const currentIndex = next.findIndex((id) => id === playerIdRef.current);
-        if (currentIndex !== -1) {
-          next[currentIndex] = null;
-        }
-        next[seatIndex] = playerIdRef.current;
-        didAssign = true;
-        return next;
+  const sitAtSeat = useCallback((seatIndex) => {
+    setSeatState((prev) => {
+      const count = prev.seatAssignments.length;
+      console.log('sitAtSeat before', {
+        seatIndex,
+        mySeatIndex: prev.mySeatIndex,
+        seatAssignments: prev.seatAssignments
       });
-      if (!didAssign) {
-        return;
+      if (!Number.isInteger(seatIndex) || seatIndex < 0 || seatIndex >= count) {
+        return prev;
       }
-      setPlayers((prev) => ({
+      const nextAssignments = [...prev.seatAssignments];
+      if (prev.mySeatIndex !== null) {
+        nextAssignments[prev.mySeatIndex] = null;
+      }
+      const occupant = nextAssignments[seatIndex];
+      if (occupant && occupant !== playerIdRef.current) {
+        return prev;
+      }
+      nextAssignments[seatIndex] = playerIdRef.current;
+      const nextState = {
         ...prev,
-        [playerIdRef.current]: {
-          ...prev[playerIdRef.current],
-          seatIndex
-        }
-      }));
-    },
-    []
-  );
+        mySeatIndex: seatIndex,
+        seatAssignments: nextAssignments
+      };
+      console.log('sitAtSeat after', nextState);
+      return nextState;
+    });
+    setPlayers((prev) => ({
+      ...prev,
+      [playerIdRef.current]: {
+        ...prev[playerIdRef.current],
+        seatIndex
+      }
+    }));
+  }, []);
 
   const standUp = useCallback(() => {
-    setSeatAssignments((prev) =>
-      prev.map((entry) => (entry === playerIdRef.current ? null : entry))
-    );
+    setSeatState((prev) => {
+      const nextAssignments = [...prev.seatAssignments];
+      if (prev.mySeatIndex !== null) {
+        nextAssignments[prev.mySeatIndex] = null;
+      }
+      return {
+        ...prev,
+        mySeatIndex: null,
+        seatAssignments: nextAssignments
+      };
+    });
     setPlayers((prev) => ({
       ...prev,
       [playerIdRef.current]: {
@@ -635,7 +680,8 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
   }, []);
 
   const player = players[playerIdRef.current];
-  const mySeatIndex = player?.seatIndex ?? null;
+  const mySeatIndex = seatState.mySeatIndex;
+  const seatAssignments = seatState.seatAssignments;
 
   return {
     cardsById,
