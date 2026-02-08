@@ -2432,6 +2432,12 @@ const Table = () => {
     setHoveredStackId(null);
     setPickCountOpen(false);
     setPickCountValue('1');
+    setSeatMenuState({ seatIndex: null, open: false });
+    setHoverSeatDropIndex(null);
+    setHoverSeatCard(null);
+    setDragSeatIndex(null);
+    setInventoryDrag(null);
+    setHeldScreenPos(null);
   }, [clearInteraction]);
 
   const applySettings = useCallback(() => {
@@ -2441,6 +2447,21 @@ const Table = () => {
     setCardFaceOverrides({});
     updateTabletopScale();
   }, [resetTableSurface, resetInteractionStates, settings, updateTabletopScale]);
+
+  const handleResetTable = useCallback(() => {
+    setAppliedSettings(settings);
+    resetTableSurface(settings);
+    resetInteractionStates();
+    setCardFaceOverrides({});
+    updateTabletopScale();
+    logAction('Reset table (hands cleared)');
+  }, [
+    logAction,
+    resetInteractionStates,
+    resetTableSurface,
+    settings,
+    updateTabletopScale
+  ]);
 
   const handleStackDoubleClick = useCallback((event, stackId) => {
     event.preventDefault();
@@ -3274,7 +3295,7 @@ const Table = () => {
             <button
               className="table-settings__button"
               type="button"
-              onClick={applySettings}
+              onClick={handleResetTable}
             >
               Reset Table
             </button>
