@@ -212,6 +212,27 @@ const Table = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [roomSettingsOpen, setRoomSettingsOpen] = useState(false);
   const [dragSeatIndex, setDragSeatIndex] = useState(null);
+  const inventoryPanelRef = useRef(null);
+  const [inventoryPos, setInventoryPos] = useState(() => {
+    if (typeof window === 'undefined') {
+      return null;
+    }
+    const saved = window.localStorage.getItem('tt_inventoryPos');
+    if (!saved) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(saved);
+      if (Number.isFinite(parsed?.x) && Number.isFinite(parsed?.y)) {
+        return { x: parsed.x, y: parsed.y };
+      }
+    } catch (error) {
+      return null;
+    }
+    return null;
+  });
+  const [inventoryDrag, setInventoryDrag] = useState(null);
+  const [heldScreenPos, setHeldScreenPos] = useState(null);
   const [seatMenuState, setSeatMenuState] = useState({
     seatIndex: null,
     open: false
@@ -949,6 +970,111 @@ const Table = () => {
     [getSeatIndexAtScreenPoint, hoverSeatDropIndex, interaction.held]
   );
 
+  const clampInventoryPosition = useCallback((position, rect) => {
+    if (!rect || typeof window === 'undefined') {
+      return position;
+    }
+    const maxX = Math.max(0, window.innerWidth - rect.width);
+    const maxY = Math.max(0, window.innerHeight - rect.height);
+    return {
+      x: Math.min(maxX, Math.max(0, position.x)),
+      y: Math.min(maxY, Math.max(0, position.y))
+    };
+  }, []);
+
+  const handleInventoryHeaderPointerDown = useCallback(
+    (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+      const panel = inventoryPanelRef.current;
+      if (!panel) {
+        return;
+      }
+      event.preventDefault();
+      const rect = panel.getBoundingClientRect();
+      const startPosition = inventoryPos ?? { x: rect.left, y: rect.top };
+      setInventoryPos(startPosition);
+      setInventoryDrag({
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top,
+        width: rect.width,
+        height: rect.height
+      });
+    },
+    [inventoryPos]
+  );
+
+  useEffect(() => {
+    if (!inventoryDrag) {
+      return;
+    }
+    const handleMove = (event) => {
+      const next = {
+        x: event.clientX - inventoryDrag.offsetX,
+        y: event.clientY - inventoryDrag.offsetY
+      };
+      const rect = { width: inventoryDrag.width, height: inventoryDrag.height };
+      const clamped = clampInventoryPosition(next, rect);
+      setInventoryPos(clamped);
+    };
+    const handleUp = () => {
+      setInventoryDrag(null);
+    };
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    window.addEventListener('pointercancel', handleUp);
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleUp);
+    };
+  }, [clampInventoryPosition, inventoryDrag]);
+
+  useEffect(() => {
+    if (!inventoryPos || typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('tt_inventoryPos', JSON.stringify(inventoryPos));
+  }, [inventoryPos]);
+
+  useEffect(() => {
+    if (!inventoryPos) {
+      return;
+    }
+    const panel = inventoryPanelRef.current;
+    if (!panel) {
+      return;
+    }
+    const rect = panel.getBoundingClientRect();
+    const clamped = clampInventoryPosition(inventoryPos, rect);
+    if (clamped.x !== inventoryPos.x || clamped.y !== inventoryPos.y) {
+      setInventoryPos(clamped);
+    }
+  }, [clampInventoryPosition, inventoryPos]);
+
+  const logDealt = useCallback(
+    (seatIndex, count) => {
+      const seatLabel = `Seat ${seatIndex + 1}`;
+      logAction(`Dealt ${count} ${count === 1 ? 'card' : 'cards'} to ${seatLabel}`);
+    },
+    [logAction]
+  );
+
+  const logRevealChange = useCallback(
+    (playerName, isRevealed) => {
+      logAction(`${playerName} ${isRevealed ? 'hid' : 'revealed'} a card`);
+    },
+    [logAction]
+  );
+
+  const logPublicReveal = useCallback(
+    (cardId) => {
+      logAction(`${myName} revealed ${getCardLabel(cardId)}`);
+    },
+    [getCardLabel, logAction, myName]
+  );
+
   const handleSeatPointerDown = useCallback(
     (event, seatIndex) => {
       if (interaction.mode !== 'idle') {
@@ -1289,10 +1415,7 @@ const Table = () => {
           : null;
       if (seatDropIndex !== null && seatDropIndex !== undefined) {
         moveCardIdsToHand(seatDropIndex, held.cardIds);
-        const seatLabel = seats[seatDropIndex]?.label ?? `Seat ${seatDropIndex + 1}`;
-        logAction(
-          `Dealt ${held.cardIds.length} ${held.cardIds.length === 1 ? 'card' : 'cards'} to ${seatLabel}`
-        );
+        logDealt(seatDropIndex, held.cardIds.length);
         clearInteraction({ preserveSelection: false });
         return;
       }
@@ -1312,10 +1435,7 @@ const Table = () => {
       );
       if (handSeatIndex !== null && handSeatIndex !== undefined) {
         moveCardIdsToHand(handSeatIndex, held.cardIds);
-        const seatLabel = seats[handSeatIndex]?.label ?? `Seat ${handSeatIndex + 1}`;
-        logAction(
-          `${myName} dealt ${held.cardIds.length} ${held.cardIds.length === 1 ? 'card' : 'cards'} to ${seatLabel}`
-        );
+        logDealt(handSeatIndex, held.cardIds.length);
         clearInteraction({ preserveSelection: false });
         return;
       }
@@ -1368,10 +1488,8 @@ const Table = () => {
       interaction.drag,
       interaction.held,
       interaction.selectedStackId,
-      logAction,
+      logDealt,
       moveCardIdsToHand,
-      myName,
-      seats,
       setStacks
     ]
   );
@@ -1393,10 +1511,7 @@ const Table = () => {
           : null;
       if (seatDropIndex !== null && seatDropIndex !== undefined) {
         moveCardIdsToHand(seatDropIndex, draggedStack.cardIds);
-        const seatLabel = seats[seatDropIndex]?.label ?? `Seat ${seatDropIndex + 1}`;
-        logAction(
-          `Dealt ${draggedStack.cardIds.length} ${draggedStack.cardIds.length === 1 ? 'card' : 'cards'} to ${seatLabel}`
-        );
+        logDealt(seatDropIndex, draggedStack.cardIds.length);
         setStacks((prev) => prev.filter((stack) => stack.id !== draggedId));
         clearInteraction();
         return;
@@ -1408,10 +1523,7 @@ const Table = () => {
       );
       if (handSeatIndex !== null && handSeatIndex !== undefined) {
         moveCardIdsToHand(handSeatIndex, draggedStack.cardIds);
-        const seatLabel = seats[handSeatIndex]?.label ?? `Seat ${handSeatIndex + 1}`;
-        logAction(
-          `${myName} dealt ${draggedStack.cardIds.length} ${draggedStack.cardIds.length === 1 ? 'card' : 'cards'} to ${seatLabel}`
-        );
+        logDealt(handSeatIndex, draggedStack.cardIds.length);
         setStacks((prev) => prev.filter((stack) => stack.id !== draggedId));
         clearInteraction();
         return;
@@ -1440,11 +1552,9 @@ const Table = () => {
       interaction.drag,
       interaction.mode,
       interaction.selectedStackId,
-      logAction,
+      logDealt,
       mergeStacks,
       moveCardIdsToHand,
-      myName,
-      seats,
       setStacks,
       stacksById
     ]
@@ -1861,6 +1971,30 @@ const Table = () => {
     };
   }, [updatePresence]);
 
+  useEffect(() => {
+    const handlePointerMove = (event) => {
+      lastPointerRef.current = { x: event.clientX, y: event.clientY };
+      if (interaction.held) {
+        setHeldScreenPos({ x: event.clientX, y: event.clientY });
+        updateSeatDropHover(event.clientX, event.clientY);
+      }
+    };
+    window.addEventListener('pointermove', handlePointerMove);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+    };
+  }, [interaction.held, updateSeatDropHover]);
+
+  useEffect(() => {
+    if (!interaction.held) {
+      setHeldScreenPos(null);
+      return;
+    }
+    if (!heldScreenPos && lastPointerRef.current) {
+      setHeldScreenPos(lastPointerRef.current);
+    }
+  }, [heldScreenPos, interaction.held]);
+
   const handlePointerMoveHover = useCallback(
     (pointerWorld) => {
       if (interaction.mode !== 'idle') {
@@ -2274,9 +2408,9 @@ const Table = () => {
       const seatHand = hands?.[mySeatIndex];
       const isRevealed = Boolean(seatHand?.revealed?.[cardId]);
       toggleReveal(mySeatIndex, cardId);
-      logAction(`${myName} ${isRevealed ? 'hid' : 'revealed'} ${getCardLabel(cardId)}`);
+      logRevealChange(myName, isRevealed);
     },
-    [getCardLabel, hands, myName, mySeatIndex, logAction, toggleReveal]
+    [hands, myName, mySeatIndex, logRevealChange, toggleReveal]
   );
 
   const visibleBadgeStackId =
@@ -2445,12 +2579,24 @@ const Table = () => {
   const uiOverlayRoot =
     typeof document !== 'undefined' ? document.getElementById('ui-overlay') : null;
   const dragCardPosition =
-    interaction.held && heldWorldPosition && tableScreenRect
+    interaction.held && heldScreenPos
       ? {
-          x: tableScreenRect.left + heldWorldPosition.x * combinedScale,
-          y: tableScreenRect.top + heldWorldPosition.y * combinedScale
+          x:
+            heldScreenPos.x -
+            (interaction.drag?.offset?.x ?? cardSize.width / 2) * combinedScale,
+          y:
+            heldScreenPos.y -
+            (interaction.drag?.offset?.y ?? cardSize.height / 2) * combinedScale
         }
       : null;
+  const inventoryPanelStyle = inventoryPos
+    ? {
+        left: `${inventoryPos.x}px`,
+        top: `${inventoryPos.y}px`,
+        bottom: 'auto',
+        transform: 'none'
+      }
+    : undefined;
   return (
     <div className="tabletop">
       <div
@@ -2483,7 +2629,11 @@ const Table = () => {
               const seatPlayer = seatPlayerId ? players[seatPlayerId] : null;
               const occupied = Boolean(seatPlayerId);
               const isMine = seatPlayerId === myPlayerId;
-              const seatHandCount = hands?.[seat.seatIndex]?.cardIds?.length ?? 0;
+              const seatHand = hands?.[seat.seatIndex] ?? { cardIds: [], revealed: {} };
+              const seatHandCount = seatHand.cardIds.length;
+              const maxRender = 10;
+              const visibleCardIds = seatHand.cardIds.slice(0, maxRender);
+              const overflowCount = Math.max(0, seatHand.cardIds.length - visibleCardIds.length);
               const seatStyle = {
                 left: `${seat.x}px`,
                 top: `${seat.y}px`,
@@ -2526,7 +2676,42 @@ const Table = () => {
                       {/* hand contents render here if needed */}
                     </div>
 
-                    <div className="seat__handIndicator" aria-hidden="true" />
+                    <div
+                      className="seat__handIndicator"
+                      aria-hidden="true"
+                      style={{ '--seat-card-count': visibleCardIds.length }}
+                    >
+                      <div className="seat__handCards">
+                        {visibleCardIds.map((cardId, index) => {
+                          const card = cardsById[cardId];
+                          const isRevealed = Boolean(seatHand.revealed?.[cardId]);
+                          return (
+                            <div
+                              key={`seat-card-${seat.seatIndex}-${cardId}`}
+                              className="seat__handCard"
+                              style={{ left: `${index * 6}px`, top: `${index * -1}px` }}
+                            >
+                              <Card
+                                id={cardId}
+                                x={0}
+                                y={0}
+                                rotation={0}
+                                faceUp={isRevealed}
+                                cardStyle={appliedSettings.cardStyle}
+                                zIndex={index + 1}
+                                rank={card?.rank}
+                                suit={card?.suit}
+                                color={card?.color}
+                                onPointerDown={() => {}}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {overflowCount > 0 ? (
+                        <div className="seat__handOverflow">+{overflowCount}</div>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
               );
@@ -2777,6 +2962,7 @@ const Table = () => {
       </div>
       {mySeatIndex !== null ? (
         <InventoryPanel
+          ref={inventoryPanelRef}
           cardIds={hands?.[mySeatIndex]?.cardIds ?? []}
           cardsById={cardsById}
           revealed={hands?.[mySeatIndex]?.revealed ?? {}}
@@ -2784,8 +2970,11 @@ const Table = () => {
           onCardDragStart={handleInventoryDragStart}
           onCardDrop={handleInventoryReorderDrop}
           onDropToEnd={handleInventoryDropToEnd}
+          onHeaderPointerDown={handleInventoryHeaderPointerDown}
           seatColor={players[myPlayerId]?.seatColor}
           cardStyle={appliedSettings.cardStyle}
+          panelStyle={inventoryPanelStyle}
+          isDragging={Boolean(inventoryDrag)}
         />
       ) : null}
       {interaction.held && uiOverlayRoot && dragCardPosition
