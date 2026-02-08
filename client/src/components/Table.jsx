@@ -154,7 +154,7 @@ const Table = () => {
     stacks,
     setStacks,
     createStackId,
-    rebuildTableFromSettings,
+    resetTableSurface,
     players,
     player,
     mySeatIndex,
@@ -2436,11 +2436,11 @@ const Table = () => {
 
   const applySettings = useCallback(() => {
     setAppliedSettings(settings);
-    rebuildTableFromSettings(settings);
+    resetTableSurface(settings);
     resetInteractionStates();
     setCardFaceOverrides({});
     updateTabletopScale();
-  }, [rebuildTableFromSettings, resetInteractionStates, settings, updateTabletopScale]);
+  }, [resetTableSurface, resetInteractionStates, settings, updateTabletopScale]);
 
   const handleStackDoubleClick = useCallback((event, stackId) => {
     event.preventDefault();

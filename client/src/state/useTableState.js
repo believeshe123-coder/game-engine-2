@@ -292,6 +292,7 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
       return acc;
     }, {});
   });
+  const handsRef = useRef(hands);
 
   const createStackId = useCallback(() => {
     const id = `s${nextStackIdRef.current}`;
@@ -299,10 +300,10 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     return id;
   }, []);
 
-  const rebuildTableFromSettings = useCallback(
-    (settingsInput) => {
+  const buildTableSurface = useCallback(
+    (settingsInput, excludedCardIds = new Set()) => {
       if (!tableRect?.width || !tableRect?.height) {
-        return;
+        return null;
       }
       const settings = normalizeSettings(settingsInput ?? DEFAULT_SETTINGS);
       const tableShape = settings.roomSettings?.tableShape ?? 'rectangle';
@@ -320,8 +321,17 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
       });
       const nextStacks = [];
       nextStackIdRef.current = 1;
+      const remainingDeckCardIds = deckCardIds.map((deckIds) =>
+        deckIds.filter((cardId) => !excludedCardIds.has(cardId))
+      );
+      const remainingCardIds = allCardIds.filter(
+        (cardId) => !excludedCardIds.has(cardId)
+      );
 
       const pushStack = (x, y, cardIds, faceUp) => {
+        if (!cardIds?.length) {
+          return;
+        }
         const centerX = x + cardSize.width / 2;
         const centerY = y + cardSize.height / 2;
         const clampedCenter = clampStackToFelt(
@@ -352,16 +362,17 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
         height: boundsHeight
       }, {
         cardSize,
-        deckCardIds,
-        allCardIds,
+        deckCardIds: remainingDeckCardIds,
+        allCardIds: remainingCardIds,
         settings,
         pushStack
       });
 
-      setCardsById(nextCardsById);
-      setAllCardIds(allCardIds);
-      setStacks(nextStacks);
-      initializedRef.current = true;
+      return {
+        nextCardsById,
+        allCardIds,
+        nextStacks
+      };
     },
     [
       cardSize.height,
@@ -370,6 +381,65 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
       tableRect?.height,
       tableRect?.width
     ]
+  );
+
+  const rebuildTableFromSettings = useCallback(
+    (settingsInput) => {
+      const built = buildTableSurface(settingsInput);
+      if (!built) {
+        return;
+      }
+      setCardsById(built.nextCardsById);
+      setAllCardIds(built.allCardIds);
+      setStacks(built.nextStacks);
+      initializedRef.current = true;
+    },
+    [buildTableSurface]
+  );
+
+  const resetTableSurface = useCallback(
+    (settingsInput) => {
+      const currentHands = handsRef.current ?? {};
+      const excludedCardIds = new Set(
+        Object.values(currentHands).flatMap((hand) => hand?.cardIds ?? [])
+      );
+      const built = buildTableSurface(settingsInput, excludedCardIds);
+      if (!built) {
+        return;
+      }
+      setCardsById(built.nextCardsById);
+      setAllCardIds(built.allCardIds);
+      setStacks(built.nextStacks);
+      setHands((prev) => {
+        const count = seatCount ?? DEFAULT_SETTINGS.roomSettings.seatCount;
+        const next = {};
+        let changed = false;
+        for (let index = 0; index < count; index += 1) {
+          const entry = prev?.[index] ?? createEmptyHand();
+          const cardIds = entry.cardIds ?? [];
+          const revealed = entry.revealed ?? {};
+          const nextRevealed = Object.keys(revealed).reduce((acc, cardId) => {
+            if (cardIds.includes(cardId)) {
+              acc[cardId] = revealed[cardId];
+            } else {
+              changed = true;
+            }
+            return acc;
+          }, {});
+          if (!changed && Object.keys(revealed).length !== Object.keys(nextRevealed).length) {
+            changed = true;
+          }
+          next[index] = {
+            ...entry,
+            cardIds: [...cardIds],
+            revealed: nextRevealed
+          };
+        }
+        return changed ? next : prev;
+      });
+      initializedRef.current = true;
+    },
+    [buildTableSurface, seatCount]
   );
 
   useEffect(() => {
@@ -383,6 +453,10 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     tableRect?.height,
     tableRect?.width
   ]);
+
+  useEffect(() => {
+    handsRef.current = hands;
+  }, [hands]);
 
   useEffect(() => {
     const count = seatCount ?? DEFAULT_SETTINGS.roomSettings.seatCount;
@@ -691,6 +765,7 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     moveToHand,
     moveFromHandToTable,
     reorderHand,
-    toggleReveal
+    toggleReveal,
+    resetTableSurface
   };
 };
