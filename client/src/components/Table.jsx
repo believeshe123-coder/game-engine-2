@@ -935,6 +935,20 @@ const Table = () => {
     [seatRailBounds, getTablePointerPosition, seatParams, tableShape, updateSeatParam]
   );
 
+  const updateSeatDropHover = useCallback(
+    (clientX, clientY) => {
+      if (!interaction.held) {
+        if (hoverSeatDropIndex !== null) {
+          setHoverSeatDropIndex(null);
+        }
+        return;
+      }
+      const seatIndex = getSeatIndexAtScreenPoint(clientX, clientY);
+      setHoverSeatDropIndex(seatIndex);
+    },
+    [getSeatIndexAtScreenPoint, hoverSeatDropIndex, interaction.held]
+  );
+
   const handleSeatPointerDown = useCallback(
     (event, seatIndex) => {
       if (interaction.mode !== 'idle') {
@@ -1856,20 +1870,6 @@ const Table = () => {
       setHoveredStackId(stackId);
     },
     [hitTestStack, interaction.mode]
-  );
-
-  const updateSeatDropHover = useCallback(
-    (clientX, clientY) => {
-      if (!interaction.held) {
-        if (hoverSeatDropIndex !== null) {
-          setHoverSeatDropIndex(null);
-        }
-        return;
-      }
-      const seatIndex = getSeatIndexAtScreenPoint(clientX, clientY);
-      setHoverSeatDropIndex(seatIndex);
-    },
-    [getSeatIndexAtScreenPoint, hoverSeatDropIndex, interaction.held]
   );
 
   const handleSurfacePointerDown = useCallback(
