@@ -210,7 +210,8 @@ const Table = () => {
   const [pickCountOpen, setPickCountOpen] = useState(false);
   const [pickCountValue, setPickCountValue] = useState('1');
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [roomSettingsOpen, setRoomSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState('player');
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [dragSeatIndex, setDragSeatIndex] = useState(null);
   const inventoryPanelRef = useRef(null);
   const [inventoryPos, setInventoryPos] = useState(() => {
@@ -985,6 +986,9 @@ const Table = () => {
 
   const handleInventoryHeaderPointerDown = useCallback(
     (event) => {
+      if (!settings.inventoryDragEnabled) {
+        return;
+      }
       if (event.button !== 0) {
         return;
       }
@@ -1003,7 +1007,7 @@ const Table = () => {
         height: rect.height
       });
     },
-    [inventoryPos]
+    [inventoryPos, settings.inventoryDragEnabled]
   );
 
   useEffect(() => {
@@ -1038,6 +1042,13 @@ const Table = () => {
     }
     window.localStorage.setItem('tt_inventoryPos', JSON.stringify(inventoryPos));
   }, [inventoryPos]);
+
+  const resetInventoryPosition = useCallback(() => {
+    setInventoryPos(null);
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem('tt_inventoryPos');
+    }
+  }, []);
 
   useEffect(() => {
     if (!inventoryPos) {
@@ -2426,6 +2437,30 @@ const Table = () => {
 
   const visibleBadgeStackId =
     settings.stackCountDisplayMode === 'hover' ? hoveredStackId : null;
+  const tableRebuildDirty = useMemo(() => {
+    const keys = [
+      'resetFaceDown',
+      'cardStyle',
+      'includeJokers',
+      'deckCount',
+      'presetLayout'
+    ];
+    return keys.some((key) => settings[key] !== appliedSettings[key]);
+  }, [appliedSettings, settings]);
+  const roomRebuildDirty = useMemo(() => {
+    const roomKeys = ['tableStyle', 'tableShape', 'seatCount'];
+    if (
+      roomKeys.some(
+        (key) => settings.roomSettings[key] !== appliedSettings.roomSettings[key]
+      )
+    ) {
+      return true;
+    }
+    const nextParams = settings.roomSettings.seatParams ?? {};
+    const prevParams = appliedSettings.roomSettings.seatParams ?? {};
+    return JSON.stringify(nextParams) !== JSON.stringify(prevParams);
+  }, [appliedSettings, settings]);
+  const hasRebuildPending = tableRebuildDirty || roomRebuildDirty;
 
   const resetInteractionStates = useCallback(() => {
     clearInteraction({ preserveSelection: false });
@@ -2605,8 +2640,6 @@ const Table = () => {
     seatMenuSeat && seatMenuSeat.seatIndex !== undefined
       ? seatAssignments[seatMenuSeat.seatIndex]
       : null;
-  const seatMenuPlayer = seatMenuPlayerId ? players[seatMenuPlayerId] : null;
-  const seatMenuIsMine = seatMenuPlayerId === myPlayerId;
   const seatMenuIsOccupied = Boolean(seatMenuPlayerId);
   const uiOverlayRoot =
     typeof document !== 'undefined' ? document.getElementById('ui-overlay') : null;
@@ -3113,271 +3146,446 @@ const Table = () => {
             type="button"
             onClick={() => setSettingsOpen((prev) => !prev)}
           >
-            Table Settings
+            Settings
           </button>
           {settingsOpen ? (
             <div className="table-settings__panel">
-            <div className="table-settings__row">
-              <span className="table-settings__label">Reset spawns face down</span>
-              <label className="table-settings__switch">
-                <input
-                  type="checkbox"
-                  checked={settings.resetFaceDown}
-                  onChange={(event) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      resetFaceDown: event.target.checked
-                    }))
-                  }
-                />
-                <span>Reset Face-Down</span>
-              </label>
-            </div>
-            <label className="table-settings__row">
-              <span className="table-settings__label">Card Style</span>
-              <select
-                className="table-settings__select"
-                value={settings.cardStyle}
-                onChange={(event) =>
-                  setSettings((prev) => ({
-                    ...prev,
-                    cardStyle: event.target.value
-                  }))
-                }
-              >
-                <option value="medieval">Medieval</option>
-                <option value="classic">Classic</option>
-              </select>
-            </label>
-            <label className="table-settings__row">
-              <span className="table-settings__label">Table Zoom</span>
-              <div className="table-settings__range">
-                <input
-                  type="range"
-                  min="0.5"
-                  max="1.4"
-                  step="0.01"
-                  value={settings.tableZoom ?? 1}
-                  onChange={(event) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      tableZoom: clamp(Number(event.target.value), 0.5, 1.4)
-                    }))
-                  }
-                />
-                <span className="table-settings__value">
-                  {Math.round((settings.tableZoom ?? 1) * 100)}%
-                </span>
-              </div>
-            </label>
-            <label className="table-settings__row">
-              <span className="table-settings__label">Card Size</span>
-              <div className="table-settings__range">
-                <input
-                  type="range"
-                  min="0.7"
-                  max="1.6"
-                  step="0.01"
-                  value={settings.cardScale ?? 1}
-                  onChange={(event) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      cardScale: clamp(Number(event.target.value), 0.7, 1.6)
-                    }))
-                  }
-                />
-                <span className="table-settings__value">
-                  {Math.round((settings.cardScale ?? 1) * 100)}%
-                </span>
-              </div>
-            </label>
-            <div className="table-settings__row">
-              <span className="table-settings__label">Include Jokers</span>
-              <label className="table-settings__switch">
-                <input
-                  type="checkbox"
-                  checked={settings.includeJokers}
-                  onChange={(event) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      includeJokers: event.target.checked
-                    }))
-                  }
-                />
-                <span>Include Jokers</span>
-              </label>
-            </div>
-            <label className="table-settings__row">
-              <span className="table-settings__label">Deck Count</span>
-              <input
-                className="table-settings__input"
-                type="number"
-                min="1"
-                max="8"
-                value={settings.deckCount}
-                onChange={(event) =>
-                  setSettings((prev) => ({
-                    ...prev,
-                    deckCount: (() => {
-                      const parsed = Number.parseInt(event.target.value, 10);
-                      if (Number.isNaN(parsed)) {
-                        return 1;
-                      }
-                      return Math.min(8, Math.max(1, parsed));
-                    })()
-                  }))
-                }
-              />
-            </label>
-            <label className="table-settings__row">
-              <span className="table-settings__label">Preset Layout</span>
-              <select
-                className="table-settings__select"
-                value={settings.presetLayout}
-                onChange={(event) =>
-                  setSettings((prev) => ({
-                    ...prev,
-                    presetLayout: event.target.value
-                  }))
-                }
-              >
-                <option value="none">None</option>
-                <option value="solitaire">Solitaire</option>
-                <option value="grid">Test: Face-Up Grid</option>
-              </select>
-            </label>
-            <button
-              className="table-settings__button table-settings__button--secondary"
-              type="button"
-              onClick={() =>
-                setSettings((prev) => ({
-                  ...prev,
-                  presetLayout: 'none'
-                }))
-              }
-            >
-              Reset Preset Settings
-            </button>
-            <label className="table-settings__row">
-              <span className="table-settings__label">Stack Count Display</span>
-              <select
-                className="table-settings__select"
-                value={settings.stackCountDisplayMode}
-                onChange={(event) =>
-                  setSettings((prev) => ({
-                    ...prev,
-                    stackCountDisplayMode: event.target.value
-                  }))
-                }
-              >
-                <option value="always">Always On</option>
-                <option value="hover">Hover Only</option>
-              </select>
-            </label>
-            <div className="table-settings__row">
-              <span className="table-settings__label">Show felt debug</span>
-              <label className="table-settings__switch">
-                <input
-                  type="checkbox"
-                  checked={showFeltDebug}
-                  onChange={(event) => setShowFeltDebug(event.target.checked)}
-                />
-                <span>Felt Debug</span>
-              </label>
-            </div>
-            <button
-              className="table-settings__button"
-              type="button"
-              onClick={applySettings}
-            >
-              Reload With Changes
-            </button>
-            <button
-              className="table-settings__button"
-              type="button"
-              onClick={handleResetTable}
-            >
-              Reset Table
-            </button>
-            </div>
-          ) : null}
-          <button
-            className="table-settings__toggle"
-            type="button"
-            onClick={() => setRoomSettingsOpen((prev) => !prev)}
-          >
-            Room Settings
-          </button>
-          {roomSettingsOpen ? (
-            <div className="table-settings__panel">
-              <label className="table-settings__row">
-                <span className="table-settings__label">Table Style</span>
-                <select
-                  className="table-settings__select"
-                  value={settings.roomSettings.tableStyle}
-                  onChange={(event) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      roomSettings: {
-                        ...prev.roomSettings,
-                        tableStyle: event.target.value
-                      }
-                    }))
-                  }
+              <div className="table-settings__tabs">
+                <button
+                  className={`table-settings__tab ${
+                    settingsTab === 'player' ? 'is-active' : ''
+                  }`}
+                  type="button"
+                  onClick={() => setSettingsTab('player')}
                 >
-                  <option value="medieval">Medieval</option>
-                  <option value="plain">Plain</option>
-                </select>
-              </label>
-              <label className="table-settings__row">
-                <span className="table-settings__label">Table Shape</span>
-                <select
-                  className="table-settings__select"
-                  value={settings.roomSettings.tableShape}
-                  onChange={(event) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      roomSettings: {
-                        ...prev.roomSettings,
-                        tableShape: event.target.value
-                      }
-                    }))
-                  }
+                  Player
+                </button>
+                <button
+                  className={`table-settings__tab ${
+                    settingsTab === 'table' ? 'is-active' : ''
+                  }`}
+                  type="button"
+                  onClick={() => setSettingsTab('table')}
                 >
-                  <option value="rectangle">Rectangle</option>
-                  <option value="oval">Oval</option>
-                  <option value="circle">Circle</option>
-                </select>
-              </label>
-              <label className="table-settings__row">
-                <span className="table-settings__label"># of Seats</span>
-                <input
-                  className="table-settings__input"
-                  type="number"
-                  min="2"
-                  max="12"
-                  value={settings.roomSettings.seatCount}
-                  onChange={(event) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      roomSettings: {
-                        ...prev.roomSettings,
-                        seatCount: (() => {
-                          const parsed = Number.parseInt(event.target.value, 10);
-                          if (Number.isNaN(parsed)) {
-                            return 2;
+                  Table
+                  {tableRebuildDirty ? (
+                    <span className="table-settings__tab-note">Changes Pending</span>
+                  ) : null}
+                </button>
+                <button
+                  className={`table-settings__tab ${
+                    settingsTab === 'room' ? 'is-active' : ''
+                  }`}
+                  type="button"
+                  onClick={() => setSettingsTab('room')}
+                >
+                  Room
+                  {roomRebuildDirty ? (
+                    <span className="table-settings__tab-note">Changes Pending</span>
+                  ) : null}
+                </button>
+              </div>
+              <div className="table-settings__content">
+                {settingsTab === 'player' ? (
+                  <div className="table-settings__section">
+                    <label className="table-settings__row table-settings__row--stacked">
+                      <span className="table-settings__label">Player Name</span>
+                      <input
+                        className="table-settings__input table-settings__input--full"
+                        type="text"
+                        maxLength={20}
+                        value={player?.name ?? ''}
+                        onChange={(event) => setPlayerName(event.target.value)}
+                      />
+                    </label>
+                    <label className="table-settings__row">
+                      <span className="table-settings__label">Seat Color</span>
+                      <input
+                        className="table-settings__color"
+                        type="color"
+                        value={player?.seatColor ?? '#6aa9ff'}
+                        onChange={(event) => setSeatColor(event.target.value)}
+                      />
+                    </label>
+                    <div className="table-settings__row">
+                      <span className="table-settings__label">Drag inventory freely</span>
+                      <label className="table-settings__switch">
+                        <input
+                          type="checkbox"
+                          checked={settings.inventoryDragEnabled}
+                          onChange={(event) =>
+                            setSettings((prev) => ({
+                              ...prev,
+                              inventoryDragEnabled: event.target.checked
+                            }))
                           }
-                          return Math.min(12, Math.max(2, parsed));
-                        })()
+                        />
+                        <span>Enabled</span>
+                      </label>
+                    </div>
+                    <button
+                      className="table-settings__button table-settings__button--secondary"
+                      type="button"
+                      onClick={resetInventoryPosition}
+                      disabled={!inventoryPos}
+                    >
+                      Reset inventory position
+                    </button>
+                    {mySeatIndex !== null && mySeatIndex !== undefined ? (
+                      <button
+                        className="table-settings__button table-settings__button--secondary"
+                        type="button"
+                        onClick={() => {
+                          standUp();
+                          if (mySeatIndex !== null && mySeatIndex !== undefined) {
+                            logAction(`${myName} left Seat ${mySeatIndex + 1}`);
+                          }
+                        }}
+                      >
+                        Stand Up
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+                {settingsTab === 'table' ? (
+                  <div className="table-settings__section">
+                    {tableRebuildDirty ? (
+                      <div className="table-settings__pending">Changes Pending</div>
+                    ) : null}
+                    <div className="table-settings__row">
+                      <span className="table-settings__label">Reset spawns face down</span>
+                      <label className="table-settings__switch">
+                        <input
+                          type="checkbox"
+                          checked={settings.resetFaceDown}
+                          onChange={(event) =>
+                            setSettings((prev) => ({
+                              ...prev,
+                              resetFaceDown: event.target.checked
+                            }))
+                          }
+                        />
+                        <span>Reset Face-Down</span>
+                      </label>
+                    </div>
+                    <label className="table-settings__row">
+                      <span className="table-settings__label">Card Style</span>
+                      <select
+                        className="table-settings__select"
+                        value={settings.cardStyle}
+                        onChange={(event) =>
+                          setSettings((prev) => ({
+                            ...prev,
+                            cardStyle: event.target.value
+                          }))
+                        }
+                      >
+                        <option value="medieval">Medieval</option>
+                        <option value="classic">Classic</option>
+                      </select>
+                    </label>
+                    <label className="table-settings__row">
+                      <span className="table-settings__label">Table Zoom</span>
+                      <div className="table-settings__range">
+                        <input
+                          type="range"
+                          min="0.5"
+                          max="1.4"
+                          step="0.01"
+                          value={settings.tableZoom ?? 1}
+                          onChange={(event) =>
+                            setSettings((prev) => ({
+                              ...prev,
+                              tableZoom: clamp(Number(event.target.value), 0.5, 1.4)
+                            }))
+                          }
+                        />
+                        <span className="table-settings__value">
+                          {Math.round((settings.tableZoom ?? 1) * 100)}%
+                        </span>
+                      </div>
+                    </label>
+                    <label className="table-settings__row">
+                      <span className="table-settings__label">Card Size</span>
+                      <div className="table-settings__range">
+                        <input
+                          type="range"
+                          min="0.7"
+                          max="1.6"
+                          step="0.01"
+                          value={settings.cardScale ?? 1}
+                          onChange={(event) =>
+                            setSettings((prev) => ({
+                              ...prev,
+                              cardScale: clamp(Number(event.target.value), 0.7, 1.6)
+                            }))
+                          }
+                        />
+                        <span className="table-settings__value">
+                          {Math.round((settings.cardScale ?? 1) * 100)}%
+                        </span>
+                      </div>
+                    </label>
+                    <label className="table-settings__row">
+                      <span className="table-settings__label">Stack Count Display</span>
+                      <select
+                        className="table-settings__select"
+                        value={settings.stackCountDisplayMode}
+                        onChange={(event) =>
+                          setSettings((prev) => ({
+                            ...prev,
+                            stackCountDisplayMode: event.target.value
+                          }))
+                        }
+                      >
+                        <option value="always">Always On</option>
+                        <option value="hover">Hover Only</option>
+                      </select>
+                    </label>
+                    <div className="table-settings__row">
+                      <span className="table-settings__label">Include Jokers</span>
+                      <label className="table-settings__switch">
+                        <input
+                          type="checkbox"
+                          checked={settings.includeJokers}
+                          onChange={(event) =>
+                            setSettings((prev) => ({
+                              ...prev,
+                              includeJokers: event.target.checked
+                            }))
+                          }
+                        />
+                        <span>Include Jokers</span>
+                      </label>
+                    </div>
+                    <label className="table-settings__row">
+                      <span className="table-settings__label">Deck Count</span>
+                      <input
+                        className="table-settings__input"
+                        type="number"
+                        min="1"
+                        max="8"
+                        value={settings.deckCount}
+                        onChange={(event) =>
+                          setSettings((prev) => ({
+                            ...prev,
+                            deckCount: (() => {
+                              const parsed = Number.parseInt(event.target.value, 10);
+                              if (Number.isNaN(parsed)) {
+                                return 1;
+                              }
+                              return Math.min(8, Math.max(1, parsed));
+                            })()
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="table-settings__row">
+                      <span className="table-settings__label">Preset Layout</span>
+                      <select
+                        className="table-settings__select"
+                        value={settings.presetLayout}
+                        onChange={(event) =>
+                          setSettings((prev) => ({
+                            ...prev,
+                            presetLayout: event.target.value
+                          }))
+                        }
+                      >
+                        <option value="none">None</option>
+                        <option value="solitaire">Solitaire</option>
+                        <option value="grid">Test: Face-Up Grid</option>
+                      </select>
+                    </label>
+                    <button
+                      className="table-settings__button table-settings__button--secondary"
+                      type="button"
+                      onClick={() =>
+                        setSettings((prev) => ({
+                          ...prev,
+                          presetLayout: 'none'
+                        }))
                       }
-                    }))
-                  }
-                />
-              </label>
+                    >
+                      Reset Preset Settings
+                    </button>
+                    <div className="table-settings__row">
+                      <span className="table-settings__label">Felt Debug (Debug)</span>
+                      <label className="table-settings__switch">
+                        <input
+                          type="checkbox"
+                          checked={showFeltDebug}
+                          onChange={(event) => setShowFeltDebug(event.target.checked)}
+                        />
+                        <span>Debug</span>
+                      </label>
+                    </div>
+                  </div>
+                ) : null}
+                {settingsTab === 'room' ? (
+                  <div className="table-settings__section">
+                    {roomRebuildDirty ? (
+                      <div className="table-settings__pending">Changes Pending</div>
+                    ) : null}
+                    <label className="table-settings__row">
+                      <span className="table-settings__label">Table Style</span>
+                      <select
+                        className="table-settings__select"
+                        value={settings.roomSettings.tableStyle}
+                        onChange={(event) =>
+                          setSettings((prev) => ({
+                            ...prev,
+                            roomSettings: {
+                              ...prev.roomSettings,
+                              tableStyle: event.target.value
+                            }
+                          }))
+                        }
+                      >
+                        <option value="medieval">Medieval</option>
+                        <option value="plain">Plain</option>
+                      </select>
+                    </label>
+                    <label className="table-settings__row">
+                      <span className="table-settings__label">Table Shape</span>
+                      <select
+                        className="table-settings__select"
+                        value={settings.roomSettings.tableShape}
+                        onChange={(event) =>
+                          setSettings((prev) => ({
+                            ...prev,
+                            roomSettings: {
+                              ...prev.roomSettings,
+                              tableShape: event.target.value
+                            }
+                          }))
+                        }
+                      >
+                        <option value="rectangle">Rectangle</option>
+                        <option value="oval">Oval</option>
+                        <option value="circle">Circle</option>
+                      </select>
+                    </label>
+                    <label className="table-settings__row">
+                      <span className="table-settings__label">Number of Seats</span>
+                      <input
+                        className="table-settings__input"
+                        type="number"
+                        min="2"
+                        max="12"
+                        value={settings.roomSettings.seatCount}
+                        onChange={(event) =>
+                          setSettings((prev) => ({
+                            ...prev,
+                            roomSettings: {
+                              ...prev.roomSettings,
+                              seatCount: (() => {
+                                const parsed = Number.parseInt(event.target.value, 10);
+                                if (Number.isNaN(parsed)) {
+                                  return 2;
+                                }
+                                return Math.min(12, Math.max(2, parsed));
+                              })()
+                            }
+                          }))
+                        }
+                      />
+                    </label>
+                    <div className="table-settings__row">
+                      <span className="table-settings__label">Seat Lock</span>
+                      <label className="table-settings__switch">
+                        <input
+                          type="checkbox"
+                          checked={settings.roomSettings.seatLock}
+                          onChange={(event) =>
+                            setSettings((prev) => ({
+                              ...prev,
+                              roomSettings: {
+                                ...prev.roomSettings,
+                                seatLock: event.target.checked
+                              }
+                            }))
+                          }
+                        />
+                        <span>Lock Seats</span>
+                      </label>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+              <div className="table-settings__actions">
+                {hasRebuildPending ? (
+                  <>
+                    <div className="table-settings__pending">Changes Pending</div>
+                    <button
+                      className="table-settings__button"
+                      type="button"
+                      title="Rebuilds table using current room/table settings"
+                      onClick={applySettings}
+                    >
+                      Apply Changes
+                    </button>
+                  </>
+                ) : null}
+                <div className="table-settings__danger">
+                  <div className="table-settings__danger-title">Danger Zone</div>
+                  <button
+                    className="table-settings__button table-settings__button--danger"
+                    type="button"
+                    onClick={() => setResetConfirmOpen(true)}
+                  >
+                    Reset Table
+                  </button>
+                </div>
+              </div>
             </div>
           ) : null}
         </div>
       </div>
+      {resetConfirmOpen && uiOverlayRoot
+        ? createPortal(
+            <div
+              className="modal-backdrop"
+              role="presentation"
+              onPointerDown={() => setResetConfirmOpen(false)}
+            >
+              <div
+                className="modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="reset-table-title"
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                <h3 id="reset-table-title" className="modal__title">
+                  Reset Table
+                </h3>
+                <p className="modal__body">
+                  This will clear the table and everyone’s hands. Continue?
+                </p>
+                <div className="modal__actions">
+                  <button
+                    className="modal__button modal__button--danger"
+                    type="button"
+                    onClick={() => {
+                      handleResetTable();
+                      setResetConfirmOpen(false);
+                    }}
+                  >
+                    Reset Table
+                  </button>
+                  <button
+                    className="modal__button modal__button--secondary"
+                    type="button"
+                    onClick={() => setResetConfirmOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>,
+            uiOverlayRoot
+          )
+        : null}
       {selectedStack && menuPosition && uiOverlayRoot
         ? createPortal(
             <div
@@ -3515,12 +3723,7 @@ const Table = () => {
             >
               <SeatMenu
                 seatLabel={seatMenuSeat.label}
-                isMine={seatMenuIsMine}
                 isOccupied={seatMenuIsOccupied}
-                playerName={players[myPlayerId]?.name ?? 'Player'}
-                seatColor={
-                  seatMenuPlayer?.seatColor ?? players[myPlayerId]?.seatColor
-                }
                 onSit={() => {
                   // eslint-disable-next-line no-console
                   console.log('Sit click', seatMenuIndex, myPlayerId);
@@ -3528,18 +3731,6 @@ const Table = () => {
                   logAction(`${myName} sat at ${seatMenuSeat.label}`);
                   closeSeatMenu();
                 }}
-                onStand={() => {
-                  standUp();
-                  logAction(`${myName} left ${seatMenuSeat.label}`);
-                  closeSeatMenu();
-                }}
-                onUpdateColors={(colors) => {
-                  if (colors?.seatColor) {
-                    setSeatColor(colors.seatColor);
-                  }
-                }}
-                onUpdateName={setPlayerName}
-                onClose={closeSeatMenu}
               />
             </div>,
             uiOverlayRoot
