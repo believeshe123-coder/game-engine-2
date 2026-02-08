@@ -6,8 +6,7 @@ const LEGACY_STORAGE_KEY = 'playerProfile';
 const DEFAULT_PROFILE = {
   id: null,
   name: 'Player',
-  seatColor: '#6aa9ff',
-  accentColor: '#ffd36a'
+  seatColor: '#6aa9ff'
 };
 
 const createPlayerId = () => {
@@ -51,8 +50,7 @@ const loadPlayerProfile = () => {
     return {
       id: playerId,
       name: normalizeName(parsed?.name, DEFAULT_PROFILE.name),
-      seatColor: normalizeColor(parsed?.seatColor, DEFAULT_PROFILE.seatColor),
-      accentColor: normalizeColor(parsed?.accentColor, DEFAULT_PROFILE.accentColor)
+      seatColor: normalizeColor(parsed?.seatColor, DEFAULT_PROFILE.seatColor)
     };
   } catch (error) {
     return { ...DEFAULT_PROFILE, id: createPlayerId() };

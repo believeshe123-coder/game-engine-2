@@ -278,8 +278,7 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
       id: playerIdRef.current,
       name: initialProfile.name,
       seatIndex: initialSeatState.mySeatIndex,
-      seatColor: initialProfile.seatColor,
-      accentColor: initialProfile.accentColor
+      seatColor: initialProfile.seatColor
     }
   }));
   const [seatState, setSeatState] = useState(() => ({
@@ -425,8 +424,7 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     savePlayerProfile({
       id: profile.id,
       name: normalizeName(profile.name),
-      seatColor: profile.seatColor,
-      accentColor: profile.accentColor
+      seatColor: profile.seatColor
     });
   }, [players]);
 
@@ -566,22 +564,6 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     }));
   }, []);
 
-  const setAccentColor = useCallback(
-    (accentColor) => {
-      if (!accentColor) {
-        return;
-      }
-      setPlayers((prev) => ({
-        ...prev,
-        [playerIdRef.current]: {
-          ...prev[playerIdRef.current],
-          accentColor
-        }
-      }));
-    },
-    []
-  );
-
   const updatePlayerColors = useCallback((colors) => {
     setPlayers((prev) => ({
       ...prev,
@@ -702,7 +684,6 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     standUp,
     setPlayerName,
     setSeatColor,
-    setAccentColor,
     updatePlayerColors,
     logAction,
     updatePresence,

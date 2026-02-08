@@ -165,7 +165,6 @@ const Table = () => {
     standUp,
     setPlayerName,
     setSeatColor,
-    setAccentColor,
     logAction,
     updatePresence,
     moveCardIdsToHand,
@@ -2386,7 +2385,7 @@ const Table = () => {
         ref={sceneRootRef}
         style={{
           '--tableScale': combinedScale,
-          '--player-accent': players[myPlayerId]?.accentColor ?? '#efd8a0'
+          '--player-accent': players[myPlayerId]?.seatColor ?? '#efd8a0'
         }}
       >
         <div
@@ -2415,8 +2414,7 @@ const Table = () => {
               const seatStyle = {
                 left: `${seat.x}px`,
                 top: `${seat.y}px`,
-                '--seat-color': seatPlayer?.seatColor ?? null,
-                '--seat-accent': seatPlayer?.accentColor ?? null
+                '--seat-color': seatPlayer?.seatColor ?? null
               };
               return (
                 <div
@@ -2539,8 +2537,7 @@ const Table = () => {
                       width: `${zone.width}px`,
                       height: `${zone.height}px`,
                       '--zone-rotation': `${zone.rotation ?? 0}rad`,
-                      '--seat-color': seatPlayer?.seatColor ?? null,
-                      '--seat-accent': seatPlayer?.accentColor ?? null
+                      '--seat-color': seatPlayer?.seatColor ?? null
                     }}
                   >
                     <div className="hand-zone__count">
@@ -2616,7 +2613,7 @@ const Table = () => {
                     key={`cursor-${playerId}`}
                     ghost={ghost}
                     label={presencePlayer?.name ?? 'Player'}
-                    accentColor={presencePlayer?.accentColor ?? '#ffd36a'}
+                    seatColor={presencePlayer?.seatColor ?? '#6aa9ff'}
                   />
                 );
               })}
@@ -2708,7 +2705,7 @@ const Table = () => {
           onCardDragStart={handleInventoryDragStart}
           onCardDrop={handleInventoryReorderDrop}
           onDropToEnd={handleInventoryDropToEnd}
-          accentColor={players[myPlayerId]?.accentColor}
+          seatColor={players[myPlayerId]?.seatColor}
           cardStyle={appliedSettings.cardStyle}
         />
       ) : null}
@@ -3155,9 +3152,6 @@ const Table = () => {
                 seatColor={
                   seatMenuPlayer?.seatColor ?? players[myPlayerId]?.seatColor
                 }
-                accentColor={
-                  seatMenuPlayer?.accentColor ?? players[myPlayerId]?.accentColor
-                }
                 onSit={() => {
                   // eslint-disable-next-line no-console
                   console.log('Sit click', seatMenuIndex, myPlayerId);
@@ -3173,9 +3167,6 @@ const Table = () => {
                 onUpdateColors={(colors) => {
                   if (colors?.seatColor) {
                     setSeatColor(colors.seatColor);
-                  }
-                  if (colors?.accentColor) {
-                    setAccentColor(colors.accentColor);
                   }
                 }}
                 onUpdateName={setPlayerName}

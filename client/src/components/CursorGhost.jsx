@@ -1,11 +1,11 @@
-const CursorGhost = ({ ghost, label, accentColor }) => {
+const CursorGhost = ({ ghost, label, seatColor }) => {
   return (
     <div
       className={`cursor-ghost ${ghost?.isDown ? 'cursor-ghost--down' : ''}`}
       style={{
         left: `${ghost?.x ?? 0}px`,
         top: `${ghost?.y ?? 0}px`,
-        '--ghost-color': accentColor
+        '--ghost-color': seatColor
       }}
     >
       <div className="cursor-ghost__dot" />
