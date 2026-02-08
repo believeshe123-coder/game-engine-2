@@ -1135,18 +1135,6 @@ const Table = () => {
     setSeatMenuState({ seatIndex: null, open: false });
   }, []);
 
-  const handleSeatClick = useCallback(
-    (seatIndex) => {
-      if (seatDragRef.current.moved && seatDragRef.current.seatIndex === seatIndex) {
-        seatDragRef.current = { seatIndex: null, moved: false, start: null };
-        return;
-      }
-      seatDragRef.current = { seatIndex: null, moved: false, start: null };
-      openSeatMenu(seatIndex);
-    },
-    [openSeatMenu]
-  );
-
   const DRAG_THRESHOLD = 6;
   const defaultRmbState = useMemo(
     () => ({
@@ -1200,6 +1188,26 @@ const Table = () => {
       menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
     }));
   }, [clearRmbHoldTimer, defaultRmbState]);
+
+  const handleSeatClick = useCallback(
+    (seatIndex) => {
+      if (seatDragRef.current.moved && seatDragRef.current.seatIndex === seatIndex) {
+        seatDragRef.current = { seatIndex: null, moved: false, start: null };
+        return;
+      }
+      seatDragRef.current = { seatIndex: null, moved: false, start: null };
+      if (interaction.held || interaction.mode === 'holdStack') {
+        if (interaction.held) {
+          moveCardIdsToHand(seatIndex, interaction.held.cardIds);
+          logDealt(seatIndex, interaction.held.cardIds.length);
+          clearInteraction({ preserveSelection: false });
+        }
+        return;
+      }
+      openSeatMenu(seatIndex);
+    },
+    [clearInteraction, interaction.held, interaction.mode, logDealt, moveCardIdsToHand, openSeatMenu]
+  );
 
   const closeMenu = useCallback(() => {
     setPickCountOpen(false);
@@ -2589,14 +2597,12 @@ const Table = () => {
     if (!seatHand) {
       return null;
     }
-    const seatPlayerId = seatAssignments[hoverSeatCard.seatIndex];
-    const isOwner = seatPlayerId === myPlayerId;
     const isRevealed = Boolean(seatHand.revealed?.[hoverSeatCard.cardId]);
     const card = cardsById[hoverSeatCard.cardId];
     return {
       card,
       cardId: hoverSeatCard.cardId,
-      faceUp: isOwner || isRevealed,
+      faceUp: isRevealed,
       x: hoverSeatCard.x,
       y: hoverSeatCard.y
     };
@@ -2708,7 +2714,6 @@ const Table = () => {
                         {visibleCardIds.map((cardId, index) => {
                           const card = cardsById[cardId];
                           const isRevealed = Boolean(seatHand.revealed?.[cardId]);
-                          const canReveal = isMine || isRevealed;
                           return (
                             <div
                               key={`seat-card-${seat.seatIndex}-${cardId}`}
@@ -2743,7 +2748,7 @@ const Table = () => {
                                 x={0}
                                 y={0}
                                 rotation={0}
-                                faceUp={canReveal}
+                                faceUp={isRevealed}
                                 cardStyle={appliedSettings.cardStyle}
                                 zIndex={index + 1}
                                 rank={card?.rank}
