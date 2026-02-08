@@ -22,7 +22,7 @@ import {
   isPointInsideFelt
 } from '../geometry/feltBounds.js';
 import { useTableState } from '../state/useTableState.js';
-import { loadSettings, saveSettings } from '../state/tableSettings.js';
+import { BASE_DEFAULTS, loadSettings, saveSettings } from '../state/tableSettings.js';
 
 const RIGHT_PANEL_SAFE_WIDTH = 340;
 const TABLETOP_MARGIN = 24;
@@ -209,7 +209,6 @@ const Table = () => {
     stacks,
     setStacks,
     createStackId,
-    resetTableSurface,
     rebuildTableSurfacePreservingHands,
     players,
     player,
@@ -228,7 +227,8 @@ const Table = () => {
     moveCardIdsToHand,
     moveFromHandToTable,
     reorderHand,
-    toggleReveal
+    toggleReveal,
+    hardResetTableState
   } = useTableState(
     tableRect,
     cardSize,
@@ -566,6 +566,17 @@ const Table = () => {
     });
     setHandZones(nextZones);
   }, [
+    hardResetTableState,
+    logAction,
+    resetInteractionStates,
+    resetInteractionToDefaults,
+    setAppliedSettings,
+    setSettings,
+    setSettingsOpen,
+    setCardFaceOverrides,
+    setResetConfirmOpen,
+    updateTabletopScale
+  ]);
     handZoneSeatOffset,
     handZoneSize.height,
     handZoneSize.width,
@@ -2532,6 +2543,30 @@ const Table = () => {
     setHeldScreenPos(null);
   }, [clearInteraction]);
 
+  const resetInteractionToDefaults = useCallback(() => {
+    setInteraction({
+      mode: 'idle',
+      pointerId: null,
+      source: null,
+      held: null,
+      drag: null,
+      rmbDown: false,
+      rmbDownAt: 0,
+      isSliding: false,
+      rmbStartWorld: { x: 0, y: 0 },
+      slideOrigin: null,
+      slideDir: null,
+      slidePerp: null,
+      slideIndex: 0,
+      slideTrail: [],
+      lastSlidePlace: null,
+      slideLastPos: null,
+      slideCarryDist: 0,
+      selectedStackId: null,
+      menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
+    });
+  }, []);
+
   const clampStacksToFeltShape = useCallback(
     (shape) => {
       if (!tableRect?.width || !tableRect?.height) {
@@ -2594,20 +2629,25 @@ const Table = () => {
     updateTabletopScale
   ]);
 
-  const handleConfirmResetTable = useCallback(() => {
+  const handleHardResetToBaseDefaults = useCallback(() => {
     // eslint-disable-next-line no-console
-    console.log('RESET TABLE CONFIRMED');
-    resetTableSurface(appliedSettings);
+    console.log('HARD RESET FIRED');
+    setSettings(BASE_DEFAULTS);
+    setAppliedSettings(BASE_DEFAULTS);
+    saveSettings(BASE_DEFAULTS);
+    hardResetTableState(BASE_DEFAULTS);
     resetInteractionStates();
+    resetInteractionToDefaults();
     setCardFaceOverrides({});
+    setSettingsOpen(false);
     updateTabletopScale();
-    logAction('Reset table (hands cleared)');
+    logAction('Reset table to defaults');
     setResetConfirmOpen(false);
   }, [
-    appliedSettings,
+    hardResetTableState,
     logAction,
     resetInteractionStates,
-    resetTableSurface,
+    resetInteractionToDefaults,
     updateTabletopScale
   ]);
 
@@ -3679,7 +3719,7 @@ const Table = () => {
                   <button
                     className="modal__button modal__button--danger"
                     type="button"
-                    onClick={handleConfirmResetTable}
+                    onClick={handleHardResetToBaseDefaults}
                   >
                     Reset Table
                   </button>

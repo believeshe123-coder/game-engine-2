@@ -1,6 +1,6 @@
 const STORAGE_KEY = 'tableSettings';
 
-const DEFAULT_SETTINGS = {
+const BASE_DEFAULTS = {
   resetFaceDown: true,
   cardStyle: 'medieval',
   includeJokers: true,
@@ -22,6 +22,8 @@ const DEFAULT_SETTINGS = {
     }
   }
 };
+
+const DEFAULT_SETTINGS = BASE_DEFAULTS;
 
 const clampNumber = (value, min, max, fallback) => {
   const parsed = Number(value);
@@ -97,17 +99,17 @@ const normalizeSettings = (settings) => {
 
 const loadSettings = () => {
   if (typeof window === 'undefined') {
-    return { ...DEFAULT_SETTINGS };
+    return normalizeSettings(BASE_DEFAULTS);
   }
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      return { ...DEFAULT_SETTINGS };
+      return normalizeSettings(BASE_DEFAULTS);
     }
     const parsed = JSON.parse(raw);
     return normalizeSettings(parsed);
   } catch (error) {
-    return { ...DEFAULT_SETTINGS };
+    return normalizeSettings(BASE_DEFAULTS);
   }
 };
 
@@ -122,4 +124,10 @@ const saveSettings = (settings) => {
   }
 };
 
-export { DEFAULT_SETTINGS, loadSettings, normalizeSettings, saveSettings };
+export {
+  BASE_DEFAULTS,
+  DEFAULT_SETTINGS,
+  loadSettings,
+  normalizeSettings,
+  saveSettings
+};
