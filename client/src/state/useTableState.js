@@ -415,6 +415,48 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     [buildTableSurface, seatCount]
   );
 
+  const rebuildTableSurfacePreservingHands = useCallback(
+    (settingsInput) => {
+      const built = buildTableSurface(settingsInput);
+      if (!built) {
+        return;
+      }
+      const validCardIds = new Set(Object.keys(built.nextCardsById));
+      const count = seatCount ?? DEFAULT_SETTINGS.roomSettings.seatCount;
+      const nextHands = {};
+      const preservedCardIds = new Set();
+      for (let index = 0; index < count; index += 1) {
+        const entry = hands?.[index] ?? createEmptyHand();
+        const filteredCardIds = (entry.cardIds ?? []).filter((cardId) =>
+          validCardIds.has(cardId)
+        );
+        const filteredRevealed = {};
+        Object.keys(entry.revealed ?? {}).forEach((cardId) => {
+          if (validCardIds.has(cardId)) {
+            filteredRevealed[cardId] = entry.revealed[cardId];
+          }
+        });
+        filteredCardIds.forEach((cardId) => preservedCardIds.add(cardId));
+        nextHands[index] = {
+          cardIds: filteredCardIds,
+          revealed: filteredRevealed
+        };
+      }
+      const nextStacks = built.nextStacks
+        .map((stack) => ({
+          ...stack,
+          cardIds: stack.cardIds.filter((cardId) => !preservedCardIds.has(cardId))
+        }))
+        .filter((stack) => stack.cardIds.length > 0);
+      setCardsById(built.nextCardsById);
+      setAllCardIds(built.allCardIds);
+      setStacks(nextStacks);
+      setHands(nextHands);
+      initializedRef.current = true;
+    },
+    [buildTableSurface, hands, seatCount]
+  );
+
   useEffect(() => {
     if (!tableRect?.width || !tableRect?.height || initializedRef.current) {
       return;
@@ -735,6 +777,7 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
     moveFromHandToTable,
     reorderHand,
     toggleReveal,
-    resetTableSurface
+    resetTableSurface,
+    rebuildTableSurfacePreservingHands
   };
 };
