@@ -4,7 +4,6 @@ const SeatMenu = ({
   isOccupied,
   playerName,
   seatColor,
-  accentColor,
   onSit,
   onStand,
   onUpdateName,
@@ -67,18 +66,6 @@ const SeatMenu = ({
             type="color"
             value={seatColor}
             onChange={(event) => onUpdateColors?.({ seatColor: event.target.value })}
-          />
-        </div>
-        <div className="seat-menu__setting">
-          <label className="seat-menu__label" htmlFor="accent-color">
-            Highlight color
-          </label>
-          <input
-            id="accent-color"
-            className="seat-menu__color"
-            type="color"
-            value={accentColor}
-            onChange={(event) => onUpdateColors?.({ accentColor: event.target.value })}
           />
         </div>
       </div>

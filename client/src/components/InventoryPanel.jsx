@@ -8,7 +8,7 @@ const InventoryPanel = ({
   onCardDragStart,
   onCardDrop,
   onDropToEnd,
-  accentColor,
+  seatColor,
   cardStyle
 }) => {
   if (!cardIds || cardIds.length === 0) {
@@ -38,7 +38,7 @@ const InventoryPanel = ({
       </div>
       <div
         className="inventory-panel__cards"
-        style={{ '--accent-color': accentColor }}
+        style={{ '--accent-color': seatColor }}
         onDragOver={(event) => event.preventDefault()}
         onDrop={(event) => {
           event.preventDefault();

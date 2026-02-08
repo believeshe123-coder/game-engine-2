@@ -1390,7 +1390,7 @@ body,
   border-color: var(--seat-outline);
 }
 
-.seat--mine .seat__bench {
+.seat--occupied .seat__bench {
   box-shadow:
     0 0 0 2px var(--seat-outline),
     0 0 18px color-mix(in srgb, var(--seat-outline) 60%, transparent),
@@ -1447,16 +1447,29 @@ body,
   inset: 10px;
   min-width: 160px;
   min-height: 76px;
-  background: var(--hand-fill);
+  background: #d7d7d7;
   border: 1px dashed var(--hand-border);
   border-radius: 6px;
   transition: border-color 0.15s ease, background 0.15s ease;
+  overflow: hidden;
 }
 
 .seat__hand:hover,
 .seatPad:hover {
   border-color: var(--hand-border-hover);
   background: rgba(255, 255, 255, 0.24);
+}
+
+.seat--occupied .seat__hand::after,
+.seat--occupied .seatPad::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--seat-color);
+  opacity: 0.55;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+  border-radius: inherit;
 }
 
 .seat__handIndicator {
