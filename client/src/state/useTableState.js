@@ -448,11 +448,13 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
 
   const sitAtSeat = useCallback(
     (seatIndex) => {
-      if (seatIndex === null || seatIndex === undefined) {
-        return;
-      }
+      let didAssign = false;
       setSeatAssignments((prev) => {
-        const next = Array.from({ length: prev.length }, (_, index) => prev[index] ?? null);
+        const count = prev.length;
+        if (!Number.isInteger(seatIndex) || seatIndex < 0 || seatIndex >= count) {
+          return prev;
+        }
+        const next = Array.from({ length: count }, (_, index) => prev[index] ?? null);
         const occupiedBy = next[seatIndex];
         if (occupiedBy && occupiedBy !== playerIdRef.current) {
           return prev;
@@ -462,8 +464,12 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
           next[currentIndex] = null;
         }
         next[seatIndex] = playerIdRef.current;
+        didAssign = true;
         return next;
       });
+      if (!didAssign) {
+        return;
+      }
       setPlayers((prev) => ({
         ...prev,
         [playerIdRef.current]: {

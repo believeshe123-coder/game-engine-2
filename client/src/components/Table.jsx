@@ -2348,9 +2348,13 @@ const Table = () => {
         }
       : null;
   const menuStackCount = selectedStack ? selectedStack.cardIds.length : 0;
-  const seatMenuSeat =
+  const seatMenuIndex =
     seatMenuState.open && seatMenuState.seatIndex !== null
-      ? seatPositions[seatMenuState.seatIndex]
+      ? seatMenuState.seatIndex
+      : null;
+  const seatMenuSeat =
+    seatMenuIndex !== null
+      ? seatPositions[seatMenuIndex]
       : null;
   const seatMenuPosition =
     seatMenuSeat && tableScreenRect
@@ -3155,7 +3159,12 @@ const Table = () => {
                   seatMenuPlayer?.accentColor ?? players[myPlayerId]?.accentColor ?? '#ffd36a'
                 }
                 onSit={() => {
-                  sitAtSeat(seatMenuSeat.seatIndex);
+                  // eslint-disable-next-line no-console
+                  console.log('Sit Here clicked', {
+                    seatIndex: seatMenuIndex,
+                    playerId: myPlayerId
+                  });
+                  sitAtSeat(seatMenuIndex);
                   logAction(`${myName} sat at ${seatMenuSeat.label}`);
                   closeSeatMenu();
                 }}
