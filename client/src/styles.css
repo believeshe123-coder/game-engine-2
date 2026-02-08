@@ -1808,6 +1808,7 @@ body,
   position: fixed;
   transform: translate(-50%, -50%);
   z-index: var(--ui-panel-z);
+  pointer-events: auto;
 }
 
 .seat-menu {
