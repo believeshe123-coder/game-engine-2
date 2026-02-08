@@ -1,10 +1,11 @@
 const PROFILE_STORAGE_KEY = 'tt_playerProfile';
 const SEAT_STORAGE_KEY = 'tt_mySeatIndex';
+const SEAT_ASSIGNMENTS_KEY = 'tt_seatAssignments';
 const LEGACY_STORAGE_KEY = 'playerProfile';
 
 const DEFAULT_PROFILE = {
   id: null,
-  name: 'Leahana',
+  name: 'Player',
   seatColor: '#6aa9ff',
   accentColor: '#ffd36a'
 };
@@ -97,4 +98,39 @@ const saveMySeatIndex = (seatIndex) => {
   }
 };
 
-export { loadMySeatIndex, loadPlayerProfile, saveMySeatIndex, savePlayerProfile };
+const loadSeatAssignments = () => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(SEAT_ASSIGNMENTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? parsed : null;
+  } catch (error) {
+    return null;
+  }
+};
+
+const saveSeatAssignments = (seatAssignments) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    if (!seatAssignments) {
+      window.localStorage.removeItem(SEAT_ASSIGNMENTS_KEY);
+      return;
+    }
+    window.localStorage.setItem(SEAT_ASSIGNMENTS_KEY, JSON.stringify(seatAssignments));
+  } catch (error) {
+    // noop
+  }
+};
+
+export {
+  loadMySeatIndex,
+  loadPlayerProfile,
+  loadSeatAssignments,
+  saveMySeatIndex,
+  savePlayerProfile,
+  saveSeatAssignments
+};

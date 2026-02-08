@@ -3160,10 +3160,7 @@ const Table = () => {
                 }
                 onSit={() => {
                   // eslint-disable-next-line no-console
-                  console.log('Sit Here clicked', {
-                    seatIndex: seatMenuIndex,
-                    playerId: myPlayerId
-                  });
+                  console.log('Sit click', seatMenuIndex, myPlayerId);
                   sitAtSeat(seatMenuIndex);
                   logAction(`${myName} sat at ${seatMenuSeat.label}`);
                   closeSeatMenu();
