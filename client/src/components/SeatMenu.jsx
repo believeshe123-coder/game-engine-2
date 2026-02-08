@@ -22,7 +22,7 @@ const SeatMenu = ({
         </div>
         <div
           className="seat-menu__swatch"
-          style={{ background: seatColor || '#ccc' }}
+          style={{ background: seatColor }}
           aria-hidden="true"
         />
       </div>
