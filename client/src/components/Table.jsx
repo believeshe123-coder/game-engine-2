@@ -488,15 +488,21 @@ const Table = () => {
 
   const getHandZoneAtPoint = useCallback(
     (x, y) => {
+      let closestSeatIndex = null;
+      let closestDistance = Infinity;
       for (let i = 0; i < handZones.length; i += 1) {
         const zone = handZones[i];
         const left = zone.x - zone.width / 2;
         const top = zone.y - zone.height / 2;
         if (x >= left && x <= left + zone.width && y >= top && y <= top + zone.height) {
-          return zone.seatIndex;
+          const distance = Math.hypot(x - zone.x, y - zone.y);
+          if (distance < closestDistance) {
+            closestDistance = distance;
+            closestSeatIndex = zone.seatIndex;
+          }
         }
       }
-      return null;
+      return closestSeatIndex;
     },
     [handZones]
   );
@@ -1238,26 +1244,13 @@ const Table = () => {
         placement.x + cardSize.width / 2,
         placement.y + cardSize.height / 2
       );
-      if (
-        handSeatIndex !== null &&
-        handSeatIndex !== undefined &&
-        mySeatIndex !== null &&
-        handSeatIndex === mySeatIndex
-      ) {
-        moveCardIdsToHand(mySeatIndex, held.cardIds);
+      if (handSeatIndex !== null && handSeatIndex !== undefined) {
+        moveCardIdsToHand(handSeatIndex, held.cardIds);
+        const seatLabel = seats[handSeatIndex]?.label ?? `Seat ${handSeatIndex + 1}`;
         logAction(
-          `${myName} moved ${held.cardIds.length} ${held.cardIds.length === 1 ? 'card' : 'cards'} to hand`
+          `${myName} dealt ${held.cardIds.length} ${held.cardIds.length === 1 ? 'card' : 'cards'} to ${seatLabel}`
         );
         clearInteraction({ preserveSelection: false });
-        return;
-      }
-      if (
-        handSeatIndex !== null &&
-        handSeatIndex !== undefined &&
-        mySeatIndex !== null &&
-        handSeatIndex !== mySeatIndex
-      ) {
-        restoreHeldToOrigin();
         return;
       }
       const overlapId = findTableOverlapStackId(placement.x, placement.y, null);
@@ -1309,10 +1302,9 @@ const Table = () => {
       interaction.held,
       interaction.selectedStackId,
       moveCardIdsToHand,
+      seats,
       myName,
-      mySeatIndex,
       logAction,
-      restoreHeldToOrigin,
       setStacks
     ]
   );
@@ -1333,34 +1325,14 @@ const Table = () => {
         placement.x + cardSize.width / 2,
         placement.y + cardSize.height / 2
       );
-      if (
-        handSeatIndex !== null &&
-        handSeatIndex !== undefined &&
-        mySeatIndex !== null &&
-        handSeatIndex === mySeatIndex
-      ) {
-        moveCardIdsToHand(mySeatIndex, draggedStack.cardIds);
+      if (handSeatIndex !== null && handSeatIndex !== undefined) {
+        moveCardIdsToHand(handSeatIndex, draggedStack.cardIds);
+        const seatLabel = seats[handSeatIndex]?.label ?? `Seat ${handSeatIndex + 1}`;
         logAction(
-          `${myName} moved ${draggedStack.cardIds.length} ${draggedStack.cardIds.length === 1 ? 'card' : 'cards'} to hand`
+          `${myName} dealt ${draggedStack.cardIds.length} ${draggedStack.cardIds.length === 1 ? 'card' : 'cards'} to ${seatLabel}`
         );
         setStacks((prev) => prev.filter((stack) => stack.id !== draggedId));
         clearInteraction();
-        return;
-      }
-      if (
-        handSeatIndex !== null &&
-        handSeatIndex !== undefined &&
-        mySeatIndex !== null &&
-        handSeatIndex !== mySeatIndex
-      ) {
-        setStacks((prev) =>
-          prev.map((stack) =>
-            stack.id === draggedId
-              ? { ...stack, x: interaction.drag.originXY.x, y: interaction.drag.originXY.y }
-              : stack
-          )
-        );
-        clearInteraction({ preserveSelection: true });
         return;
       }
       const overlapId = findTableOverlapStackId(placement.x, placement.y, draggedId);
@@ -1388,8 +1360,8 @@ const Table = () => {
       interaction.selectedStackId,
       mergeStacks,
       moveCardIdsToHand,
+      seats,
       myName,
-      mySeatIndex,
       logAction,
       setStacks,
       stacksById
@@ -2536,9 +2508,8 @@ const Table = () => {
               {handZones.map((zone) => {
                 const isOwnerZone = mySeatIndex === zone.seatIndex;
                 const isDragHover = Boolean(interaction.held) && hoverHandSeatId === zone.seatIndex;
-                const isValidDropZone = isDragHover && isOwnerZone;
-                const isInvalidDropZone =
-                  isDragHover && mySeatIndex !== null && zone.seatIndex !== mySeatIndex;
+                const isValidDropZone = isDragHover;
+                const isInvalidDropZone = false;
                 const seatHand = hands?.[zone.seatIndex] ?? { cardIds: [], revealed: {} };
                 const count = seatHand.cardIds.length;
                 const seatPlayerId = seatAssignments[zone.seatIndex];
