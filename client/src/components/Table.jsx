@@ -298,8 +298,7 @@ const Table = () => {
   const [hoverSeatCard, setHoverSeatCard] = useState(null);
   const myName = player?.name ?? 'Player';
 
-  // All actions must be added to actionsRef.current. Do not add standalone const handleX callbacks that are referenced by memos/effects above.
-  const actionsRef = useRef(null);
+  const actions = useMemo(() => ({}), []);
   const interactionRef = useRef(interaction);
 
   useEffect(() => {
@@ -325,15 +324,15 @@ const Table = () => {
     []
   );
 
-  const clearRmbHoldTimer = useCallback(() => {
+  actions.clearRmbHoldTimer = useCallback(() => {
     if (rmbHoldTimerRef.current) {
       clearTimeout(rmbHoldTimerRef.current);
       rmbHoldTimerRef.current = null;
     }
-  }, []);
+  }, [actions]);
 
-  const clearInteraction = useCallback((options = {}) => {
-    clearRmbHoldTimer();
+  actions.clearInteraction = useCallback((options = {}) => {
+    actions.clearRmbHoldTimer();
     const { nextSelectedStackId = null, preserveSelection = true } = options;
     setInteraction((prev) => ({
       ...prev,
@@ -348,10 +347,10 @@ const Table = () => {
         : nextSelectedStackId,
       menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
     }));
-  }, [clearRmbHoldTimer, defaultRmbState]);
+  }, [actions, defaultRmbState]);
 
-  const resetInteractionStates = useCallback(() => {
-    clearInteraction({ preserveSelection: false });
+  actions.resetInteractionStates = useCallback(() => {
+    actions.clearInteraction({ preserveSelection: false });
     setHoveredStackId(null);
     setPickCountOpen(false);
     setPickCountValue('1');
@@ -361,9 +360,9 @@ const Table = () => {
     setDragSeatIndex(null);
     setInventoryDrag(null);
     setHeldScreenPos(null);
-  }, [clearInteraction]);
+  }, [actions]);
 
-  const resetInteractionToDefaults = useCallback(() => {
+  actions.resetInteractionToDefaults = useCallback(() => {
     setInteraction({
       mode: 'idle',
       pointerId: null,
@@ -385,17 +384,17 @@ const Table = () => {
       selectedStackId: null,
       menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
     });
-  }, []);
+  }, [actions]);
 
-  const openSeatMenu = useCallback((seatIndex) => {
+  actions.openSeatMenu = useCallback((seatIndex) => {
     setSeatMenuState({ seatIndex, open: true });
-  }, []);
+  }, [actions]);
 
-  const closeSeatMenu = useCallback(() => {
+  actions.closeSeatMenu = useCallback(() => {
     setSeatMenuState({ seatIndex: null, open: false });
   }, []);
 
-  const closeMenu = useCallback(() => {
+  actions.closeMenu = useCallback(() => {
     setPickCountOpen(false);
     setInteraction((prev) => ({
       ...prev,
@@ -403,7 +402,7 @@ const Table = () => {
     }));
   }, []);
 
-  const selectStack = useCallback((stackId, screenXY) => {
+  actions.selectStack = useCallback((stackId, screenXY) => {
     setPickCountOpen(false);
     setInteraction((prev) => ({
       ...prev,
@@ -487,7 +486,7 @@ const Table = () => {
     return adjusted;
   }, []);
 
-  const releaseCapturedPointer = useCallback(() => {
+  actions.releaseCapturedPointer = useCallback(() => {
     const { pointerId, element } = capturedPointerRef.current;
     if (element && pointerId !== null && element.hasPointerCapture?.(pointerId)) {
       element.releasePointerCapture(pointerId);
@@ -686,16 +685,6 @@ const Table = () => {
     });
     setHandZones(nextZones);
   }, [
-    hardResetTableState,
-    logAction,
-    resetInteractionStates,
-    resetInteractionToDefaults,
-    setAppliedSettings,
-    setSettings,
-    setSettingsOpen,
-    setCardFaceOverrides,
-    setResetConfirmOpen,
-    updateTabletopScale,
     handZoneSeatOffset,
     handZoneSize.height,
     handZoneSize.width,
@@ -824,7 +813,7 @@ const Table = () => {
     );
   }, [seatParams, seats, tableShape]);
 
-  const updateTabletopScale = useCallback(() => {
+  actions.updateTabletopScale = useCallback(() => {
     const frameNode = tableFrameRef.current;
     if (!frameNode) {
       return;
@@ -880,26 +869,26 @@ const Table = () => {
           height: entry.contentRect.height
         });
         layoutSeats();
-        actionsRef.current?.updateTabletopScale?.();
+        actions.updateTabletopScale?.();
       }
     });
 
     tableObserver.observe(tableRef.current);
     const frameObserver = new ResizeObserver(() => {
       layoutSeats();
-      actionsRef.current?.updateTabletopScale?.();
+      actions.updateTabletopScale?.();
     });
     frameObserver.observe(tableFrameRef.current);
     return () => {
       tableObserver.disconnect();
       frameObserver.disconnect();
     };
-  }, [layoutSeats]);
+  }, [actions, layoutSeats]);
 
   useEffect(() => {
     layoutSeats();
-    actionsRef.current?.updateTabletopScale?.();
-  }, [layoutSeats]);
+    actions.updateTabletopScale?.();
+  }, [actions, layoutSeats]);
 
   useEffect(() => {
     layoutSeats();
@@ -908,15 +897,15 @@ const Table = () => {
   useEffect(() => {
     const handleResize = () => {
       layoutSeats();
-      actionsRef.current?.updateTabletopScale?.();
+      actions.updateTabletopScale?.();
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [layoutSeats]);
+  }, [actions, layoutSeats]);
 
   useEffect(() => {
-    actionsRef.current?.updateTabletopScale?.();
-  }, [seatCount, tableShape]);
+    actions.updateTabletopScale?.();
+  }, [actions, seatCount, tableShape]);
 
   useEffect(() => {
     recomputeFeltGeometry();
@@ -1160,7 +1149,7 @@ const Table = () => {
     [seatRailBounds, getTablePointerPosition, seatParams, tableShape, updateSeatParam]
   );
 
-  const updateSeatDropHover = useCallback(
+  actions.updateSeatDropHover = useCallback(
     (clientX, clientY) => {
       if (!interaction.held && interaction.mode !== 'dragStack') {
         if (hoverSeatDropIndex !== null) {
@@ -1186,7 +1175,7 @@ const Table = () => {
     };
   }, []);
 
-  const handleInventoryHeaderPointerDown = useCallback(
+  actions.handleInventoryHeaderPointerDown = useCallback(
     (event) => {
       if (!settings.inventoryDragEnabled) {
         return;
@@ -1245,7 +1234,7 @@ const Table = () => {
     window.localStorage.setItem('tt_inventoryPos', JSON.stringify(inventoryPos));
   }, [inventoryPos]);
 
-  const resetInventoryPosition = useCallback(() => {
+  actions.resetInventoryPosition = useCallback(() => {
     setInventoryPos(null);
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem('tt_inventoryPos');
@@ -1289,7 +1278,7 @@ const Table = () => {
     [getCardLabel, logAction, myName]
   );
 
-  const handleSeatPointerDown = useCallback(
+  actions.handleSeatPointerDown = useCallback(
     (event, seatIndex) => {
       if (interaction.mode !== 'idle') {
         return;
@@ -1312,10 +1301,10 @@ const Table = () => {
     [interaction.mode, updateSeatParamFromPointer]
   );
 
-  const handleSeatPointerMove = useCallback(
+  actions.handleSeatPointerMove = useCallback(
     (event, seatIndex) => {
       if (interaction.held && dragSeatIndex !== seatIndex) {
-        actionsRef.current?.updateSeatDropHover?.(event.clientX, event.clientY);
+        actions.updateSeatDropHover?.(event.clientX, event.clientY);
         return;
       }
       if (dragSeatIndex !== seatIndex) {
@@ -1332,13 +1321,13 @@ const Table = () => {
       }
       updateSeatParamFromPointer(event, seatIndex);
     },
-    [dragSeatIndex, interaction.held, updateSeatParamFromPointer]
+    [actions, dragSeatIndex, interaction.held, updateSeatParamFromPointer]
   );
 
-  const handleSeatPointerUp = useCallback(() => {
-    releaseCapturedPointer();
+  actions.handleSeatPointerUp = useCallback(() => {
+    actions.releaseCapturedPointer();
     setDragSeatIndex(null);
-  }, [releaseCapturedPointer]);
+  }, [actions]);
 
   const DRAG_THRESHOLD = 6;
 
@@ -1352,7 +1341,7 @@ const Table = () => {
     };
   }, []);
 
-  const handleSeatClick = useCallback(
+  actions.handleSeatClick = useCallback(
     (seatIndex) => {
       if (seatDragRef.current.moved && seatDragRef.current.seatIndex === seatIndex) {
         seatDragRef.current = { seatIndex: null, moved: false, start: null };
@@ -1363,13 +1352,13 @@ const Table = () => {
         if (interaction.held) {
           moveCardIdsToHand(seatIndex, interaction.held.cardIds);
           logDealt(seatIndex, interaction.held.cardIds.length);
-          clearInteraction({ preserveSelection: false });
+          actions.clearInteraction({ preserveSelection: false });
         }
         return;
       }
-      actionsRef.current?.openSeatMenu?.(seatIndex);
+      actions.openSeatMenu?.(seatIndex);
     },
-    [clearInteraction, interaction.held, interaction.mode, logDealt, moveCardIdsToHand]
+    [actions, interaction.held, interaction.mode, logDealt, moveCardIdsToHand]
   );
 
   const restoreHeldToOrigin = useCallback(() => {
@@ -1403,10 +1392,10 @@ const Table = () => {
         ownerSeatIndex: null
       });
     });
-    clearInteraction();
-  }, [clearInteraction, interaction.held, setStacks]);
+    actions.clearInteraction();
+  }, [actions, interaction.held, setStacks]);
 
-  const pickupFromStack = useCallback(
+  actions.pickupFromStack = useCallback(
     (stackId, count, pointerId = null) => {
       const pointerPosition = lastPointerWorldRef.current;
       setStacks((prev) => {
@@ -1565,7 +1554,7 @@ const Table = () => {
       if (seatDropIndex !== null && seatDropIndex !== undefined) {
         moveCardIdsToHand(seatDropIndex, held.cardIds);
         logDealt(seatDropIndex, held.cardIds.length);
-        clearInteraction({ preserveSelection: false });
+        actions.clearInteraction({ preserveSelection: false });
         return;
       }
       const pointerPosition = pointerWorld ?? lastPointerWorldRef.current;
@@ -1585,7 +1574,7 @@ const Table = () => {
       if (handSeatIndex !== null && handSeatIndex !== undefined) {
         moveCardIdsToHand(handSeatIndex, held.cardIds);
         logDealt(handSeatIndex, held.cardIds.length);
-        clearInteraction({ preserveSelection: false });
+        actions.clearInteraction({ preserveSelection: false });
         return;
       }
       const overlapId = findTableOverlapStackId(placement.x, placement.y, null);
@@ -1601,7 +1590,7 @@ const Table = () => {
           };
           return prev.filter((stack) => stack.id !== overlapId).concat(merged);
         });
-        clearInteraction({
+        actions.clearInteraction({
           preserveSelection: true,
           nextSelectedStackId: overlapId
         });
@@ -1620,7 +1609,7 @@ const Table = () => {
           })
         );
       }
-      clearInteraction({
+      actions.clearInteraction({
         preserveSelection: true,
         nextSelectedStackId: held.stackId
       });
@@ -1629,7 +1618,7 @@ const Table = () => {
       cardSize.height,
       cardSize.width,
       clampTopLeftToFelt,
-      clearInteraction,
+      actions.clearInteraction,
       findTableOverlapStackId,
       getHandZoneAtPoint,
       getSeatIndexAtScreenPoint,
@@ -1651,7 +1640,7 @@ const Table = () => {
       const draggedId = interaction.drag.stackId;
       const draggedStack = stacksById[draggedId];
       if (!draggedStack) {
-        clearInteraction({ preserveSelection: false });
+        actions.clearInteraction({ preserveSelection: false });
         return;
       }
       const seatDropIndex =
@@ -1662,7 +1651,7 @@ const Table = () => {
         moveCardIdsToHand(seatDropIndex, draggedStack.cardIds);
         logDealt(seatDropIndex, draggedStack.cardIds.length);
         setStacks((prev) => prev.filter((stack) => stack.id !== draggedId));
-        clearInteraction();
+        actions.clearInteraction();
         return;
       }
       const placement = { x: draggedStack.x, y: draggedStack.y };
@@ -1674,13 +1663,13 @@ const Table = () => {
         moveCardIdsToHand(handSeatIndex, draggedStack.cardIds);
         logDealt(handSeatIndex, draggedStack.cardIds.length);
         setStacks((prev) => prev.filter((stack) => stack.id !== draggedId));
-        clearInteraction();
+        actions.clearInteraction();
         return;
       }
       const overlapId = findTableOverlapStackId(placement.x, placement.y, draggedId);
       if (overlapId) {
         mergeStacks(draggedId, overlapId);
-        clearInteraction({
+        actions.clearInteraction({
           preserveSelection: true,
           nextSelectedStackId:
             interaction.selectedStackId === draggedId
@@ -1689,12 +1678,12 @@ const Table = () => {
         });
         return;
       }
-      clearInteraction({ preserveSelection: true });
+      actions.clearInteraction({ preserveSelection: true });
     },
     [
       cardSize.height,
       cardSize.width,
-      clearInteraction,
+      actions.clearInteraction,
       findTableOverlapStackId,
       getHandZoneAtPoint,
       getSeatIndexAtScreenPoint,
@@ -1709,7 +1698,7 @@ const Table = () => {
     ]
   );
 
-  const cancelDrag = useCallback(() => {
+  actions.cancelDrag = useCallback(() => {
     if (interaction.mode === 'dragStack' && interaction.drag) {
       setStacks((prev) =>
         prev.map((stack) =>
@@ -1723,8 +1712,15 @@ const Table = () => {
       return;
     }
     pointerDownRef.current = null;
-    clearInteraction({ preserveSelection: true });
-  }, [clearInteraction, interaction.drag, interaction.held, interaction.mode, restoreHeldToOrigin, setStacks]);
+    actions.clearInteraction({ preserveSelection: true });
+  }, [
+    actions,
+    interaction.drag,
+    interaction.held,
+    interaction.mode,
+    restoreHeldToOrigin,
+    setStacks
+  ]);
 
   const placeOneFromHeld = useCallback(
     (pointerWorld) => {
@@ -1743,7 +1739,7 @@ const Table = () => {
       const remaining = [...interaction.held.cardIds];
       const placedCard = remaining.pop();
       if (!placedCard) {
-        clearInteraction({ preserveSelection: true });
+        actions.clearInteraction({ preserveSelection: true });
         return;
       }
       const placedStackId = createStackId();
@@ -1773,7 +1769,7 @@ const Table = () => {
       });
       logAction(`${myName} placed 1 card`);
       if (remaining.length === 0) {
-        clearInteraction({ preserveSelection: true });
+        actions.clearInteraction({ preserveSelection: true });
       } else {
         setInteraction((prev) => ({
           ...prev,
@@ -1783,7 +1779,7 @@ const Table = () => {
     },
     [
       clampTopLeftToFelt,
-      clearInteraction,
+      actions.clearInteraction,
       createStackId,
       findTableOverlapStackId,
       getHeldTopLeft,
@@ -1884,7 +1880,7 @@ const Table = () => {
       }
 
       if (placements.length === 0) {
-        clearInteraction({ preserveSelection: true });
+        actions.clearInteraction({ preserveSelection: true });
         return;
       }
 
@@ -1892,7 +1888,7 @@ const Table = () => {
       logAction(`${myName} placed ${placements.length} card${placements.length === 1 ? '' : 's'}`);
 
       if (remaining.length === 0) {
-        clearInteraction({ preserveSelection: true });
+        actions.clearInteraction({ preserveSelection: true });
       } else {
         const carryRemainder = Math.max(
           0,
@@ -1914,7 +1910,7 @@ const Table = () => {
     [
       adjustSlideSeparation,
       clampTopLeftToFelt,
-      clearInteraction,
+      actions.clearInteraction,
       createStackId,
       getHeldTopLeft,
       interaction.drag,
@@ -1938,7 +1934,7 @@ const Table = () => {
       if (!interaction.drag) {
         return;
       }
-      clearRmbHoldTimer();
+      actions.clearRmbHoldTimer();
       setInteraction((prev) => ({
         ...prev,
         isSliding: true,
@@ -1952,7 +1948,7 @@ const Table = () => {
         slideCarryDist: 0
       }));
     },
-    [clearRmbHoldTimer, interaction.drag]
+    [actions, interaction.drag]
   );
 
   const sweepPlaceFromHeld = useCallback(
@@ -1995,7 +1991,7 @@ const Table = () => {
   );
 
   // --- handlers (must be declared before menus/hotkeys) ---
-  const handleFlipSelected = useCallback(() => {
+  actions.handleFlipSelected = useCallback(() => {
     if (!interaction.selectedStackId) {
       return;
     }
@@ -2020,7 +2016,7 @@ const Table = () => {
     logAction(`${myName} flipped a stack`);
   }, [interaction.selectedStackId, myName, logAction, setStacks, stacksById]);
 
-  const handleShuffleSelected = useCallback(() => {
+  actions.handleShuffleSelected = useCallback(() => {
     if (!interaction.selectedStackId) {
       return;
     }
@@ -2040,15 +2036,15 @@ const Table = () => {
     logAction(`${myName} shuffled a stack`);
   }, [interaction.selectedStackId, myName, logAction, setStacks]);
 
-  const handleKeyDown = useCallback(
+  actions.handleKeyDown = useCallback(
     (event) => {
       if (event.repeat) {
         return;
       }
       if (event.key === 'Escape') {
         event.preventDefault();
-        actionsRef.current?.cancelDrag?.();
-        actionsRef.current?.closeSeatMenu?.();
+        actions.cancelDrag?.();
+        actions.closeSeatMenu?.();
         return;
       }
       const isFormElement =
@@ -2063,36 +2059,37 @@ const Table = () => {
       const lowerKey = event.key.toLowerCase();
       if (lowerKey === 'f') {
         event.preventDefault();
-        actionsRef.current?.handleFlipSelected?.();
+        actions.handleFlipSelected?.();
         return;
       }
       if (lowerKey === 's') {
         event.preventDefault();
-        actionsRef.current?.handleShuffleSelected?.();
+        actions.handleShuffleSelected?.();
         return;
       }
       if (event.key === '1' || event.key === '5' || event.key === '0') {
         event.preventDefault();
         const pickCount = event.key === '0' ? 10 : Number(event.key);
-        actionsRef.current?.pickupFromStack?.(interaction.selectedStackId, pickCount);
+        actions.pickupFromStack?.(interaction.selectedStackId, pickCount);
       }
     },
     [
+      actions,
       interaction.selectedStackId
     ]
   );
 
   useEffect(() => {
-    const handleKeyDownEvent = (event) => actionsRef.current?.handleKeyDown?.(event);
+    const handleKeyDownEvent = (event) => actions.handleKeyDown?.(event);
     window.addEventListener('keydown', handleKeyDownEvent);
     return () => window.removeEventListener('keydown', handleKeyDownEvent);
-  }, []);
+  }, [actions]);
 
   useEffect(() => {
     const handleCancelEvent = () => {
       const currentInteraction = interactionRef.current;
       if (currentInteraction?.mode !== 'idle') {
-        actionsRef.current?.cancelDrag?.();
+        actions.cancelDrag?.();
       }
     };
     window.addEventListener('pointercancel', handleCancelEvent);
@@ -2125,7 +2122,7 @@ const Table = () => {
         setHeldScreenPos({ x: event.clientX, y: event.clientY });
       }
       if (currentInteraction?.held || currentInteraction?.mode === 'dragStack') {
-        actionsRef.current?.updateSeatDropHover?.(event.clientX, event.clientY);
+        actions.updateSeatDropHover?.(event.clientX, event.clientY);
       }
     };
     window.addEventListener('pointermove', handlePointerMoveEvent);
@@ -2155,7 +2152,7 @@ const Table = () => {
     [hitTestStack, interaction.mode]
   );
 
-  const handleSurfacePointerDown = useCallback(
+  actions.handleSurfacePointerDown = useCallback(
     (event) => {
       lastPointerRef.current = { x: event.clientX, y: event.clientY };
       const pointerWorld = getTablePointerPosition(event);
@@ -2165,9 +2162,9 @@ const Table = () => {
       event.preventDefault();
       lastPointerWorldRef.current = pointerWorld;
       updatePresence({ isDown: true, x: pointerWorld.x, y: pointerWorld.y });
-      actionsRef.current?.closeSeatMenu?.();
+      actions.closeSeatMenu?.();
       if (interaction.menu.open) {
-        actionsRef.current?.closeMenu?.();
+        actions.closeMenu?.();
       }
       const stackId = hitTestStack(pointerWorld.x, pointerWorld.y);
       if (event.button === 2) {
@@ -2191,7 +2188,7 @@ const Table = () => {
             slideLastPos: null,
             slideCarryDist: 0
           }));
-          clearRmbHoldTimer();
+          actions.clearRmbHoldTimer();
           rmbHoldTimerRef.current = setTimeout(() => {
             const pointerPosition = lastPointerWorldRef.current ?? pointerWorld;
             setInteraction((prev) => {
@@ -2288,9 +2285,7 @@ const Table = () => {
       }));
     },
     [
-      clearRmbHoldTimer,
-      closeMenu,
-      closeSeatMenu,
+      actions,
       getTablePointerPosition,
       hitTestStack,
       interaction.held,
@@ -2300,7 +2295,7 @@ const Table = () => {
     ]
   );
 
-  const handleSurfacePointerMove = useCallback(
+  actions.handleSurfacePointerMove = useCallback(
     (event) => {
       const pointerWorld = getTablePointerPosition(event);
       if (!pointerWorld) {
@@ -2309,7 +2304,7 @@ const Table = () => {
       lastPointerRef.current = { x: event.clientX, y: event.clientY };
       lastPointerWorldRef.current = pointerWorld;
       updatePresence({ x: pointerWorld.x, y: pointerWorld.y });
-      actionsRef.current?.updateSeatDropHover?.(event.clientX, event.clientY);
+      actions.updateSeatDropHover?.(event.clientX, event.clientY);
 
       if (interaction.mode === 'dragStack') {
         updateDrag(pointerWorld);
@@ -2351,10 +2346,10 @@ const Table = () => {
         if (distance >= DRAG_THRESHOLD) {
           pending.dragStarted = true;
           if (pending.button === 0 && pending.stackId) {
-            actionsRef.current?.pickupFromStack?.(pending.stackId, 1, event.pointerId);
+            actions.pickupFromStack?.(pending.stackId, 1, event.pointerId);
           }
           if (pending.button === 2 && pending.stackId) {
-            actionsRef.current?.pickupFromStack?.(pending.stackId, 'all', event.pointerId);
+            actions.pickupFromStack?.(pending.stackId, 'all', event.pointerId);
           }
         }
       }
@@ -2363,6 +2358,7 @@ const Table = () => {
     },
     [
       DRAG_THRESHOLD,
+      actions,
       beginRmbSlide,
       defaultRmbState,
       getTablePointerPosition,
@@ -2374,18 +2370,16 @@ const Table = () => {
       interaction.isSliding,
       interaction.rmbStartWorld,
       moveHeldWithPointer,
-      pickupFromStack,
       placeOneFromHeld,
       sweepPlaceFromHeld,
       updateDrag,
-      updateSeatDropHover,
       updatePresence
     ]
   );
 
-  const handleSurfacePointerUp = useCallback(
+  actions.handleSurfacePointerUp = useCallback(
     (event) => {
-      clearRmbHoldTimer();
+      actions.clearRmbHoldTimer();
       const pointerWorld = getTablePointerPosition(event);
       if (pointerWorld) {
         lastPointerWorldRef.current = pointerWorld;
@@ -2393,12 +2387,12 @@ const Table = () => {
       const pending = pointerDownRef.current;
       if (pending && pending.pointerId === event.pointerId) {
         if (!pending.dragStarted && pending.button === 0 && pending.stackId) {
-          actionsRef.current?.selectStack?.(pending.stackId, {
+          actions.selectStack?.(pending.stackId, {
             x: event.clientX,
             y: event.clientY
           });
         } else if (!pending.dragStarted && pending.button === 2 && pending.stackId) {
-          actionsRef.current?.pickupFromStack?.(pending.stackId, 'all', event.pointerId);
+          actions.pickupFromStack?.(pending.stackId, 'all', event.pointerId);
         }
         pointerDownRef.current = null;
       }
@@ -2425,10 +2419,10 @@ const Table = () => {
         dropHeld(pointerWorld, event.clientX, event.clientY);
       }
       setHoverSeatDropIndex(null);
-      releaseCapturedPointer();
+      actions.releaseCapturedPointer();
     },
     [
-      clearRmbHoldTimer,
+      actions,
       defaultRmbState,
       dropHeld,
       endDrag,
@@ -2438,13 +2432,12 @@ const Table = () => {
       interaction.rmbDown,
       interaction.isSliding,
       placeOneFromHeld,
-      pickupFromStack,
-      releaseCapturedPointer,
-      selectStack
+      actions.pickupFromStack,
+      actions.selectStack
     ]
   );
 
-  const handleInventoryDragStart = useCallback((event, cardId) => {
+  actions.handleInventoryDragStart = useCallback((event, cardId) => {
     if (!event.dataTransfer) {
       return;
     }
@@ -2452,7 +2445,7 @@ const Table = () => {
     event.dataTransfer.effectAllowed = 'move';
   }, []);
 
-  const handleInventoryReorderDrop = useCallback(
+  actions.handleInventoryReorderDrop = useCallback(
     (draggedId, targetIndex) => {
       if (mySeatIndex === null || mySeatIndex === undefined) {
         return;
@@ -2462,7 +2455,7 @@ const Table = () => {
     [mySeatIndex, reorderHand]
   );
 
-  const handleInventoryDropToEnd = useCallback(
+  actions.handleInventoryDropToEnd = useCallback(
     (draggedId) => {
       if (mySeatIndex === null || mySeatIndex === undefined) {
         return;
@@ -2473,7 +2466,7 @@ const Table = () => {
     [hands, mySeatIndex, reorderHand]
   );
 
-  const handleTableDragOver = useCallback((event) => {
+  actions.handleTableDragOver = useCallback((event) => {
     if (event.dataTransfer?.types?.includes('text/plain')) {
       event.preventDefault();
     }
@@ -2527,7 +2520,7 @@ const Table = () => {
     ]
   );
 
-  const handleTableDrop = useCallback(
+  actions.handleTableDrop = useCallback(
     (event) => {
       event.preventDefault();
       const cardId = event.dataTransfer?.getData('text/plain');
@@ -2549,7 +2542,7 @@ const Table = () => {
     ]
   );
 
-  const handleToggleReveal = useCallback(
+  actions.handleToggleReveal = useCallback(
     (cardId) => {
       if (mySeatIndex === null || mySeatIndex === undefined) {
         return;
@@ -2606,7 +2599,7 @@ const Table = () => {
     [cardSize.height, cardSize.width, setStacks, tableRect?.height, tableRect?.width]
   );
 
-  const applySettings = useCallback(() => {
+  actions.applySettings = useCallback(() => {
     const diff = getSettingsDiff(settings, appliedSettings);
     if (!diff.hasPending) {
       return;
@@ -2625,38 +2618,34 @@ const Table = () => {
       setCardFaceOverrides({});
     }
     if (shouldRecomputeGeometry) {
-      actionsRef.current?.updateTabletopScale?.();
+      actions.updateTabletopScale?.();
     }
     setAppliedSettings(settings);
   }, [
+    actions,
     appliedSettings,
     clampStacksToFeltShape,
     rebuildTableSurfacePreservingHands,
     settings
   ]);
 
-  const handleHardResetToBaseDefaults = useCallback(() => {
+  actions.handleHardResetToBaseDefaults = useCallback(() => {
     // eslint-disable-next-line no-console
     console.log('HARD RESET FIRED');
     setSettings(BASE_DEFAULTS);
     setAppliedSettings(BASE_DEFAULTS);
     saveSettings(BASE_DEFAULTS);
     hardResetTableState(BASE_DEFAULTS);
-    actionsRef.current?.resetInteractionStates?.();
-    actionsRef.current?.resetInteractionToDefaults?.();
+    actions.resetInteractionStates?.();
+    actions.resetInteractionToDefaults?.();
     setCardFaceOverrides({});
     setSettingsOpen(false);
-    actionsRef.current?.updateTabletopScale?.();
+    actions.updateTabletopScale?.();
     logAction('Reset table to defaults');
     setResetConfirmOpen(false);
-  }, [
-    hardResetTableState,
-    logAction,
-    resetInteractionStates,
-    resetInteractionToDefaults
-  ]);
+  }, [actions, hardResetTableState, logAction]);
 
-  const handleStackDoubleClick = useCallback((event, stackId) => {
+  actions.handleStackDoubleClick = useCallback((event, stackId) => {
     event.preventDefault();
     event.stopPropagation();
     setStacks((prev) =>
@@ -2679,7 +2668,7 @@ const Table = () => {
     });
   }, [myName, logAction, setStacks, stacksById]);
 
-  const handleMoveSelectedToHand = useCallback(() => {
+  actions.handleMoveSelectedToHand = useCallback(() => {
     if (
       !interaction.selectedStackId ||
       mySeatIndex === null ||
@@ -2713,82 +2702,6 @@ const Table = () => {
     setInteraction,
     setStacks,
     stacksById
-  ]);
-
-  useEffect(() => {
-    actionsRef.current = {
-      applySettings,
-      cancelDrag,
-      clearInteraction,
-      clearRmbHoldTimer,
-      closeMenu,
-      closeSeatMenu,
-      handleFlipSelected,
-      handleHardResetToBaseDefaults,
-      handleInventoryDragStart,
-      handleInventoryDropToEnd,
-      handleInventoryHeaderPointerDown,
-      handleInventoryReorderDrop,
-      handleKeyDown,
-      handleMoveSelectedToHand,
-      handleSeatClick,
-      handleSeatPointerDown,
-      handleSeatPointerMove,
-      handleSeatPointerUp,
-      handleShuffleSelected,
-      handleStackDoubleClick,
-      handleSurfacePointerDown,
-      handleSurfacePointerMove,
-      handleSurfacePointerUp,
-      handleTableDragOver,
-      handleTableDrop,
-      handleToggleReveal,
-      openSeatMenu,
-      pickupFromStack,
-      releaseCapturedPointer,
-      resetInteractionStates,
-      resetInteractionToDefaults,
-      resetInventoryPosition,
-      selectStack,
-      updateSeatDropHover,
-      updateTabletopScale
-    };
-  }, [
-    applySettings,
-    cancelDrag,
-    clearInteraction,
-    clearRmbHoldTimer,
-    closeMenu,
-    closeSeatMenu,
-    handleFlipSelected,
-    handleHardResetToBaseDefaults,
-    handleInventoryDragStart,
-    handleInventoryDropToEnd,
-    handleInventoryHeaderPointerDown,
-    handleInventoryReorderDrop,
-    handleKeyDown,
-    handleMoveSelectedToHand,
-    handleSeatClick,
-    handleSeatPointerDown,
-    handleSeatPointerMove,
-    handleSeatPointerUp,
-    handleShuffleSelected,
-    handleStackDoubleClick,
-    handleSurfacePointerDown,
-    handleSurfacePointerMove,
-    handleSurfacePointerUp,
-    handleTableDragOver,
-    handleTableDrop,
-    handleToggleReveal,
-    openSeatMenu,
-    pickupFromStack,
-    releaseCapturedPointer,
-    resetInteractionStates,
-    resetInteractionToDefaults,
-    resetInventoryPosition,
-    selectStack,
-    updateSeatDropHover,
-    updateTabletopScale
   ]);
 
   const selectedStack = interaction.selectedStackId
@@ -2965,21 +2878,21 @@ const Table = () => {
                   className={`seat seat--${seat.side} ${occupied ? 'seat--occupied' : ''} ${isMine ? 'seat--mine' : ''} ${seatHandCount ? 'seat--has-cards' : ''} ${dragSeatIndex === seat.seatIndex ? 'seat--dragging' : ''} ${hoverSeatDropIndex === seat.seatIndex ? 'dropTarget' : ''}`}
                   data-seat-index={seat.seatIndex}
                   style={seatStyle}
-                  onClick={() => actionsRef.current?.handleSeatClick?.(seat.seatIndex)}
+                  onClick={() => actions.handleSeatClick?.(seat.seatIndex)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
-                      actionsRef.current?.handleSeatClick?.(seat.seatIndex);
+                      actions.handleSeatClick?.(seat.seatIndex);
                     }
                   }}
                   onPointerDown={(event) =>
-                    actionsRef.current?.handleSeatPointerDown?.(event, seat.seatIndex)
+                    actions.handleSeatPointerDown?.(event, seat.seatIndex)
                   }
                   onPointerMove={(event) =>
-                    actionsRef.current?.handleSeatPointerMove?.(event, seat.seatIndex)
+                    actions.handleSeatPointerMove?.(event, seat.seatIndex)
                   }
-                  onPointerUp={() => actionsRef.current?.handleSeatPointerUp?.()}
-                  onPointerCancel={() => actionsRef.current?.handleSeatPointerUp?.()}
+                  onPointerUp={() => actions.handleSeatPointerUp?.()}
+                  onPointerCancel={() => actions.handleSeatPointerUp?.()}
                   role="button"
                   tabIndex={0}
                 >
@@ -3065,13 +2978,13 @@ const Table = () => {
             <div
               ref={tableRef}
               className={`table__surface table__surface--${tableStyle} table__surface--${tableShape}`}
-              onPointerDown={(event) => actionsRef.current?.handleSurfacePointerDown?.(event)}
-              onPointerMove={(event) => actionsRef.current?.handleSurfacePointerMove?.(event)}
-              onPointerUp={(event) => actionsRef.current?.handleSurfacePointerUp?.(event)}
-              onPointerCancel={(event) => actionsRef.current?.handleSurfacePointerUp?.(event)}
+              onPointerDown={(event) => actions.handleSurfacePointerDown?.(event)}
+              onPointerMove={(event) => actions.handleSurfacePointerMove?.(event)}
+              onPointerUp={(event) => actions.handleSurfacePointerUp?.(event)}
+              onPointerCancel={(event) => actions.handleSurfacePointerUp?.(event)}
               onContextMenu={(event) => event.preventDefault()}
-              onDragOver={(event) => actionsRef.current?.handleTableDragOver?.(event)}
-              onDrop={(event) => actionsRef.current?.handleTableDrop?.(event)}
+              onDragOver={(event) => actions.handleTableDragOver?.(event)}
+              onDrop={(event) => actions.handleTableDrop?.(event)}
             >
               <div
                 ref={feltRef}
@@ -3292,7 +3205,7 @@ const Table = () => {
                         isSelected={false}
                         onPointerDown={() => {}}
                         onDoubleClick={(event) =>
-                          actionsRef.current?.handleStackDoubleClick?.(event, stack.id)
+                          actions.handleStackDoubleClick?.(event, stack.id)
                         }
                         onContextMenu={(event) => event.preventDefault()}
                       />
@@ -3312,18 +3225,18 @@ const Table = () => {
           cardIds={hands?.[mySeatIndex]?.cardIds ?? []}
           cardsById={cardsById}
           revealed={hands?.[mySeatIndex]?.revealed ?? {}}
-          onToggleReveal={(cardId) => actionsRef.current?.handleToggleReveal?.(cardId)}
+          onToggleReveal={(cardId) => actions.handleToggleReveal?.(cardId)}
           onCardDragStart={(event, cardId) =>
-            actionsRef.current?.handleInventoryDragStart?.(event, cardId)
+            actions.handleInventoryDragStart?.(event, cardId)
           }
           onCardDrop={(draggedId, targetIndex) =>
-            actionsRef.current?.handleInventoryReorderDrop?.(draggedId, targetIndex)
+            actions.handleInventoryReorderDrop?.(draggedId, targetIndex)
           }
           onDropToEnd={(draggedId) =>
-            actionsRef.current?.handleInventoryDropToEnd?.(draggedId)
+            actions.handleInventoryDropToEnd?.(draggedId)
           }
           onHeaderPointerDown={(event) =>
-            actionsRef.current?.handleInventoryHeaderPointerDown?.(event)
+            actions.handleInventoryHeaderPointerDown?.(event)
           }
           seatColor={players[myPlayerId]?.seatColor}
           cardStyle={appliedSettings.cardStyle}
@@ -3474,7 +3387,7 @@ const Table = () => {
           <button
             className="table-settings__button table-settings__button--secondary"
             type="button"
-            onClick={() => actionsRef.current?.resetInventoryPosition?.()}
+            onClick={() => actions.resetInventoryPosition?.()}
             disabled={!inventoryPos}
           >
                       Reset inventory position
@@ -3769,7 +3682,7 @@ const Table = () => {
                       className="table-settings__button"
                       type="button"
                       title="Rebuilds table using current room/table settings"
-                      onClick={() => actionsRef.current?.applySettings?.()}
+                      onClick={() => actions.applySettings?.()}
                     >
                       Apply Changes
                     </button>
@@ -3814,7 +3727,7 @@ const Table = () => {
                   <button
                     className="modal__button modal__button--danger"
                     type="button"
-                    onClick={() => actionsRef.current?.handleHardResetToBaseDefaults?.()}
+                    onClick={() => actions.handleHardResetToBaseDefaults?.()}
                   >
                     Reset Table
                   </button>
@@ -3842,8 +3755,8 @@ const Table = () => {
                 type="button"
                 className="stack-menu__button"
                 onClick={() => {
-                  actionsRef.current?.pickupFromStack?.(selectedStack.id, 'all');
-                  actionsRef.current?.closeMenu?.();
+                  actions.pickupFromStack?.(selectedStack.id, 'all');
+                  actions.closeMenu?.();
                 }}
               >
                 Pick up full stack
@@ -3855,11 +3768,11 @@ const Table = () => {
                   if (selectedStack.cardIds.length < 2) {
                     return;
                   }
-                  actionsRef.current?.pickupFromStack?.(
+                  actions.pickupFromStack?.(
                     selectedStack.id,
                     Math.ceil(selectedStack.cardIds.length / 2)
                   );
-                  actionsRef.current?.closeMenu?.();
+                  actions.closeMenu?.();
                 }}
               >
                 Pick up half stack
@@ -3868,8 +3781,8 @@ const Table = () => {
                 type="button"
                 className="stack-menu__button"
                 onClick={() => {
-                  actionsRef.current?.pickupFromStack?.(selectedStack.id, 1);
-                  actionsRef.current?.closeMenu?.();
+                  actions.pickupFromStack?.(selectedStack.id, 1);
+                  actions.closeMenu?.();
                 }}
               >
                 Pick up 1 card
@@ -3905,8 +3818,8 @@ const Table = () => {
                       onClick={() => {
                         const parsed = Number.parseInt(pickCountValue, 10);
                         const count = Number.isNaN(parsed) ? 1 : parsed;
-                        actionsRef.current?.pickupFromStack?.(selectedStack.id, count);
-                        actionsRef.current?.closeMenu?.();
+                        actions.pickupFromStack?.(selectedStack.id, count);
+                        actions.closeMenu?.();
                       }}
                     >
                       Pick up
@@ -3926,8 +3839,8 @@ const Table = () => {
                 type="button"
                 className="stack-menu__button"
                 onClick={() => {
-                  actionsRef.current?.handleMoveSelectedToHand?.();
-                  actionsRef.current?.closeMenu?.();
+                  actions.handleMoveSelectedToHand?.();
+                  actions.closeMenu?.();
                 }}
               >
                 Move to Hand
@@ -3937,8 +3850,8 @@ const Table = () => {
               type="button"
               className="stack-menu__button"
               onClick={() => {
-                actionsRef.current?.handleFlipSelected?.();
-                actionsRef.current?.closeMenu?.();
+                actions.handleFlipSelected?.();
+                actions.closeMenu?.();
               }}
             >
               Flip
@@ -3947,8 +3860,8 @@ const Table = () => {
               type="button"
               className="stack-menu__button"
               onClick={() => {
-                actionsRef.current?.handleShuffleSelected?.();
-                actionsRef.current?.closeMenu?.();
+                actions.handleShuffleSelected?.();
+                actions.closeMenu?.();
               }}
             >
               Shuffle
@@ -3974,7 +3887,7 @@ const Table = () => {
                   console.log('Sit click', seatMenuIndex, myPlayerId);
                   sitAtSeat(seatMenuIndex);
                   logAction(`${myName} sat at ${seatMenuSeat.label}`);
-                  actionsRef.current?.closeSeatMenu?.();
+                  actions.closeSeatMenu?.();
                 }}
               />
             </div>,
