@@ -5,7 +5,12 @@ import InventoryPanel from './InventoryPanel.jsx';
 import ActionLog from './ActionLog.jsx';
 import CursorGhost from './CursorGhost.jsx';
 import SeatMenu from './SeatMenu.jsx';
-import { clamp, getFeltEllipseInTableSpace } from '../utils/geometry.js';
+import {
+  clamp,
+  clampStackToFelt,
+  getFeltEllipseInTableSpace,
+  getFeltShape
+} from '../utils/geometry.js';
 import {
   clampParamBetweenNeighbors,
   paramFromPointer,
@@ -53,6 +58,16 @@ const SLIDE_START_DIR_THRESHOLD_PX = 10;
 const HAND_ZONE_SEAT_OFFSET_BASE = 52;
 const HELD_STACK_ID = '__HELD__';
 
+const DECK_REBUILD_KEYS = new Set([
+  'includeJokers',
+  'deckCount',
+  'presetLayout',
+  'resetFaceDown'
+]);
+const VISUAL_APPLY_KEYS = new Set(['cardStyle']);
+const ROOM_GEOMETRY_KEYS = new Set(['tableStyle', 'tableShape']);
+const ROOM_SEAT_KEYS = new Set(['seatCount']);
+
 const SIDE_ORDER = ['top', 'right', 'bottom', 'left'];
 const SIDE_NORMALS = {
   top: { angle: -Math.PI / 2 },
@@ -81,6 +96,46 @@ const getSeatSideFromAngle = (angle) => {
     return 'left';
   }
   return 'top';
+};
+
+const getSettingsDiff = (draftSettings, applied) => {
+  const deckRebuild = [];
+  const visualApply = [];
+  const roomGeometry = [];
+  let seatResize = false;
+
+  DECK_REBUILD_KEYS.forEach((key) => {
+    if (draftSettings[key] !== applied[key]) {
+      deckRebuild.push(key);
+    }
+  });
+  VISUAL_APPLY_KEYS.forEach((key) => {
+    if (draftSettings[key] !== applied[key]) {
+      visualApply.push(key);
+    }
+  });
+  ROOM_GEOMETRY_KEYS.forEach((key) => {
+    if (draftSettings.roomSettings[key] !== applied.roomSettings[key]) {
+      roomGeometry.push(key);
+    }
+  });
+  ROOM_SEAT_KEYS.forEach((key) => {
+    if (draftSettings.roomSettings[key] !== applied.roomSettings[key]) {
+      seatResize = true;
+    }
+  });
+
+  return {
+    deckRebuild,
+    visualApply,
+    roomGeometry,
+    seatResize,
+    hasPending:
+      deckRebuild.length > 0 ||
+      visualApply.length > 0 ||
+      roomGeometry.length > 0 ||
+      seatResize
+  };
 };
 
 const computeSeatAnchorsFromParams = ({ seatParams, tableShape, seatRailBounds }) => {
@@ -147,7 +202,7 @@ const Table = () => {
     () => HAND_ZONE_SEAT_OFFSET_BASE * viewTransform.cardScale,
     [viewTransform.cardScale]
   );
-  const seatCount = settings.roomSettings.seatCount;
+  const seatCount = appliedSettings.roomSettings.seatCount;
   const {
     cardsById,
     allCardIds,
@@ -155,6 +210,7 @@ const Table = () => {
     setStacks,
     createStackId,
     resetTableSurface,
+    rebuildTableSurfacePreservingHands,
     players,
     player,
     mySeatIndex,
@@ -337,8 +393,8 @@ const Table = () => {
     }
   }, [hoverSeatDropIndex, interaction.held, interaction.mode]);
 
-  const tableStyle = settings.roomSettings.tableStyle;
-  const tableShape = settings.roomSettings.tableShape;
+  const tableStyle = appliedSettings.roomSettings.tableStyle;
+  const tableShape = appliedSettings.roomSettings.tableShape;
   const [feltBounds, setFeltBounds] = useState(null);
   const [seatRailBounds, setSeatRailBounds] = useState(null);
   const [feltEllipse, setFeltEllipse] = useState(null);
@@ -915,6 +971,22 @@ const Table = () => {
   const updateSeatParam = useCallback(
     (seatIndex, value) => {
       setSettings((prev) => {
+        const paramsByShape = prev.roomSettings.seatParams ?? {};
+        const params = normalizeSeatParams(paramsByShape[tableShape], seatCount, tableShape);
+        const nextParams = [...params];
+        nextParams[seatIndex] = value;
+        return {
+          ...prev,
+          roomSettings: {
+            ...prev.roomSettings,
+            seatParams: {
+              ...paramsByShape,
+              [tableShape]: nextParams
+            }
+          }
+        };
+      });
+      setAppliedSettings((prev) => {
         const paramsByShape = prev.roomSettings.seatParams ?? {};
         const params = normalizeSeatParams(paramsByShape[tableShape], seatCount, tableShape);
         const nextParams = [...params];
@@ -2437,30 +2509,15 @@ const Table = () => {
 
   const visibleBadgeStackId =
     settings.stackCountDisplayMode === 'hover' ? hoveredStackId : null;
-  const tableRebuildDirty = useMemo(() => {
-    const keys = [
-      'resetFaceDown',
-      'cardStyle',
-      'includeJokers',
-      'deckCount',
-      'presetLayout'
-    ];
-    return keys.some((key) => settings[key] !== appliedSettings[key]);
-  }, [appliedSettings, settings]);
-  const roomRebuildDirty = useMemo(() => {
-    const roomKeys = ['tableStyle', 'tableShape', 'seatCount'];
-    if (
-      roomKeys.some(
-        (key) => settings.roomSettings[key] !== appliedSettings.roomSettings[key]
-      )
-    ) {
-      return true;
-    }
-    const nextParams = settings.roomSettings.seatParams ?? {};
-    const prevParams = appliedSettings.roomSettings.seatParams ?? {};
-    return JSON.stringify(nextParams) !== JSON.stringify(prevParams);
-  }, [appliedSettings, settings]);
-  const hasRebuildPending = tableRebuildDirty || roomRebuildDirty;
+  const settingsDiff = useMemo(
+    () => getSettingsDiff(settings, appliedSettings),
+    [appliedSettings, settings]
+  );
+  const tableSettingsDirty =
+    settingsDiff.deckRebuild.length > 0 || settingsDiff.visualApply.length > 0;
+  const roomSettingsDirty =
+    settingsDiff.roomGeometry.length > 0 || settingsDiff.seatResize;
+  const hasRebuildPending = settingsDiff.hasPending;
 
   const resetInteractionStates = useCallback(() => {
     clearInteraction({ preserveSelection: false });
@@ -2475,26 +2532,82 @@ const Table = () => {
     setHeldScreenPos(null);
   }, [clearInteraction]);
 
-  const applySettings = useCallback(() => {
-    setAppliedSettings(settings);
-    resetTableSurface(settings);
-    resetInteractionStates();
-    setCardFaceOverrides({});
-    updateTabletopScale();
-  }, [resetTableSurface, resetInteractionStates, settings, updateTabletopScale]);
+  const clampStacksToFeltShape = useCallback(
+    (shape) => {
+      if (!tableRect?.width || !tableRect?.height) {
+        return;
+      }
+      const feltShape = getFeltShape({
+        width: tableRect.width,
+        height: tableRect.height,
+        shape
+      });
+      setStacks((prev) =>
+        prev.map((stack) => {
+          const centerX = stack.x + cardSize.width / 2;
+          const centerY = stack.y + cardSize.height / 2;
+          const clampedCenter = clampStackToFelt(
+            centerX,
+            centerY,
+            cardSize.width,
+            cardSize.height,
+            feltShape
+          );
+          return {
+            ...stack,
+            x: clampedCenter.x - cardSize.width / 2,
+            y: clampedCenter.y - cardSize.height / 2
+          };
+        })
+      );
+    },
+    [cardSize.height, cardSize.width, setStacks, tableRect?.height, tableRect?.width]
+  );
 
-  const handleResetTable = useCallback(() => {
+  const applySettings = useCallback(() => {
+    const diff = getSettingsDiff(settings, appliedSettings);
+    if (!diff.hasPending) {
+      return;
+    }
+    const shouldRebuildDeck = diff.deckRebuild.length > 0;
+    const shouldRecomputeGeometry =
+      diff.roomGeometry.length > 0 || diff.seatResize;
+
+    if (shouldRebuildDeck) {
+      rebuildTableSurfacePreservingHands(settings);
+    }
+    if (shouldRecomputeGeometry) {
+      clampStacksToFeltShape(settings.roomSettings.tableShape);
+    }
+    if (shouldRebuildDeck) {
+      setCardFaceOverrides({});
+    }
+    if (shouldRecomputeGeometry) {
+      updateTabletopScale();
+    }
     setAppliedSettings(settings);
-    resetTableSurface(settings);
+  }, [
+    appliedSettings,
+    clampStacksToFeltShape,
+    rebuildTableSurfacePreservingHands,
+    settings,
+    updateTabletopScale
+  ]);
+
+  const handleConfirmResetTable = useCallback(() => {
+    // eslint-disable-next-line no-console
+    console.log('RESET TABLE CONFIRMED');
+    resetTableSurface(appliedSettings);
     resetInteractionStates();
     setCardFaceOverrides({});
     updateTabletopScale();
     logAction('Reset table (hands cleared)');
+    setResetConfirmOpen(false);
   }, [
+    appliedSettings,
     logAction,
     resetInteractionStates,
     resetTableSurface,
-    settings,
     updateTabletopScale
   ]);
 
@@ -3168,7 +3281,7 @@ const Table = () => {
                   onClick={() => setSettingsTab('table')}
                 >
                   Table
-                  {tableRebuildDirty ? (
+                  {tableSettingsDirty ? (
                     <span className="table-settings__tab-note">Changes Pending</span>
                   ) : null}
                 </button>
@@ -3180,7 +3293,7 @@ const Table = () => {
                   onClick={() => setSettingsTab('room')}
                 >
                   Room
-                  {roomRebuildDirty ? (
+                  {roomSettingsDirty ? (
                     <span className="table-settings__tab-note">Changes Pending</span>
                   ) : null}
                 </button>
@@ -3249,7 +3362,7 @@ const Table = () => {
                 ) : null}
                 {settingsTab === 'table' ? (
                   <div className="table-settings__section">
-                    {tableRebuildDirty ? (
+                    {tableSettingsDirty ? (
                       <div className="table-settings__pending">Changes Pending</div>
                     ) : null}
                     <div className="table-settings__row">
@@ -3424,7 +3537,7 @@ const Table = () => {
                 ) : null}
                 {settingsTab === 'room' ? (
                   <div className="table-settings__section">
-                    {roomRebuildDirty ? (
+                    {roomSettingsDirty ? (
                       <div className="table-settings__pending">Changes Pending</div>
                     ) : null}
                     <label className="table-settings__row">
@@ -3566,10 +3679,7 @@ const Table = () => {
                   <button
                     className="modal__button modal__button--danger"
                     type="button"
-                    onClick={() => {
-                      handleResetTable();
-                      setResetConfirmOpen(false);
-                    }}
+                    onClick={handleConfirmResetTable}
                   >
                     Reset Table
                   </button>
