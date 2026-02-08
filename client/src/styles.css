@@ -1385,6 +1385,15 @@ body,
   box-shadow: 0 0 0 2px var(--seat-outline), var(--seat-shadow-soft);
 }
 
+.seat.dropTarget .seat__bench,
+.seat.dropTarget .seat__label {
+  border-color: var(--player-accent);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--player-accent) 70%, transparent),
+    0 0 18px color-mix(in srgb, var(--player-accent) 45%, transparent),
+    var(--seat-shadow-soft);
+}
+
 .seat--occupied .seat__bench,
 .seat--occupied .seat__label {
   border-color: var(--seat-outline);

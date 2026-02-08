@@ -104,6 +104,7 @@ const Table = () => {
   const tableFrameRef = useRef(null);
   const tableRef = useRef(null);
   const feltRef = useRef(null);
+  const seatRefs = useRef({});
   const seatPadRefs = useRef({});
   const seatDragRef = useRef({
     seatIndex: null,
@@ -215,6 +216,7 @@ const Table = () => {
     seatIndex: null,
     open: false
   });
+  const [hoverSeatDropIndex, setHoverSeatDropIndex] = useState(null);
   const myName = player?.name ?? 'Player';
 
   useEffect(() => {
@@ -305,6 +307,12 @@ const Table = () => {
     }
     tableScaleRef.current = combinedScale;
   }, [combinedScale]);
+
+  useEffect(() => {
+    if (!interaction.held && hoverSeatDropIndex !== null) {
+      setHoverSeatDropIndex(null);
+    }
+  }, [hoverSeatDropIndex, interaction.held]);
 
   const tableStyle = settings.roomSettings.tableStyle;
   const tableShape = settings.roomSettings.tableShape;
@@ -506,6 +514,33 @@ const Table = () => {
     },
     [handZones]
   );
+
+  const getSeatIndexAtScreenPoint = useCallback((clientX, clientY) => {
+    let closestSeatIndex = null;
+    let closestDistance = Infinity;
+    seats.forEach((seat) => {
+      const seatElement = seatRefs.current[seat.seatIndex];
+      if (!seatElement) {
+        return;
+      }
+      const rect = seatElement.getBoundingClientRect();
+      if (
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      ) {
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const distance = Math.hypot(clientX - centerX, clientY - centerY);
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestSeatIndex = seat.seatIndex;
+        }
+      }
+    });
+    return closestSeatIndex;
+  }, [seats]);
 
   const layoutSeats = useCallback(() => {
     const frameNode = tableFrameRef.current;
@@ -925,6 +960,10 @@ const Table = () => {
 
   const handleSeatPointerMove = useCallback(
     (event, seatIndex) => {
+      if (interaction.held && dragSeatIndex !== seatIndex) {
+        updateSeatDropHover(event.clientX, event.clientY);
+        return;
+      }
       if (dragSeatIndex !== seatIndex) {
         return;
       }
@@ -939,7 +978,7 @@ const Table = () => {
       }
       updateSeatParamFromPointer(event, seatIndex);
     },
-    [dragSeatIndex, updateSeatParamFromPointer]
+    [dragSeatIndex, interaction.held, updateSeatDropHover, updateSeatParamFromPointer]
   );
 
   const handleSeatPointerUp = useCallback(() => {
@@ -1225,9 +1264,22 @@ const Table = () => {
   );
 
   const dropHeld = useCallback(
-    (pointerWorld) => {
+    (pointerWorld, clientX, clientY) => {
       const held = interaction.held;
       if (!held || !interaction.drag) {
+        return;
+      }
+      const seatDropIndex =
+        clientX !== undefined && clientY !== undefined
+          ? getSeatIndexAtScreenPoint(clientX, clientY)
+          : null;
+      if (seatDropIndex !== null && seatDropIndex !== undefined) {
+        moveCardIdsToHand(seatDropIndex, held.cardIds);
+        const seatLabel = seats[seatDropIndex]?.label ?? `Seat ${seatDropIndex + 1}`;
+        logAction(
+          `Dealt ${held.cardIds.length} ${held.cardIds.length === 1 ? 'card' : 'cards'} to ${seatLabel}`
+        );
+        clearInteraction({ preserveSelection: false });
         return;
       }
       const pointerPosition = pointerWorld ?? lastPointerWorldRef.current;
@@ -1297,20 +1349,21 @@ const Table = () => {
       clearInteraction,
       findTableOverlapStackId,
       getHandZoneAtPoint,
+      getSeatIndexAtScreenPoint,
       getHeldTopLeft,
       interaction.drag,
       interaction.held,
       interaction.selectedStackId,
-      moveCardIdsToHand,
-      seats,
-      myName,
       logAction,
+      moveCardIdsToHand,
+      myName,
+      seats,
       setStacks
     ]
   );
 
   const endDrag = useCallback(
-    (pointerWorld) => {
+    (pointerWorld, clientX, clientY) => {
       if (interaction.mode !== 'dragStack' || !interaction.drag) {
         return;
       }
@@ -1318,6 +1371,20 @@ const Table = () => {
       const draggedStack = stacksById[draggedId];
       if (!draggedStack) {
         clearInteraction({ preserveSelection: false });
+        return;
+      }
+      const seatDropIndex =
+        clientX !== undefined && clientY !== undefined
+          ? getSeatIndexAtScreenPoint(clientX, clientY)
+          : null;
+      if (seatDropIndex !== null && seatDropIndex !== undefined) {
+        moveCardIdsToHand(seatDropIndex, draggedStack.cardIds);
+        const seatLabel = seats[seatDropIndex]?.label ?? `Seat ${seatDropIndex + 1}`;
+        logAction(
+          `Dealt ${draggedStack.cardIds.length} ${draggedStack.cardIds.length === 1 ? 'card' : 'cards'} to ${seatLabel}`
+        );
+        setStacks((prev) => prev.filter((stack) => stack.id !== draggedId));
+        clearInteraction();
         return;
       }
       const placement = { x: draggedStack.x, y: draggedStack.y };
@@ -1355,14 +1422,15 @@ const Table = () => {
       clearInteraction,
       findTableOverlapStackId,
       getHandZoneAtPoint,
+      getSeatIndexAtScreenPoint,
       interaction.drag,
       interaction.mode,
       interaction.selectedStackId,
+      logAction,
       mergeStacks,
       moveCardIdsToHand,
-      seats,
       myName,
-      logAction,
+      seats,
       setStacks,
       stacksById
     ]
@@ -1790,6 +1858,20 @@ const Table = () => {
     [hitTestStack, interaction.mode]
   );
 
+  const updateSeatDropHover = useCallback(
+    (clientX, clientY) => {
+      if (!interaction.held) {
+        if (hoverSeatDropIndex !== null) {
+          setHoverSeatDropIndex(null);
+        }
+        return;
+      }
+      const seatIndex = getSeatIndexAtScreenPoint(clientX, clientY);
+      setHoverSeatDropIndex(seatIndex);
+    },
+    [getSeatIndexAtScreenPoint, hoverSeatDropIndex, interaction.held]
+  );
+
   const handleSurfacePointerDown = useCallback(
     (event) => {
       lastPointerRef.current = { x: event.clientX, y: event.clientY };
@@ -1944,6 +2026,7 @@ const Table = () => {
       lastPointerRef.current = { x: event.clientX, y: event.clientY };
       lastPointerWorldRef.current = pointerWorld;
       updatePresence({ x: pointerWorld.x, y: pointerWorld.y });
+      updateSeatDropHover(event.clientX, event.clientY);
 
       if (interaction.mode === 'dragStack') {
         updateDrag(pointerWorld);
@@ -2012,6 +2095,7 @@ const Table = () => {
       placeOneFromHeld,
       sweepPlaceFromHeld,
       updateDrag,
+      updateSeatDropHover,
       updatePresence
     ]
   );
@@ -2049,14 +2133,15 @@ const Table = () => {
       }
 
       if (interaction.mode === 'dragStack' && interaction.pointerId === event.pointerId) {
-        endDrag(pointerWorld);
+        endDrag(pointerWorld, event.clientX, event.clientY);
       } else if (
         interaction.mode === 'holdStack' &&
         interaction.pointerId === event.pointerId &&
         event.button === 0
       ) {
-        dropHeld(pointerWorld);
+        dropHeld(pointerWorld, event.clientX, event.clientY);
       }
+      setHoverSeatDropIndex(null);
       releaseCapturedPointer();
     },
     [
@@ -2407,7 +2492,10 @@ const Table = () => {
               return (
                 <div
                   key={seat.id}
-                  className={`seat seat--${seat.side} ${occupied ? 'seat--occupied' : ''} ${isMine ? 'seat--mine' : ''} ${seatHandCount ? 'seat--has-cards' : ''} ${dragSeatIndex === seat.seatIndex ? 'seat--dragging' : ''}`}
+                  ref={(el) => {
+                    seatRefs.current[seat.seatIndex] = el;
+                  }}
+                  className={`seat seat--${seat.side} ${occupied ? 'seat--occupied' : ''} ${isMine ? 'seat--mine' : ''} ${seatHandCount ? 'seat--has-cards' : ''} ${dragSeatIndex === seat.seatIndex ? 'seat--dragging' : ''} ${hoverSeatDropIndex === seat.seatIndex ? 'dropTarget' : ''}`}
                   data-seat-index={seat.seatIndex}
                   style={seatStyle}
                   onClick={() => handleSeatClick(seat.seatIndex)}
