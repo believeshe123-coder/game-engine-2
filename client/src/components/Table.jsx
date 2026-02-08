@@ -298,6 +298,118 @@ const Table = () => {
   const [hoverSeatCard, setHoverSeatCard] = useState(null);
   const myName = player?.name ?? 'Player';
 
+  // Interaction helpers (keep before any configs/effects that reference them).
+  const defaultRmbState = useMemo(
+    () => ({
+      rmbDown: false,
+      rmbDownAt: 0,
+      isSliding: false,
+      rmbStartWorld: { x: 0, y: 0 },
+      slideOrigin: null,
+      slideDir: null,
+      slidePerp: null,
+      slideIndex: 0,
+      slideTrail: [],
+      lastSlidePlace: null,
+      slideLastPos: null,
+      slideCarryDist: 0
+    }),
+    []
+  );
+
+  const clearRmbHoldTimer = useCallback(() => {
+    if (rmbHoldTimerRef.current) {
+      clearTimeout(rmbHoldTimerRef.current);
+      rmbHoldTimerRef.current = null;
+    }
+  }, []);
+
+  const clearInteraction = useCallback((options = {}) => {
+    clearRmbHoldTimer();
+    const { nextSelectedStackId = null, preserveSelection = true } = options;
+    setInteraction((prev) => ({
+      ...prev,
+      mode: 'idle',
+      pointerId: null,
+      source: null,
+      held: null,
+      drag: null,
+      ...defaultRmbState,
+      selectedStackId: preserveSelection
+        ? nextSelectedStackId ?? prev.selectedStackId
+        : nextSelectedStackId,
+      menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
+    }));
+  }, [clearRmbHoldTimer, defaultRmbState]);
+
+  const resetInteractionStates = useCallback(() => {
+    clearInteraction({ preserveSelection: false });
+    setHoveredStackId(null);
+    setPickCountOpen(false);
+    setPickCountValue('1');
+    setSeatMenuState({ seatIndex: null, open: false });
+    setHoverSeatDropIndex(null);
+    setHoverSeatCard(null);
+    setDragSeatIndex(null);
+    setInventoryDrag(null);
+    setHeldScreenPos(null);
+  }, [clearInteraction]);
+
+  const resetInteractionToDefaults = useCallback(() => {
+    setInteraction({
+      mode: 'idle',
+      pointerId: null,
+      source: null,
+      held: null,
+      drag: null,
+      rmbDown: false,
+      rmbDownAt: 0,
+      isSliding: false,
+      rmbStartWorld: { x: 0, y: 0 },
+      slideOrigin: null,
+      slideDir: null,
+      slidePerp: null,
+      slideIndex: 0,
+      slideTrail: [],
+      lastSlidePlace: null,
+      slideLastPos: null,
+      slideCarryDist: 0,
+      selectedStackId: null,
+      menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
+    });
+  }, []);
+
+  const openSeatMenu = useCallback((seatIndex) => {
+    setSeatMenuState({ seatIndex, open: true });
+  }, []);
+
+  const closeSeatMenu = useCallback(() => {
+    setSeatMenuState({ seatIndex: null, open: false });
+  }, []);
+
+  const closeMenu = useCallback(() => {
+    setPickCountOpen(false);
+    setInteraction((prev) => ({
+      ...prev,
+      menu: { ...prev.menu, open: false, stackId: null }
+    }));
+  }, []);
+
+  const selectStack = useCallback((stackId, screenXY) => {
+    setPickCountOpen(false);
+    setInteraction((prev) => ({
+      ...prev,
+      ...defaultRmbState,
+      selectedStackId: stackId,
+      menu: {
+        open: true,
+        stackId,
+        screenX: screenXY?.x ?? 0,
+        screenY: screenXY?.y ?? 0
+      }
+    }));
+  }, [defaultRmbState]);
+
   useEffect(() => {
     if (process.env.NODE_ENV === 'production') {
       return;
@@ -1220,32 +1332,7 @@ const Table = () => {
     setDragSeatIndex(null);
   }, [releaseCapturedPointer]);
 
-  const openSeatMenu = useCallback((seatIndex) => {
-    setSeatMenuState({ seatIndex, open: true });
-  }, []);
-
-  const closeSeatMenu = useCallback(() => {
-    setSeatMenuState({ seatIndex: null, open: false });
-  }, []);
-
   const DRAG_THRESHOLD = 6;
-  const defaultRmbState = useMemo(
-    () => ({
-      rmbDown: false,
-      rmbDownAt: 0,
-      isSliding: false,
-      rmbStartWorld: { x: 0, y: 0 },
-      slideOrigin: null,
-      slideDir: null,
-      slidePerp: null,
-      slideIndex: 0,
-      slideTrail: [],
-      lastSlidePlace: null,
-      slideLastPos: null,
-      slideCarryDist: 0
-    }),
-    []
-  );
 
   const getHeldTopLeft = useCallback((pointerPosition, offset) => {
     if (!pointerPosition) {
@@ -1256,31 +1343,6 @@ const Table = () => {
       y: pointerPosition.y - offset.y
     };
   }, []);
-
-  const clearRmbHoldTimer = useCallback(() => {
-    if (rmbHoldTimerRef.current) {
-      clearTimeout(rmbHoldTimerRef.current);
-      rmbHoldTimerRef.current = null;
-    }
-  }, []);
-
-  const clearInteraction = useCallback((options = {}) => {
-    clearRmbHoldTimer();
-    const { nextSelectedStackId = null, preserveSelection = true } = options;
-    setInteraction((prev) => ({
-      ...prev,
-      mode: 'idle',
-      pointerId: null,
-      source: null,
-      held: null,
-      drag: null,
-      ...defaultRmbState,
-      selectedStackId: preserveSelection
-        ? nextSelectedStackId ?? prev.selectedStackId
-        : nextSelectedStackId,
-      menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
-    }));
-  }, [clearRmbHoldTimer, defaultRmbState]);
 
   const handleSeatClick = useCallback(
     (seatIndex) => {
@@ -1301,29 +1363,6 @@ const Table = () => {
     },
     [clearInteraction, interaction.held, interaction.mode, logDealt, moveCardIdsToHand, openSeatMenu]
   );
-
-  const closeMenu = useCallback(() => {
-    setPickCountOpen(false);
-    setInteraction((prev) => ({
-      ...prev,
-      menu: { ...prev.menu, open: false, stackId: null }
-    }));
-  }, []);
-
-  const selectStack = useCallback((stackId, screenXY) => {
-    setPickCountOpen(false);
-    setInteraction((prev) => ({
-      ...prev,
-      ...defaultRmbState,
-      selectedStackId: stackId,
-      menu: {
-        open: true,
-        stackId,
-        screenX: screenXY?.x ?? 0,
-        screenY: screenXY?.y ?? 0
-      }
-    }));
-  }, [defaultRmbState]);
 
   const restoreHeldToOrigin = useCallback(() => {
     if (!interaction.held) {
@@ -2528,43 +2567,6 @@ const Table = () => {
   const roomSettingsDirty =
     settingsDiff.roomGeometry.length > 0 || settingsDiff.seatResize;
   const hasRebuildPending = settingsDiff.hasPending;
-
-  const resetInteractionStates = useCallback(() => {
-    clearInteraction({ preserveSelection: false });
-    setHoveredStackId(null);
-    setPickCountOpen(false);
-    setPickCountValue('1');
-    setSeatMenuState({ seatIndex: null, open: false });
-    setHoverSeatDropIndex(null);
-    setHoverSeatCard(null);
-    setDragSeatIndex(null);
-    setInventoryDrag(null);
-    setHeldScreenPos(null);
-  }, [clearInteraction]);
-
-  const resetInteractionToDefaults = useCallback(() => {
-    setInteraction({
-      mode: 'idle',
-      pointerId: null,
-      source: null,
-      held: null,
-      drag: null,
-      rmbDown: false,
-      rmbDownAt: 0,
-      isSliding: false,
-      rmbStartWorld: { x: 0, y: 0 },
-      slideOrigin: null,
-      slideDir: null,
-      slidePerp: null,
-      slideIndex: 0,
-      slideTrail: [],
-      lastSlidePlace: null,
-      slideLastPos: null,
-      slideCarryDist: 0,
-      selectedStackId: null,
-      menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
-    });
-  }, []);
 
   const clampStacksToFeltShape = useCallback(
     (shape) => {
