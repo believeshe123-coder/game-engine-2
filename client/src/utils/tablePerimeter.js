@@ -141,6 +141,9 @@ export const paramFromPointer = (shape, tableRect, pointerXY) => {
   if (!tableRect || !pointerXY) {
     return 0;
   }
+  if (shape === 'endless') {
+    return 0;
+  }
   if (shape === 'circle') {
     const circle = getCircleFromRect(tableRect);
     const dx = pointerXY.x - circle.cx;
@@ -167,6 +170,9 @@ export const paramFromPointer = (shape, tableRect, pointerXY) => {
 
 export const pointFromParam = (shape, tableRect, param, railOffsetPx = 0) => {
   if (!tableRect) {
+    return { x: 0, y: 0, nx: 0, ny: -1 };
+  }
+  if (shape === 'endless') {
     return { x: 0, y: 0, nx: 0, ny: -1 };
   }
   const normalizedParam = normalizeParam(param);
@@ -212,6 +218,9 @@ export const pointFromParam = (shape, tableRect, param, railOffsetPx = 0) => {
 
 export const perimeterLength = (shape, tableRect) => {
   if (!tableRect) {
+    return 1;
+  }
+  if (shape === 'endless') {
     return 1;
   }
   const width = Math.max(0, tableRect.width ?? 0);
