@@ -273,7 +273,6 @@ const Table = () => {
     updatePresence,
     moveCardIdsToHand,
     moveFromHandToTable,
-    reorderHand,
     toggleReveal,
     resetTableSurface
   } = useTableState(
@@ -344,6 +343,7 @@ const Table = () => {
     return null;
   });
   const [inventoryDrag, setInventoryDrag] = useState(null);
+  const [inventoryCardDrag, setInventoryCardDrag] = useState(null);
   const [heldScreenPos, setHeldScreenPos] = useState(null);
   const [seatMenuState, setSeatMenuState] = useState({
     seatIndex: null,
@@ -1187,6 +1187,11 @@ const Table = () => {
     [getTablePointerPositionFromClient]
   );
 
+  const preventNativeDrag = useCallback((event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  }, []);
+
   const updateSeatParam = useCallback(
     (seatIndex, value) => {
       setSettings((prev) => {
@@ -1310,6 +1315,25 @@ const Table = () => {
       window.removeEventListener('pointercancel', handleUp);
     };
   }, [clampInventoryPosition, inventoryDrag]);
+
+  actions.handleInventoryCardPointerDown = useCallback(
+    (event, cardId) => {
+      if (event.button !== 0) {
+        return;
+      }
+      if (event.target.closest?.('button')) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      setInventoryCardDrag({
+        cardId,
+        pointerId: event.pointerId
+      });
+    },
+    []
+  );
 
   useEffect(() => {
     if (!inventoryPos || typeof window === 'undefined') {
@@ -2560,40 +2584,6 @@ const Table = () => {
     ]
   );
 
-  actions.handleInventoryDragStart = useCallback((event, cardId) => {
-    if (!event.dataTransfer) {
-      return;
-    }
-    event.dataTransfer.setData('text/plain', cardId);
-    event.dataTransfer.effectAllowed = 'move';
-  }, []);
-
-  actions.handleInventoryReorderDrop = useCallback(
-    (draggedId, targetIndex) => {
-      if (mySeatIndex === null || mySeatIndex === undefined) {
-        return;
-      }
-      reorderHand(mySeatIndex, draggedId, targetIndex);
-    },
-    [mySeatIndex, reorderHand]
-  );
-
-  actions.handleInventoryDropToEnd = useCallback(
-    (draggedId) => {
-      if (mySeatIndex === null || mySeatIndex === undefined) {
-        return;
-      }
-      const seatHandCount = hands?.[mySeatIndex]?.cardIds?.length ?? 0;
-      reorderHand(mySeatIndex, draggedId, seatHandCount);
-    },
-    [hands, mySeatIndex, reorderHand]
-  );
-
-  actions.handleTableDragOver = useCallback((event) => {
-    if (event.dataTransfer?.types?.includes('text/plain')) {
-      event.preventDefault();
-    }
-  }, []);
 
   const playFromHand = useCallback(
     (cardIds, pointerWorld) => {
@@ -2665,31 +2655,36 @@ const Table = () => {
     ]
   );
 
-  actions.handleTableDrop = useCallback(
-    (event) => {
-      event.preventDefault();
-      const rawCardData = event.dataTransfer?.getData('text/plain');
-      if (!rawCardData || mySeatIndex === null || mySeatIndex === undefined) {
+  useEffect(() => {
+    if (!inventoryCardDrag) {
+      return;
+    }
+    const handlePointerUp = (event) => {
+      if (event.pointerId !== inventoryCardDrag.pointerId) {
         return;
       }
-      let droppedCardIds = [rawCardData];
-      try {
-        const parsed = JSON.parse(rawCardData);
-        if (Array.isArray(parsed)) {
-          droppedCardIds = parsed;
+      const table = tableRef.current;
+      if (table) {
+        const rect = table.getBoundingClientRect();
+        const inside =
+          event.clientX >= rect.left &&
+          event.clientX <= rect.right &&
+          event.clientY >= rect.top &&
+          event.clientY <= rect.bottom;
+        if (inside) {
+          const pointer = getTablePointerPositionFromClient(event.clientX, event.clientY);
+          playFromHand(inventoryCardDrag.cardId, pointer);
         }
-      } catch (error) {
-        // Ignore parse errors and treat as a single card id.
       }
-      const pointer = getTablePointerPositionFromClient(event.clientX, event.clientY);
-      playFromHand(droppedCardIds, pointer);
-    },
-    [
-      getTablePointerPositionFromClient,
-      mySeatIndex,
-      playFromHand
-    ]
-  );
+      setInventoryCardDrag(null);
+    };
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+    };
+  }, [getTablePointerPositionFromClient, inventoryCardDrag, playFromHand]);
 
   actions.handleToggleReveal = useCallback(
     (cardId) => {
@@ -3101,7 +3096,13 @@ const Table = () => {
                       aria-hidden="true"
                       style={{ '--seat-card-count': visibleCardIds.length }}
                     >
-                      <div className="seat__handCards">
+                      <div
+                        className="seat__handCards"
+                        onDragStart={preventNativeDrag}
+                        onDragOver={preventNativeDrag}
+                        onDragEnter={preventNativeDrag}
+                        onDrop={preventNativeDrag}
+                      >
                         {visibleCardIds.map((cardId, index) => {
                           const card = cardsById[cardId];
                           const isRevealed = Boolean(seatHand.revealed?.[cardId]);
@@ -3147,6 +3148,7 @@ const Table = () => {
                                 suit={card?.suit}
                                 color={card?.color}
                                 onPointerDown={() => {}}
+                                onNativeDrag={preventNativeDrag}
                               />
                             </div>
                           );
@@ -3170,8 +3172,10 @@ const Table = () => {
               onPointerUp={(event) => actions.handleSurfacePointerUp?.(event)}
               onPointerCancel={(event) => actions.handleSurfacePointerUp?.(event)}
               onContextMenu={(event) => event.preventDefault()}
-              onDragOver={(event) => actions.handleTableDragOver?.(event)}
-              onDrop={(event) => actions.handleTableDrop?.(event)}
+              onDragStart={preventNativeDrag}
+              onDragOver={preventNativeDrag}
+              onDragEnter={preventNativeDrag}
+              onDrop={preventNativeDrag}
             >
               <div
                 ref={feltRef}
@@ -3374,10 +3378,15 @@ const Table = () => {
                     data-hovered={isHoveredStack}
                     data-menu-target={isMenuTarget}
                     data-merge-target={isMergeTarget}
+                    draggable={false}
                     style={{
                       transform: `translate(${stack.x}px, ${stack.y}px) rotate(${stack.rotation}deg)`,
                       zIndex
                     }}
+                    onDragStart={preventNativeDrag}
+                    onDragOver={preventNativeDrag}
+                    onDragEnter={preventNativeDrag}
+                    onDrop={preventNativeDrag}
                   >
                     {stack.isHeldVisual ? null : isTokenStack ? (
                       <div
@@ -3407,6 +3416,7 @@ const Table = () => {
                           actions.handleStackDoubleClick?.(event, stack.id)
                         }
                         onContextMenu={(event) => event.preventDefault()}
+                        onNativeDrag={preventNativeDrag}
                       />
                     )}
                     {showBadge ? (
@@ -3425,18 +3435,13 @@ const Table = () => {
           cardsById={cardsById}
           revealed={hands?.[mySeatIndex]?.revealed ?? {}}
           onToggleReveal={(cardId) => actions.handleToggleReveal?.(cardId)}
-          onCardDragStart={(event, cardId) =>
-            actions.handleInventoryDragStart?.(event, cardId)
-          }
-          onCardDrop={(draggedId, targetIndex) =>
-            actions.handleInventoryReorderDrop?.(draggedId, targetIndex)
-          }
-          onDropToEnd={(draggedId) =>
-            actions.handleInventoryDropToEnd?.(draggedId)
-          }
           onHeaderPointerDown={(event) =>
             actions.handleInventoryHeaderPointerDown?.(event)
           }
+          onCardPointerDown={(event, cardId) =>
+            actions.handleInventoryCardPointerDown?.(event, cardId)
+          }
+          preventNativeDrag={preventNativeDrag}
           onPreviewCard={(cardId) => openCardPreview(cardId, true)}
           seatColor={players[myPlayerId]?.seatColor}
           cardStyle={settings.cardStyle}
@@ -3469,6 +3474,7 @@ const Table = () => {
                 suit={hoverSeatCardInfo.card?.suit}
                 color={hoverSeatCardInfo.card?.color}
                 onPointerDown={() => {}}
+                onNativeDrag={preventNativeDrag}
               />
             </div>,
             uiOverlayRoot
@@ -3497,6 +3503,7 @@ const Table = () => {
                   isSelected={false}
                   onPointerDown={() => {}}
                   onContextMenu={(event) => event.preventDefault()}
+                  onNativeDrag={preventNativeDrag}
                 />
               </div>,
               uiOverlayRoot
@@ -4203,6 +4210,7 @@ const Table = () => {
                     suit={cardPreview.card?.suit}
                     color={cardPreview.card?.color}
                     onPointerDown={() => {}}
+                    onNativeDrag={preventNativeDrag}
                   />
                 </div>
               </div>

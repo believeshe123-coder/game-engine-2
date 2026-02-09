@@ -9,10 +9,9 @@ const InventoryPanel = forwardRef(
       cardsById,
       revealed,
       onToggleReveal,
-      onCardDragStart,
-      onCardDrop,
-      onDropToEnd,
       onHeaderPointerDown,
+      onCardPointerDown,
+      preventNativeDrag,
       seatColor,
       cardStyle,
       colorBlindMode,
@@ -30,6 +29,11 @@ const InventoryPanel = forwardRef(
         className={`inventory-panel${isDragging ? ' is-dragging' : ''}`}
         aria-label="Your hand"
         style={panelStyle}
+        draggable={false}
+        onDragStart={preventNativeDrag}
+        onDragOver={preventNativeDrag}
+        onDragEnter={preventNativeDrag}
+        onDrop={preventNativeDrag}
       >
         <div className="inventory-panel__header" onPointerDown={onHeaderPointerDown}>
           <div>
@@ -44,32 +48,24 @@ const InventoryPanel = forwardRef(
           <div
             className="inventory-panel__cards"
             style={{ '--accent-color': seatColor }}
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={(event) => {
-              event.preventDefault();
-              const draggedId = event.dataTransfer.getData('text/plain');
-              if (draggedId) {
-                onDropToEnd?.(draggedId);
-              }
-            }}
+            onDragStart={preventNativeDrag}
+            onDragOver={preventNativeDrag}
+            onDragEnter={preventNativeDrag}
+            onDrop={preventNativeDrag}
           >
-            {cardIds.map((cardId, index) => {
+            {cardIds.map((cardId) => {
               const card = cardsById[cardId];
               const isRevealed = Boolean(revealed?.[cardId]);
               return (
                 <div
                   key={cardId}
                   className="inventory-card"
-                  draggable
-                  onDragStart={(event) => onCardDragStart?.(event, cardId)}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    const draggedId = event.dataTransfer.getData('text/plain');
-                    if (draggedId) {
-                      onCardDrop?.(draggedId, index);
-                    }
-                  }}
+                  draggable={false}
+                  onPointerDown={(event) => onCardPointerDown?.(event, cardId)}
+                  onDragStart={preventNativeDrag}
+                  onDragOver={preventNativeDrag}
+                  onDragEnter={preventNativeDrag}
+                  onDrop={preventNativeDrag}
                 >
                   <div className="inventory-card__face">
                     <Card
@@ -85,6 +81,7 @@ const InventoryPanel = forwardRef(
                       suit={card?.suit}
                       color={card?.color}
                       onPointerDown={() => {}}
+                      onNativeDrag={preventNativeDrag}
                     />
                   </div>
                   <button
@@ -94,6 +91,11 @@ const InventoryPanel = forwardRef(
                     }`}
                     onClick={() => onToggleReveal?.(cardId)}
                     title={isRevealed ? 'Revealed to table' : 'Private to you'}
+                    draggable={false}
+                    onDragStart={preventNativeDrag}
+                    onDragEnter={preventNativeDrag}
+                    onDragOver={preventNativeDrag}
+                    onDrop={preventNativeDrag}
                   >
                     <span className="inventory-card__toggle-icon">
                       {isRevealed ? '👁' : '🙈'}
@@ -106,6 +108,11 @@ const InventoryPanel = forwardRef(
                     type="button"
                     className="inventory-card__preview"
                     onClick={() => onPreviewCard?.(cardId)}
+                    draggable={false}
+                    onDragStart={preventNativeDrag}
+                    onDragEnter={preventNativeDrag}
+                    onDragOver={preventNativeDrag}
+                    onDrop={preventNativeDrag}
                   >
                     Preview
                   </button>
