@@ -20,10 +20,10 @@
   --connector-fill: #c7c7c7;
   --connector-border: rgba(0, 0, 0, 0.35);
 
-  --ui-panel-z: 5000;
-  --cards-z: 4000;
-  --seat-z: 2000;
-  --table-z: 1000;
+  --ui-panel-z: 30;
+  --cards-z: 10;
+  --seat-z: 20;
+  --table-z: 1;
 
   font-family: 'Inter', system-ui, sans-serif;
   color: #f5f4f0;
@@ -376,20 +376,12 @@ body,
   background: radial-gradient(circle at top, #2f2f2f, #1b1b1b);
 }
 
-.app__header {
-  padding: 16px 24px;
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: #ece7da;
-}
-
 .app__main {
   flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
 }
 
 .tabletop {
@@ -593,6 +585,12 @@ body,
   z-index: 0;
 }
 
+.table__stack-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+}
+
 .table__surface--endless .table__felt {
   background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.2));
   box-shadow: none;
@@ -744,7 +742,7 @@ body,
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 14;
+  z-index: 20;
 }
 
 .table__seats {
