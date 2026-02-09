@@ -194,6 +194,29 @@ const getViewportFromRect = (rect) => ({
   cy: (rect?.height ?? 0) / 2
 });
 
+const formatCardName = (card) => {
+  if (!card) {
+    return 'Card';
+  }
+  if (card.rank === 'JOKER') {
+    if (card.color) {
+      return `${card.color.charAt(0).toUpperCase()}${card.color.slice(1)} Joker`;
+    }
+    return 'Joker';
+  }
+  const rankNames = {
+    A: 'Ace',
+    J: 'Jack',
+    Q: 'Queen',
+    K: 'King'
+  };
+  const rankName = rankNames[card.rank] ?? card.rank;
+  if (rankName && card.suit) {
+    return `${rankName} of ${card.suit}`;
+  }
+  return rankName ?? card.suit ?? 'Card';
+};
+
 function localToWorld(localX, localY, camera, viewport, isEndless) {
   if (!isEndless || !camera || !viewport) {
     return { x: localX, y: localY };
@@ -251,6 +274,95 @@ const computeSeatAnchorsFromParams = ({ seatParams, tableShape, seatRailBounds }
   });
 };
 
+const buildDefaultSeatParams = (count) =>
+  Array.from({ length: count }, (_, index) => index / count);
+
+const normalizeSeatParams = (params, count, shape) => {
+  if (!Array.isArray(params) || params.length !== count) {
+    return buildDefaultSeatParams(count, shape);
+  }
+  return params.map((value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return 0;
+    }
+    if (shape === 'oval' && Math.abs(numeric) > 1) {
+      return ((numeric / TAU) % 1 + 1) % 1;
+    }
+    return ((numeric % 1) + 1) % 1;
+  });
+};
+
+const adjustSlideSeparation = (position, direction, trail) => {
+  if (!direction || trail.length === 0) {
+    return position;
+  }
+  let adjusted = { ...position };
+  const maxAttempts = 12;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    let nearestDistance = Infinity;
+    for (let i = 0; i < trail.length; i += 1) {
+      const point = trail[i];
+      const distance = Math.hypot(adjusted.x - point.x, adjusted.y - point.y);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+      }
+    }
+    if (nearestDistance >= SLIDE_MIN_SEPARATION_PX) {
+      break;
+    }
+    adjusted = {
+      x: adjusted.x + direction.x * SLIDE_SPACING_PX,
+      y: adjusted.y + direction.y * SLIDE_SPACING_PX
+    };
+  }
+  return adjusted;
+};
+
+const clampInventoryPosition = (position, rect) => {
+  if (!rect || typeof window === 'undefined') {
+    return position;
+  }
+  const maxX = Math.max(0, window.innerWidth - rect.width);
+  const maxY = Math.max(0, window.innerHeight - rect.height);
+  return {
+    x: Math.min(maxX, Math.max(0, position.x)),
+    y: Math.min(maxY, Math.max(0, position.y))
+  };
+};
+
+const getHeldTopLeft = (pointerPosition, offset) => {
+  if (!pointerPosition) {
+    return null;
+  }
+  return {
+    x: pointerPosition.x - offset.x,
+    y: pointerPosition.y - offset.y
+  };
+};
+
+const preventNativeDrag = (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+};
+
+const normalizeCustomPresetDraft = (draft) => {
+  const deckCount = Math.min(8, Math.max(1, Number(draft.deckCount) || 1));
+  const spawnItems = Array.isArray(draft.spawnItems)
+    ? draft.spawnItems.map((item) => ({
+        ...item,
+        quantity: Math.min(8, Math.max(1, Number(item.quantity) || 1))
+      }))
+    : [];
+  return {
+    ...draft,
+    cardStyle: draft.cardStyle === 'classic' ? 'classic' : 'medieval',
+    includeJokers: Boolean(draft.includeJokers),
+    deckCount,
+    spawnItems
+  };
+};
+
 const Table = () => {
   const sceneRootRef = useRef(null);
   const tableFrameRef = useRef(null);
@@ -258,6 +370,7 @@ const Table = () => {
   const feltRef = useRef(null);
   const seatRefs = useRef({});
   const seatPadRefs = useRef({});
+  const actionsRef = useRef({});
   const seatDragRef = useRef({
     seatIndex: null,
     moved: false,
@@ -578,32 +691,6 @@ const Table = () => {
       });
     }
   }, [allCardIds, cardsById, hands, interaction.held, stacks]);
-  const adjustSlideSeparation = useCallback((position, direction, trail) => {
-    if (!direction || trail.length === 0) {
-      return position;
-    }
-    let adjusted = { ...position };
-    const maxAttempts = 12;
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      let nearestDistance = Infinity;
-      for (let i = 0; i < trail.length; i += 1) {
-        const point = trail[i];
-        const distance = Math.hypot(adjusted.x - point.x, adjusted.y - point.y);
-        if (distance < nearestDistance) {
-          nearestDistance = distance;
-        }
-      }
-      if (nearestDistance >= SLIDE_MIN_SEPARATION_PX) {
-        break;
-      }
-      adjusted = {
-        x: adjusted.x + direction.x * SLIDE_SPACING_PX,
-        y: adjusted.y + direction.y * SLIDE_SPACING_PX
-      };
-    }
-    return adjusted;
-  }, []);
-
   actions.releaseCapturedPointer = useCallback(() => {
     const { pointerId, element } = capturedPointerRef.current;
     if (element && pointerId !== null && element.hasPointerCapture?.(pointerId)) {
@@ -662,40 +749,29 @@ const Table = () => {
     }
   }, [showFeltDebug]);
 
-  const buildDefaultSeatParams = useCallback(
-    (count) => Array.from({ length: count }, (_, index) => index / count),
-    []
-  );
-
-  const normalizeSeatParams = useCallback(
-    (params, count, shape) => {
-      if (!Array.isArray(params) || params.length !== count) {
-        return buildDefaultSeatParams(count, shape);
-      }
-      return params.map((value) => {
-        const numeric = Number(value);
-        if (!Number.isFinite(numeric)) {
-          return 0;
-        }
-        if (shape === 'oval' && Math.abs(numeric) > 1) {
-          return ((numeric / TAU) % 1 + 1) % 1;
-        }
-        return ((numeric % 1) + 1) % 1;
-      });
-    },
-    [buildDefaultSeatParams]
-  );
+  const seatsDerived = useMemo(() => {
+    const count = Math.max(2, seatCount);
+    return Array.from({ length: count }, (_, index) => {
+      return {
+        id: index + 1,
+        seatIndex: index,
+        label: `Seat ${index + 1}`,
+        angle: -Math.PI / 2,
+        side: 'top'
+      };
+    });
+  }, [seatCount]);
 
   const buildEndlessSeatLayout = useCallback(() => {
     if (!tableRect?.width || !tableRect?.height) {
-      return seats.map((seat) => ({ ...seat, x: 0, y: 0 }));
+      return seatsDerived.map((seat) => ({ ...seat, x: 0, y: 0 }));
     }
-    const count = Math.max(1, seats.length);
+    const count = Math.max(1, seatsDerived.length);
     const padding = Math.max(32, SEAT_DIAMETER_PX / 2 + 16);
     const usableWidth = Math.max(1, tableRect.width - padding * 2);
     const usableHeight = Math.max(1, tableRect.height - padding * 2);
     const perimeter = Math.max(1, 2 * (usableWidth + usableHeight));
-    return seats.map((seat, index) => {
+    return seatsDerived.map((seat, index) => {
       const distance = (perimeter / count) * index;
       let x = padding;
       let y = padding;
@@ -736,7 +812,7 @@ const Table = () => {
         angle
       };
     });
-  }, [seats, tableRect]);
+  }, [seatsDerived, tableRect]);
 
   const seatParams = useMemo(() => {
     const paramsByShape = settings.roomSettings.seatParams ?? {};
@@ -746,7 +822,6 @@ const Table = () => {
     return normalizeSeatParams(paramsByShape[tableShape], seatCount, tableShape);
   }, [
     isEndless,
-    normalizeSeatParams,
     seatCount,
     settings.roomSettings.seatParams,
     tableShape
@@ -778,23 +853,10 @@ const Table = () => {
         }
       };
     });
-  }, [isEndless, normalizeSeatParams, seatCount, tableShape]);
-
-  const seats = useMemo(() => {
-    const count = Math.max(2, seatCount);
-    return Array.from({ length: count }, (_, index) => {
-      return {
-        id: index + 1,
-        seatIndex: index,
-        label: `Seat ${index + 1}`,
-        angle: -Math.PI / 2,
-        side: 'top'
-      };
-    });
-  }, [seatCount]);
+  }, [isEndless, seatCount, tableShape]);
 
   const [seatPositions, setSeatPositions] = useState(() =>
-    seats.map((seat) => ({ ...seat, x: 0, y: 0 }))
+    seatsDerived.map((seat) => ({ ...seat, x: 0, y: 0 }))
   );
   const [handZones, setHandZones] = useState([]);
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
@@ -814,32 +876,9 @@ const Table = () => {
 
 
 
-  const formatCardName = useCallback((card) => {
-    if (!card) {
-      return 'Card';
-    }
-    if (card.rank === 'JOKER') {
-      if (card.color) {
-        return `${card.color.charAt(0).toUpperCase()}${card.color.slice(1)} Joker`;
-      }
-      return 'Joker';
-    }
-    const rankNames = {
-      A: 'Ace',
-      J: 'Jack',
-      Q: 'Queen',
-      K: 'King'
-    };
-    const rankName = rankNames[card.rank] ?? card.rank;
-    if (rankName && card.suit) {
-      return `${rankName} of ${card.suit}`;
-    }
-    return rankName ?? card.suit ?? 'Card';
-  }, []);
-
   const getCardLabel = useCallback(
     (cardId) => formatCardName(cardsById[cardId]),
-    [cardsById, formatCardName]
+    [cardsById]
   );
 
   const updateHandZonesFromDom = useCallback(() => {
@@ -939,7 +978,7 @@ const Table = () => {
   const getSeatIndexAtScreenPoint = useCallback((clientX, clientY) => {
     let closestSeatIndex = null;
     let closestDistance = Infinity;
-    seats.forEach((seat) => {
+    seatsDerived.forEach((seat) => {
       const seatElement = seatRefs.current[seat.seatIndex];
       if (!seatElement) {
         return;
@@ -961,7 +1000,7 @@ const Table = () => {
       }
     });
     return closestSeatIndex;
-  }, [seats]);
+  }, [seatsDerived]);
 
   const layoutSeats = useCallback(() => {
     if (isEndless) {
@@ -997,7 +1036,7 @@ const Table = () => {
       !seatRailWidth ||
       !seatRailHeight
     ) {
-      setSeatPositions(seats.map((seat) => ({ ...seat, x: 0, y: 0 })));
+      setSeatPositions(seatsDerived.map((seat) => ({ ...seat, x: 0, y: 0 })));
       setFeltBounds(null);
       setSeatRailBounds(null);
       return;
@@ -1028,7 +1067,7 @@ const Table = () => {
     });
 
     setSeatPositions(
-      seats.map((seat, index) => {
+      seatsDerived.map((seat, index) => {
         const anchor = anchors[index];
         return {
           ...seat,
@@ -1039,7 +1078,7 @@ const Table = () => {
         };
       })
     );
-  }, [isEndless, seatParams, seats, tableShape]);
+  }, [isEndless, seatParams, seatsDerived, tableShape]);
 
   useEffect(() => {
     if (!isEndless) {
@@ -1048,10 +1087,10 @@ const Table = () => {
     const stored = settings.roomSettings.seatPositions?.endless ?? [];
     const hasValid =
       Array.isArray(stored) &&
-      stored.length === seats.length &&
+      stored.length === seatsDerived.length &&
       stored.every((entry) => Number.isFinite(entry?.x) && Number.isFinite(entry?.y));
     const layout = hasValid
-      ? seats.map((seat, index) => {
+      ? seatsDerived.map((seat, index) => {
           const entry = stored[index];
           const angle = Math.atan2(entry.y, entry.x);
           return {
@@ -1077,7 +1116,13 @@ const Table = () => {
         }
       }));
     }
-  }, [buildEndlessSeatLayout, isEndless, seats, setSettings, settings.roomSettings.seatPositions]);
+  }, [
+    buildEndlessSeatLayout,
+    isEndless,
+    seatsDerived,
+    setSettings,
+    settings.roomSettings.seatPositions
+  ]);
 
   actions.updateTabletopScale = useCallback(() => {
     const frameNode = tableFrameRef.current;
@@ -1163,11 +1208,11 @@ const Table = () => {
   useEffect(() => {
     const handleResize = () => {
       layoutSeats();
-      actions.updateTabletopScale?.();
+      actionsRef.current.updateTabletopScale?.();
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [actions, layoutSeats]);
+  }, [layoutSeats]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -1408,11 +1453,6 @@ const Table = () => {
     [getTablePointerPositionFromClient]
   );
 
-  const preventNativeDrag = useCallback((event) => {
-    event.preventDefault();
-    event.stopPropagation();
-  }, []);
-
   const updateSeatParam = useCallback(
     (seatIndex, value) => {
       setSettings((prev) => {
@@ -1432,7 +1472,7 @@ const Table = () => {
         };
       });
     },
-    [normalizeSeatParams, seatCount, tableShape]
+    [seatCount, tableShape]
   );
 
   const updateSeatPosition = useCallback(
@@ -1527,18 +1567,6 @@ const Table = () => {
     [getSeatIndexAtScreenPoint, hoverSeatDropIndex, interaction.held, interaction.mode]
   );
 
-  const clampInventoryPosition = useCallback((position, rect) => {
-    if (!rect || typeof window === 'undefined') {
-      return position;
-    }
-    const maxX = Math.max(0, window.innerWidth - rect.width);
-    const maxY = Math.max(0, window.innerHeight - rect.height);
-    return {
-      x: Math.min(maxX, Math.max(0, position.x)),
-      y: Math.min(maxY, Math.max(0, position.y))
-    };
-  }, []);
-
   actions.handleInventoryHeaderPointerDown = useCallback(
     (event) => {
       if (!settings.inventoryDragEnabled) {
@@ -1589,7 +1617,7 @@ const Table = () => {
       window.removeEventListener('pointerup', handleUp);
       window.removeEventListener('pointercancel', handleUp);
     };
-  }, [clampInventoryPosition, inventoryDrag]);
+  }, [inventoryDrag]);
 
   actions.handleInventoryCardPointerDown = useCallback(
     (event, cardId) => {
@@ -1637,7 +1665,7 @@ const Table = () => {
     if (clamped.x !== inventoryPos.x || clamped.y !== inventoryPos.y) {
       setInventoryPos(clamped);
     }
-  }, [clampInventoryPosition, inventoryPos]);
+  }, [inventoryPos]);
 
   const logDealt = useCallback(
     (seatIndex, count) => {
@@ -1723,16 +1751,6 @@ const Table = () => {
   }, [actions]);
 
   const DRAG_THRESHOLD = 6;
-
-  const getHeldTopLeft = useCallback((pointerPosition, offset) => {
-    if (!pointerPosition) {
-      return null;
-    }
-    return {
-      x: pointerPosition.x - offset.x,
-      y: pointerPosition.y - offset.y
-    };
-  }, []);
 
   actions.handleSeatClick = useCallback(
     (seatIndex) => {
@@ -1913,7 +1931,7 @@ const Table = () => {
           : prev.drag
       }));
     },
-    [clampTopLeftToFelt, getHeldTopLeft, interaction.drag, interaction.mode, setStacks]
+    [clampTopLeftToFelt, interaction.drag, interaction.mode, setStacks]
   );
 
   const mergeStacks = useCallback(
@@ -2015,7 +2033,6 @@ const Table = () => {
       findTableOverlapStackId,
       getHandZoneAtPoint,
       getSeatIndexAtScreenPoint,
-      getHeldTopLeft,
       interaction.drag,
       interaction.held,
       interaction.selectedStackId,
@@ -2175,7 +2192,6 @@ const Table = () => {
       actions.clearInteraction,
       createStackId,
       findTableOverlapStackId,
-      getHeldTopLeft,
       interaction.drag,
       interaction.held,
       myName,
@@ -2301,11 +2317,9 @@ const Table = () => {
       }
     },
     [
-      adjustSlideSeparation,
       clampTopLeftToFelt,
       actions.clearInteraction,
       createStackId,
-      getHeldTopLeft,
       interaction.drag,
       interaction.held,
       interaction.slideDir,
@@ -2475,10 +2489,10 @@ const Table = () => {
   );
 
   useEffect(() => {
-    const handleKeyDownEvent = (event) => actions.handleKeyDown?.(event);
+    const handleKeyDownEvent = (event) => actionsRef.current.handleKeyDown?.(event);
     window.addEventListener('keydown', handleKeyDownEvent);
     return () => window.removeEventListener('keydown', handleKeyDownEvent);
-  }, [actions]);
+  }, []);
 
   useEffect(() => {
     if (!isModalOpen) {
@@ -2499,7 +2513,7 @@ const Table = () => {
     const handleCancelEvent = () => {
       const currentInteraction = interactionRef.current;
       if (currentInteraction?.mode !== 'idle') {
-        actions.cancelDrag?.();
+        actionsRef.current.cancelDrag?.();
       }
     };
     window.addEventListener('pointercancel', handleCancelEvent);
@@ -2532,7 +2546,7 @@ const Table = () => {
         setHeldScreenPos({ x: event.clientX, y: event.clientY });
       }
       if (currentInteraction?.held || currentInteraction?.mode === 'dragStack') {
-        actions.updateSeatDropHover?.(event.clientX, event.clientY);
+        actionsRef.current.updateSeatDropHover?.(event.clientX, event.clientY);
       }
     };
     window.addEventListener('pointermove', handlePointerMoveEvent);
@@ -3077,23 +3091,6 @@ const Table = () => {
     setPresetImportStatus('added');
   }, [presetCodeInput]);
 
-  const normalizeCustomPresetDraft = useCallback((draft) => {
-    const deckCount = Math.min(8, Math.max(1, Number(draft.deckCount) || 1));
-    const spawnItems = Array.isArray(draft.spawnItems)
-      ? draft.spawnItems.map((item) => ({
-          ...item,
-          quantity: Math.min(8, Math.max(1, Number(item.quantity) || 1))
-        }))
-      : [];
-    return {
-      ...draft,
-      cardStyle: draft.cardStyle === 'classic' ? 'classic' : 'medieval',
-      includeJokers: Boolean(draft.includeJokers),
-      deckCount,
-      spawnItems
-    };
-  }, []);
-
   const handleSaveCustomPreset = useCallback(() => {
     const code = generatePresetCode();
     const normalized = normalizeCustomPresetDraft(customPresetDraft);
@@ -3101,7 +3098,7 @@ const Table = () => {
     if (saved) {
       setSavedPresetCode(code);
     }
-  }, [customPresetDraft, normalizeCustomPresetDraft]);
+  }, [customPresetDraft]);
 
   const visibleBadgeStackId =
     settings.stackCountDisplayMode === 'hover' ? hoveredStackId : null;
@@ -3243,6 +3240,39 @@ const Table = () => {
     setStacks,
     stacksById
   ]);
+
+  actionsRef.current = {
+    clearRmbHoldTimer: actions.clearRmbHoldTimer,
+    clearInteraction: actions.clearInteraction,
+    resetInteractionStates: actions.resetInteractionStates,
+    resetInteractionToDefaults: actions.resetInteractionToDefaults,
+    openSeatMenu: actions.openSeatMenu,
+    closeSeatMenu: actions.closeSeatMenu,
+    closeMenu: actions.closeMenu,
+    selectStack: actions.selectStack,
+    releaseCapturedPointer: actions.releaseCapturedPointer,
+    updateTabletopScale: actions.updateTabletopScale,
+    updateSeatDropHover: actions.updateSeatDropHover,
+    handleInventoryHeaderPointerDown: actions.handleInventoryHeaderPointerDown,
+    handleInventoryCardPointerDown: actions.handleInventoryCardPointerDown,
+    resetInventoryPosition: actions.resetInventoryPosition,
+    handleSeatPointerDown: actions.handleSeatPointerDown,
+    handleSeatPointerMove: actions.handleSeatPointerMove,
+    handleSeatPointerUp: actions.handleSeatPointerUp,
+    handleSeatClick: actions.handleSeatClick,
+    pickupFromStack: actions.pickupFromStack,
+    cancelDrag: actions.cancelDrag,
+    handleFlipSelected: actions.handleFlipSelected,
+    handleShuffleSelected: actions.handleShuffleSelected,
+    handleKeyDown: actions.handleKeyDown,
+    handleSurfaceWheel: actions.handleSurfaceWheel,
+    handleSurfacePointerDown: actions.handleSurfacePointerDown,
+    handleSurfacePointerMove: actions.handleSurfacePointerMove,
+    handleSurfacePointerUp: actions.handleSurfacePointerUp,
+    handleToggleReveal: actions.handleToggleReveal,
+    handleStackDoubleClick: actions.handleStackDoubleClick,
+    handleMoveSelectedToHand: actions.handleMoveSelectedToHand
+  };
 
   const selectedStack = interaction.selectedStackId
     ? stacksById[interaction.selectedStackId]
