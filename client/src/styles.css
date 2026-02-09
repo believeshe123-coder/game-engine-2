@@ -1422,6 +1422,11 @@ body,
   color: #fff6f6;
 }
 
+.modal__button--primary {
+  background: rgba(96, 132, 235, 0.95);
+  color: #f2f6ff;
+}
+
 .modal__button--secondary {
   background: rgba(120, 102, 82, 0.6);
   color: #f5ede1;
