@@ -16,6 +16,7 @@ const InventoryPanel = forwardRef(
       seatColor,
       cardStyle,
       colorBlindMode,
+      onPreviewCard,
       panelStyle,
       isDragging
     },
@@ -100,6 +101,13 @@ const InventoryPanel = forwardRef(
                     <span className="inventory-card__toggle-label">
                       {isRevealed ? 'Revealed' : 'Private'}
                     </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="inventory-card__preview"
+                    onClick={() => onPreviewCard?.(cardId)}
+                  >
+                    Preview
                   </button>
                 </div>
               );

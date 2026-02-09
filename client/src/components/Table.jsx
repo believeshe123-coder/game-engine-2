@@ -23,6 +23,7 @@ import {
 } from '../geometry/feltBounds.js';
 import { useTableState } from '../state/useTableState.js';
 import { loadSettings, saveSettings } from '../state/tableSettings.js';
+import { loadUiPrefs, saveUiPrefs } from '../state/uiPrefs.js';
 
 const RIGHT_PANEL_SAFE_WIDTH = 340;
 const TABLETOP_MARGIN = 24;
@@ -353,7 +354,9 @@ const Table = () => {
   const myName = player?.name ?? 'Player';
   const tableStyle = settings.tableStyle;
   const tableShape = settings.roomSettings.tableShape;
-  const isModalOpen = resetConfirmOpen || customLayoutOpen;
+  const [uiPrefs, setUiPrefs] = useState(loadUiPrefs);
+  const [cardPreview, setCardPreview] = useState(null);
+  const isModalOpen = resetConfirmOpen || customLayoutOpen || Boolean(cardPreview);
 
   const actions = useMemo(() => ({}), []);
   const interactionRef = useRef(interaction);
@@ -554,6 +557,10 @@ const Table = () => {
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
+
+  useEffect(() => {
+    saveUiPrefs(uiPrefs);
+  }, [uiPrefs]);
 
   useEffect(() => {
     const sceneRootNode = sceneRootRef.current;
@@ -991,6 +998,21 @@ const Table = () => {
     }
     return stack.faceUp;
   }, [cardFaceOverrides]);
+
+  const openCardPreview = useCallback(
+    (cardId, faceUp = true) => {
+      const card = cardsById?.[cardId];
+      if (!card) {
+        return;
+      }
+      setCardPreview({
+        cardId,
+        faceUp,
+        card
+      });
+    },
+    [cardsById]
+  );
 
   const stacksById = useMemo(() => {
     return stacks.reduce((acc, stack) => {
@@ -2095,6 +2117,7 @@ const Table = () => {
         if (isModalOpen) {
           setResetConfirmOpen(false);
           setCustomLayoutOpen(false);
+          setCardPreview(null);
         }
         actions.cancelDrag?.();
         actions.closeSeatMenu?.();
@@ -2143,6 +2166,7 @@ const Table = () => {
       if (event.key === 'Escape') {
         setResetConfirmOpen(false);
         setCustomLayoutOpen(false);
+        setCardPreview(null);
       }
     };
     window.addEventListener('keydown', handleEscape);
@@ -2874,6 +2898,13 @@ const Table = () => {
         }
       : null;
   const menuStackCount = selectedStack ? selectedStack.cardIds.length : 0;
+  const previewTopCardId =
+    selectedStack && selectedStack.cardIds.length
+      ? selectedStack.cardIds[selectedStack.cardIds.length - 1]
+      : null;
+  const previewTopCardFaceUp = previewTopCardId
+    ? getCardFace(selectedStack, previewTopCardId)
+    : true;
   const seatMenuIndex =
     seatMenuState.open && seatMenuState.seatIndex !== null
       ? seatMenuState.seatIndex
@@ -3061,7 +3092,7 @@ const Table = () => {
                                 rotation={0}
                                 faceUp={isRevealed}
                                 cardStyle={settings.cardStyle}
-                                colorBlindMode={settings.colorBlindMode}
+                                colorBlindMode={uiPrefs.colorBlindMode}
                                 zIndex={index + 1}
                                 rank={card?.rank}
                                 suit={card?.suit}
@@ -3213,7 +3244,7 @@ const Table = () => {
                                 rotation={0}
                                 faceUp
                                 cardStyle={settings.cardStyle}
-                                colorBlindMode={settings.colorBlindMode}
+                                colorBlindMode={uiPrefs.colorBlindMode}
                                 zIndex={1}
                                 rank={card?.rank}
                                 suit={card?.suit}
@@ -3315,7 +3346,7 @@ const Table = () => {
                         rotation={0}
                         faceUp={getCardFace(stack, topCardId)}
                         cardStyle={settings.cardStyle}
-                        colorBlindMode={settings.colorBlindMode}
+                        colorBlindMode={uiPrefs.colorBlindMode}
                         zIndex={1}
                         rank={topCard?.rank}
                         suit={topCard?.suit}
@@ -3357,9 +3388,10 @@ const Table = () => {
           onHeaderPointerDown={(event) =>
             actions.handleInventoryHeaderPointerDown?.(event)
           }
+          onPreviewCard={(cardId) => openCardPreview(cardId, true)}
           seatColor={players[myPlayerId]?.seatColor}
           cardStyle={settings.cardStyle}
-          colorBlindMode={settings.colorBlindMode}
+          colorBlindMode={uiPrefs.colorBlindMode}
           panelStyle={inventoryPanelStyle}
           isDragging={Boolean(inventoryDrag)}
         />
@@ -3382,7 +3414,7 @@ const Table = () => {
                 rotation={0}
                 faceUp={hoverSeatCardInfo.faceUp}
                 cardStyle={settings.cardStyle}
-                colorBlindMode={settings.colorBlindMode}
+                colorBlindMode={uiPrefs.colorBlindMode}
                 zIndex={999999}
                 rank={hoverSeatCardInfo.card?.rank}
                 suit={hoverSeatCardInfo.card?.suit}
@@ -3407,7 +3439,7 @@ const Table = () => {
                   rotation={0}
                   faceUp={interaction.held.faceUp ?? true}
                   cardStyle={settings.cardStyle}
-                  colorBlindMode={settings.colorBlindMode}
+                  colorBlindMode={uiPrefs.colorBlindMode}
                   zIndex={2000}
                   rank={heldTopCard?.rank}
                   suit={heldTopCard?.suit}
@@ -3514,9 +3546,9 @@ const Table = () => {
                         <label className="table-settings__switch">
                           <input
                             type="checkbox"
-                            checked={settings.colorBlindMode}
+                            checked={uiPrefs.colorBlindMode}
                             onChange={(event) =>
-                              setSettings((prev) => ({
+                              setUiPrefs((prev) => ({
                                 ...prev,
                                 colorBlindMode: event.target.checked
                               }))
@@ -4064,6 +4096,68 @@ const Table = () => {
             uiOverlayRoot
           )
         : null}
+      {cardPreview && uiOverlayRoot
+        ? createPortal(
+            <div
+              className="modal-backdrop"
+              role="presentation"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setCardPreview(null);
+              }}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+            >
+              <div
+                className="modal modal--preview"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="card-preview-title"
+                onPointerDown={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="modal__title-row">
+                  <h3 id="card-preview-title" className="modal__title">
+                    Card Preview
+                  </h3>
+                  <button
+                    type="button"
+                    className="modal__close"
+                    aria-label="Close preview"
+                    onClick={() => setCardPreview(null)}
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="card-preview__card">
+                  <Card
+                    id={`preview-${cardPreview.cardId}`}
+                    x={0}
+                    y={0}
+                    rotation={0}
+                    faceUp={cardPreview.faceUp}
+                    cardStyle={settings.cardStyle}
+                    colorBlindMode={uiPrefs.colorBlindMode}
+                    zIndex={1}
+                    rank={cardPreview.card?.rank}
+                    suit={cardPreview.card?.suit}
+                    color={cardPreview.card?.color}
+                    onPointerDown={() => {}}
+                  />
+                </div>
+              </div>
+            </div>,
+            uiOverlayRoot
+          )
+        : null}
       {selectedStack && menuPosition && uiOverlayRoot
         ? createPortal(
             <div
@@ -4156,36 +4250,48 @@ const Table = () => {
               ) : null}
               {mySeatIndex !== null ? (
                 <button
+                  type="button"
+                  className="stack-menu__button"
+                  onClick={() => {
+                    actions.handleMoveSelectedToHand?.();
+                    actions.closeMenu?.();
+                  }}
+                >
+                  Move to Hand
+                </button>
+              ) : null}
+              {previewTopCardId ? (
+                <button
+                  type="button"
+                  className="stack-menu__button"
+                  onClick={() => {
+                    openCardPreview(previewTopCardId, previewTopCardFaceUp);
+                    actions.closeMenu?.();
+                  }}
+                >
+                  Preview top card
+                </button>
+              ) : null}
+              <button
                 type="button"
                 className="stack-menu__button"
                 onClick={() => {
-                  actions.handleMoveSelectedToHand?.();
+                  actions.handleFlipSelected?.();
                   actions.closeMenu?.();
                 }}
               >
-                Move to Hand
+                Flip
               </button>
-            ) : null}
-            <button
-              type="button"
-              className="stack-menu__button"
-              onClick={() => {
-                actions.handleFlipSelected?.();
-                actions.closeMenu?.();
-              }}
-            >
-              Flip
-            </button>
-            <button
-              type="button"
-              className="stack-menu__button"
-              onClick={() => {
-                actions.handleShuffleSelected?.();
-                actions.closeMenu?.();
-              }}
-            >
-              Shuffle
-            </button>
+              <button
+                type="button"
+                className="stack-menu__button"
+                onClick={() => {
+                  actions.handleShuffleSelected?.();
+                  actions.closeMenu?.();
+                }}
+              >
+                Shuffle
+              </button>
             </div>,
             uiOverlayRoot
           )
@@ -4215,8 +4321,11 @@ const Table = () => {
           )
         : null}
       {uiOverlayRoot
-        ? createPortal(<ActionLog entries={actionLog} />, uiOverlayRoot)
-        : <ActionLog entries={actionLog} />}
+        ? createPortal(
+            <ActionLog entries={actionLog} playerName={myName} />,
+            uiOverlayRoot
+          )
+        : <ActionLog entries={actionLog} playerName={myName} />}
     </div>
   );
 };
