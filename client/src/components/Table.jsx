@@ -189,6 +189,52 @@ const saveCustomPreset = (code, preset) => {
   }
 };
 
+const getViewportFromRect = (rect) => ({
+  cx: (rect?.width ?? 0) / 2,
+  cy: (rect?.height ?? 0) / 2
+});
+
+function localToWorld(localX, localY, camera, viewport, isEndless) {
+  if (!isEndless || !camera || !viewport) {
+    return { x: localX, y: localY };
+  }
+  const { zoom = 1, x: camX = 0, y: camY = 0 } = camera;
+  const { cx = 0, cy = 0 } = viewport;
+  return {
+    x: (localX - cx) / zoom + camX,
+    y: (localY - cy) / zoom + camY
+  };
+}
+
+function worldToLocal(worldX, worldY, camera, viewport, isEndless) {
+  if (!isEndless || !camera || !viewport) {
+    return { x: worldX, y: worldY };
+  }
+  const { zoom = 1, x: camX = 0, y: camY = 0 } = camera;
+  const { cx = 0, cy = 0 } = viewport;
+  return {
+    x: (worldX - camX) * zoom + cx,
+    y: (worldY - camY) * zoom + cy
+  };
+}
+
+function screenToWorld(
+  clientX,
+  clientY,
+  playfieldRect,
+  zoom,
+  camera,
+  viewport,
+  isEndless
+) {
+  if (!playfieldRect || !zoom) {
+    return null;
+  }
+  const localX = (clientX - playfieldRect.left) / zoom;
+  const localY = (clientY - playfieldRect.top) / zoom;
+  return localToWorld(localX, localY, camera, viewport, isEndless);
+}
+
 const computeSeatAnchorsFromParams = ({ seatParams, tableShape, seatRailBounds }) => {
   if (!seatRailBounds || !seatRailBounds.width || !seatRailBounds.height) {
     return [];
@@ -674,7 +720,13 @@ const Table = () => {
           (distance - (2 * usableWidth + usableHeight));
         side = 'left';
       }
-      const world = localToWorld(x, y, tableRect);
+      const world = localToWorld(
+        x,
+        y,
+        cameraRef.current,
+        viewportRef.current,
+        true
+      );
       const angle = Math.atan2(world.y, world.x);
       return {
         ...seat,
@@ -684,7 +736,7 @@ const Table = () => {
         angle
       };
     });
-  }, [localToWorld, seats, tableRect]);
+  }, [seats, tableRect]);
 
   const seatParams = useMemo(() => {
     const paramsByShape = settings.roomSettings.seatParams ?? {};
@@ -747,6 +799,7 @@ const Table = () => {
   const [handZones, setHandZones] = useState([]);
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
   const cameraRef = useRef(camera);
+  const viewportRef = useRef(getViewportFromRect(tableRect));
   const panRef = useRef({ pointerId: null, start: null, camera: null });
   const [isPanning, setIsPanning] = useState(false);
   const [isSpaceDown, setIsSpaceDown] = useState(false);
@@ -754,6 +807,10 @@ const Table = () => {
   useEffect(() => {
     cameraRef.current = camera;
   }, [camera]);
+
+  useEffect(() => {
+    viewportRef.current = getViewportFromRect(tableRect);
+  }, [tableRect]);
 
 
 
@@ -785,65 +842,6 @@ const Table = () => {
     [cardsById, formatCardName]
   );
 
-  const screenToWorld = useCallback(
-    (clientX, clientY, playfieldRect, zoom) => {
-      if (!playfieldRect || !zoom) {
-        return null;
-      }
-      const localX = (clientX - playfieldRect.left) / zoom;
-      const localY = (clientY - playfieldRect.top) / zoom;
-      if (!isEndless) {
-        return { x: localX, y: localY };
-      }
-      const activeCamera = cameraRef.current ?? camera;
-      const centerX = (playfieldRect.width ?? 0) / 2;
-      const centerY = (playfieldRect.height ?? 0) / 2;
-      return {
-        x: (localX - centerX) / (activeCamera.zoom || 1) + activeCamera.x,
-        y: (localY - centerY) / (activeCamera.zoom || 1) + activeCamera.y
-      };
-    },
-    [camera, isEndless]
-  );
-
-  const worldToLocal = useCallback(
-    (worldX, worldY, playfieldRect) => {
-      if (!playfieldRect) {
-        return { x: worldX, y: worldY };
-      }
-      if (!isEndless) {
-        return { x: worldX, y: worldY };
-      }
-      const activeCamera = cameraRef.current ?? camera;
-      const centerX = (playfieldRect.width ?? 0) / 2;
-      const centerY = (playfieldRect.height ?? 0) / 2;
-      return {
-        x: (worldX - activeCamera.x) * (activeCamera.zoom || 1) + centerX,
-        y: (worldY - activeCamera.y) * (activeCamera.zoom || 1) + centerY
-      };
-    },
-    [camera, isEndless]
-  );
-
-  const localToWorld = useCallback(
-    (localX, localY, playfieldRect) => {
-      if (!playfieldRect) {
-        return { x: localX, y: localY };
-      }
-      if (!isEndless) {
-        return { x: localX, y: localY };
-      }
-      const activeCamera = cameraRef.current ?? camera;
-      const centerX = (playfieldRect.width ?? 0) / 2;
-      const centerY = (playfieldRect.height ?? 0) / 2;
-      return {
-        x: (localX - centerX) / (activeCamera.zoom || 1) + activeCamera.x,
-        y: (localY - centerY) / (activeCamera.zoom || 1) + activeCamera.y
-      };
-    },
-    [camera, isEndless]
-  );
-
   const updateHandZonesFromDom = useCallback(() => {
     const tableNode = tableRef.current;
     if (!tableNode) {
@@ -856,12 +854,23 @@ const Table = () => {
       if (seatPad) {
         const padRect = seatPad.getBoundingClientRect();
         // Convert screen rect -> table-world coordinates (playfield rect + zoom).
-        const topLeft = screenToWorld(padRect.left, padRect.top, tableRect, zoom);
+        const topLeft = screenToWorld(
+          padRect.left,
+          padRect.top,
+          tableRect,
+          zoom,
+          cameraRef.current,
+          viewportRef.current,
+          isEndless
+        );
         const bottomRight = screenToWorld(
           padRect.right,
           padRect.bottom,
           tableRect,
-          zoom
+          zoom,
+          cameraRef.current,
+          viewportRef.current,
+          isEndless
         );
         if (topLeft && bottomRight) {
           const width = Math.max(0, bottomRight.x - topLeft.x);
@@ -892,7 +901,7 @@ const Table = () => {
     handZoneSeatOffset,
     handZoneSize.height,
     handZoneSize.width,
-    screenToWorld,
+    isEndless,
     seatPositions
   ]);
 
@@ -1382,8 +1391,16 @@ const Table = () => {
     }
     const scale = tableScaleRef.current;
     const tableRect = table.getBoundingClientRect();
-    return screenToWorld(clientX, clientY, tableRect, scale);
-  }, [screenToWorld]);
+    return screenToWorld(
+      clientX,
+      clientY,
+      tableRect,
+      scale,
+      cameraRef.current,
+      viewportRef.current,
+      isEndless
+    );
+  }, [isEndless]);
 
   const getTablePointerPosition = useCallback(
     (event) =>
@@ -3309,11 +3326,13 @@ const Table = () => {
   const seatMenuPosition =
     seatMenuSeat && tableScreenRect
       ? (() => {
-          const local = worldToLocal(
-            seatMenuSeat.x,
-            seatMenuSeat.y,
-            tableRect
-          );
+        const local = worldToLocal(
+          seatMenuSeat.x,
+          seatMenuSeat.y,
+          cameraRef.current,
+          viewportRef.current,
+          isEndless
+        );
           return {
             left: tableScreenRect.left + local.x * combinedScale,
             top: tableScreenRect.top + local.y * combinedScale
