@@ -401,6 +401,17 @@ body,
   justify-content: center;
 }
 
+.felt--endless {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 35% 25%, rgba(120, 170, 124, 0.2), transparent 55%),
+    radial-gradient(circle at 70% 80%, rgba(64, 102, 66, 0.3), transparent 65%),
+    linear-gradient(140deg, #41684a, #34553d 58%, #2d4734);
+  pointer-events: none;
+  z-index: 0;
+}
+
 #sceneRoot {
   position: relative;
   transform: scale(var(--tableScale, 1));

@@ -285,7 +285,13 @@ const buildDeckStacks = (allCardIds, quantity) => {
 
 const createEmptyHand = () => ({ cardIds: [], revealed: {} });
 
-export const useTableState = (tableRect, cardSize, initialSettings, seatCount) => {
+export const useTableState = (
+  tableRect,
+  cardSize,
+  initialSettings,
+  seatCount,
+  getEndlessSpawnPoint
+) => {
   const [cardsById, setCardsById] = useState({});
   const [allCardIds, setAllCardIds] = useState([]);
   const [stacks, setStacks] = useState([]);
@@ -348,11 +354,13 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
 
   const buildTableSurface = useCallback(
     (settingsInput) => {
-      if (!tableRect?.width || !tableRect?.height) {
-        return null;
-      }
       const settings = normalizeSettings(settingsInput ?? DEFAULT_SETTINGS);
       const tableShape = settings.roomSettings?.tableShape ?? 'rectangle';
+      if (!tableRect?.width || !tableRect?.height) {
+        if (tableShape !== 'endless') {
+          return null;
+        }
+      }
       const customPreset = settings.customPresets?.[settings.presetLayout];
       const spawnSettings = customPreset
         ? {
@@ -366,10 +374,18 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
         deckCardIds,
         allCardIds
       } = buildDecks(spawnSettings);
-      const boundsWidth = tableRect.width;
-      const boundsHeight = tableRect.height;
+      const boundsWidth = tableRect.width ?? 0;
+      const boundsHeight = tableRect.height ?? 0;
+      const isEndless = tableShape === 'endless';
+      const spawnPoint = isEndless ? getEndlessSpawnPoint?.() : null;
+      const spawnOffset = isEndless
+        ? {
+            x: (spawnPoint?.x ?? 0) - boundsWidth / 2,
+            y: (spawnPoint?.y ?? 0) - boundsHeight / 2
+          }
+        : { x: 0, y: 0 };
       const feltShape =
-        tableShape === 'endless'
+        isEndless
           ? null
           : getFeltShape({
               width: boundsWidth,
@@ -385,8 +401,10 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
             return;
           }
         }
-        const centerX = x + cardSize.width / 2;
-        const centerY = y + cardSize.height / 2;
+        const adjustedX = x + spawnOffset.x;
+        const adjustedY = y + spawnOffset.y;
+        const centerX = adjustedX + cardSize.width / 2;
+        const centerY = adjustedY + cardSize.height / 2;
         const clampedCenter = clampStackToFelt(
           centerX,
           centerY,
@@ -501,24 +519,17 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
         );
       }
 
-      const centeredStacks =
-        tableShape === 'endless'
-          ? nextStacks.map((stack) => ({
-              ...stack,
-              x: stack.x - boundsWidth / 2,
-              y: stack.y - boundsHeight / 2
-            }))
-          : nextStacks;
       return {
         nextCardsById,
         allCardIds,
-        nextStacks: centeredStacks
+        nextStacks
       };
     },
     [
       cardSize.height,
       cardSize.width,
       createStackId,
+      getEndlessSpawnPoint,
       tableRect?.height,
       tableRect?.width
     ]
