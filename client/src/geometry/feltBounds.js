@@ -37,6 +37,9 @@ export const clampPointToCircle = (point, cx, cy, rSafe) => {
 };
 
 export const isPointInsideFelt = (px, py, feltRect, shape, cardSizePx) => {
+  if (shape === 'endless') {
+    return true;
+  }
   if (!feltRect) {
     return true;
   }
@@ -70,6 +73,9 @@ export const isPointInsideFelt = (px, py, feltRect, shape, cardSizePx) => {
 };
 
 export const clampPointToFelt = (px, py, feltRect, shape, cardSizePx) => {
+  if (shape === 'endless') {
+    return { x: px, y: py };
+  }
   if (!feltRect) {
     return { x: px, y: py };
   }
