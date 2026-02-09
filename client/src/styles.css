@@ -289,6 +289,41 @@
   box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
 }
 
+.table-token {
+  width: calc(var(--card-base-width) * 0.75);
+  height: calc(var(--card-base-height) * 0.4);
+  border-radius: 999px;
+  border: 2px solid rgba(231, 209, 161, 0.7);
+  background: radial-gradient(circle at 30% 30%, #fff2d7, #d6b87c 70%);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #2d241a;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  box-shadow: 0 10px 16px rgba(0, 0, 0, 0.25);
+}
+
+.table-token--dealerButton {
+  background: radial-gradient(circle at 30% 30%, #fff0c2, #d9a44b 70%);
+}
+
+.table-token--discardPile {
+  background: radial-gradient(circle at 30% 30%, #f9d0c8, #b44a3c 70%);
+  color: #2b1512;
+}
+
+.table-token--drawPile {
+  background: radial-gradient(circle at 30% 30%, #cfe0ff, #4d6cb8 70%);
+  color: #141f36;
+}
+
+.table-token--handToken {
+  background: radial-gradient(circle at 30% 30%, #dff5e5, #54a37a 70%);
+  color: #0f2b1e;
+}
+
 /* Settings panel/buttons */
 .table-settings__panel,
 .settingsPanel {
@@ -414,7 +449,7 @@ body,
   z-index: 0;
 }
 
-.table-frame--plain::before {
+.table-frame--classic::before {
   background:
     linear-gradient(140deg, rgba(255, 255, 255, 0.08), transparent 60%),
     linear-gradient(130deg, #6e6e6e, #4d4d4d 55%, #3a3a3a);
@@ -478,7 +513,7 @@ body,
   overflow: visible;
 }
 
-.table__surface--plain {
+.table__surface--classic {
   background: linear-gradient(135deg, #4b5454, #3b4343);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
 }
@@ -938,6 +973,23 @@ body,
   line-height: 1;
 }
 
+.card__suit-label {
+  margin-top: 2px;
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 700;
+  padding: 2px 4px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.65);
+  color: inherit;
+}
+
+.card--colorblind .card__suit {
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .card__pips {
   position: absolute;
   inset: 8px 12px;
@@ -951,6 +1003,18 @@ body,
 
 .card__pip {
   filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.4));
+}
+
+.card--colorblind .card__pip {
+  font-weight: 700;
+}
+
+.card--colorblind .card__face {
+  text-shadow: none;
+}
+
+.card--colorblind .card__face--red {
+  color: #b11010;
 }
 
 .card__court {
@@ -1250,6 +1314,23 @@ body,
   gap: 10px;
 }
 
+.table-settings__group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.table-settings__group-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(247, 230, 194, 0.9);
+}
+
 .table-settings__row {
   display: flex;
   align-items: center;
@@ -1318,6 +1399,10 @@ body,
   font-size: 12px;
 }
 
+.table-settings__switch--dense {
+  gap: 8px;
+}
+
 .table-settings__switch input {
   accent-color: #e7d1a1;
 }
@@ -1329,6 +1414,46 @@ body,
 
 .table-settings__button--secondary:hover {
   background: rgba(120, 102, 82, 0.45);
+}
+
+.table-settings__hint {
+  font-size: 11px;
+  color: rgba(251, 217, 160, 0.9);
+}
+
+.table-settings__spawn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.table-settings__spawn-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.table-settings__spawn-controls {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 480px) {
+  .table-settings__spawn-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.table-settings__code {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
 }
 
 .table-settings__actions {
@@ -1393,6 +1518,26 @@ body,
   pointer-events: auto;
 }
 
+.modal--wide {
+  width: min(92vw, 560px);
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.modal__section {
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modal__section-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(247, 230, 194, 0.9);
+}
 .modal__title {
   margin: 0 0 8px;
   font-size: 16px;
@@ -1551,6 +1696,10 @@ body,
   background: transparent;
   padding: 0;
   --seat-outline: var(--seat-color);
+}
+
+.seat--locked {
+  cursor: default;
 }
 
 .seat--dragging {

@@ -5,6 +5,13 @@ const SUIT_SYMBOLS = {
   Diamonds: '♦'
 };
 
+const SUIT_LABELS = {
+  Spades: 'SPADES',
+  Clubs: 'CLUBS',
+  Hearts: 'HEARTS',
+  Diamonds: 'DIAMONDS'
+};
+
 const SUIT_COLORS = {
   Spades: 'black',
   Clubs: 'black',
@@ -103,6 +110,7 @@ const Card = ({
   suit,
   color,
   cardStyle,
+  colorBlindMode,
   isHeld,
   isSelected,
   onContextMenu
@@ -111,7 +119,9 @@ const Card = ({
   const isJoker = displayRank === 'JOKER';
   const jokerColor = color ?? 'black';
   const symbol = SUIT_SYMBOLS[suit] ?? '♠';
+  const suitLabel = SUIT_LABELS[suit] ?? suit?.toString().toUpperCase() ?? '';
   const suitColor = SUIT_COLORS[suit] ?? 'black';
+  const showSuitLabel = Boolean(colorBlindMode && !isJoker);
   const faceColorClass = isJoker
     ? jokerColor === 'red'
       ? 'card__face--red'
@@ -125,7 +135,9 @@ const Card = ({
     <div
       className={`card card--style-${cardStyle ?? 'medieval'} ${
         faceUp ? 'card--faceup' : 'card--facedown'
-      } ${isHeld ? 'card--held' : ''} ${isSelected ? 'card--selected' : ''}`}
+      } ${isHeld ? 'card--held' : ''} ${isSelected ? 'card--selected' : ''} ${
+        colorBlindMode ? 'card--colorblind' : ''
+      }`}
       style={{
         transform: `translate(${x}px, ${y}px) rotate(${rotation}deg)`,
         zIndex
@@ -154,10 +166,16 @@ const Card = ({
                 <div className="card__corner card__corner--top">
                   <span className="card__rank">{displayRank}</span>
                   <span className="card__suit">{symbol}</span>
+                  {showSuitLabel ? (
+                    <span className="card__suit-label">{suitLabel}</span>
+                  ) : null}
                 </div>
                 <div className="card__corner card__corner--bottom">
                   <span className="card__rank">{displayRank}</span>
                   <span className="card__suit">{symbol}</span>
+                  {showSuitLabel ? (
+                    <span className="card__suit-label">{suitLabel}</span>
+                  ) : null}
                 </div>
                 {isCourt ? (
                   <div className="card__court">

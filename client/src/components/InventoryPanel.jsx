@@ -15,6 +15,7 @@ const InventoryPanel = forwardRef(
       onHeaderPointerDown,
       seatColor,
       cardStyle,
+      colorBlindMode,
       panelStyle,
       isDragging
     },
@@ -77,6 +78,7 @@ const InventoryPanel = forwardRef(
                       rotation={0}
                       faceUp
                       cardStyle={cardStyle}
+                      colorBlindMode={colorBlindMode}
                       zIndex={1}
                       rank={card?.rank}
                       suit={card?.suit}
