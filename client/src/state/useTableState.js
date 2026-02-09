@@ -222,7 +222,7 @@ const applyOvalLayout = ({
 };
 
 const applyPresetLayout = (preset, tableShape, feltBounds, layout) => {
-  if (tableShape === 'rectangle') {
+  if (tableShape === 'rectangle' || tableShape === 'endless') {
     applyRectangleLayout({
       preset,
       feltBounds,
@@ -368,11 +368,14 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
       } = buildDecks(spawnSettings);
       const boundsWidth = tableRect.width;
       const boundsHeight = tableRect.height;
-      const feltShape = getFeltShape({
-        width: boundsWidth,
-        height: boundsHeight,
-        shape: tableShape
-      });
+      const feltShape =
+        tableShape === 'endless'
+          ? null
+          : getFeltShape({
+              width: boundsWidth,
+              height: boundsHeight,
+              shape: tableShape
+            });
       const nextStacks = [];
       nextStackIdRef.current = 1;
 
@@ -498,10 +501,18 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
         );
       }
 
+      const centeredStacks =
+        tableShape === 'endless'
+          ? nextStacks.map((stack) => ({
+              ...stack,
+              x: stack.x - boundsWidth / 2,
+              y: stack.y - boundsHeight / 2
+            }))
+          : nextStacks;
       return {
         nextCardsById,
         allCardIds,
-        nextStacks
+        nextStacks: centeredStacks
       };
     },
     [

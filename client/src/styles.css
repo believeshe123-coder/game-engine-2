@@ -477,6 +477,11 @@ body,
   border-radius: 999px;
 }
 
+.table-frame--endless::before,
+.table-frame--endless::after {
+  content: none;
+}
+
 .table-frame::after {
   content: '';
   position: absolute;
@@ -500,12 +505,22 @@ body,
   border-radius: 999px;
 }
 
+.table-frame--endless {
+  width: 100%;
+  height: 100%;
+}
+
 .table__surface-wrapper {
   position: relative;
   width: var(--table-width);
   height: var(--table-height);
   z-index: 4;
   overflow: visible;
+}
+
+.table__surface-wrapper--endless {
+  width: 100%;
+  height: 100%;
 }
 
 .table__surface {
@@ -536,12 +551,46 @@ body,
   border-radius: 999px;
 }
 
+.table__surface--endless {
+  padding: 0;
+  border-radius: 0;
+  background:
+    linear-gradient(135deg, rgba(46, 88, 56, 0.9), rgba(33, 64, 41, 0.9)),
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.04) 0px,
+      rgba(255, 255, 255, 0.04) 1px,
+      transparent 1px,
+      transparent 48px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.04) 0px,
+      rgba(255, 255, 255, 0.04) 1px,
+      transparent 1px,
+      transparent 48px
+    );
+  box-shadow: none;
+  overflow: hidden;
+}
+
 .table__felt {
   position: absolute;
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
   z-index: 0;
+}
+
+.table__surface--endless .table__felt {
+  background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.2));
+  box-shadow: none;
+}
+
+.table__playfield {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
 }
 
 .table__felt--debug {
