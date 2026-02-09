@@ -19,6 +19,7 @@ const SUITS = [
 const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
 const MAX_NAME_LENGTH = 20;
 const FALLBACK_NAME = 'Player';
+const TAU = Math.PI * 2;
 
 const normalizeName = (value) => {
   if (typeof value !== 'string') {
@@ -236,6 +237,52 @@ const applyPresetLayout = (preset, tableShape, feltBounds, layout) => {
   });
 };
 
+const DEFAULT_SPAWN_PADDING = 32;
+
+const getSpawnAnchor = (rule, bounds, cardSize, index, total) => {
+  const padding = Math.max(DEFAULT_SPAWN_PADDING, cardSize.width * 0.35);
+  const centerX = bounds.width / 2 - cardSize.width / 2;
+  const centerY = bounds.height / 2 - cardSize.height / 2;
+  const cornerX = bounds.width - cardSize.width - padding;
+  const cornerY = bounds.height - cardSize.height - padding;
+  switch (rule) {
+    case 'center':
+      return { x: centerX, y: centerY };
+    case 'nearSeat1':
+      return { x: centerX, y: padding };
+    case 'topLeft':
+      return { x: padding, y: padding };
+    case 'topRight':
+      return { x: cornerX, y: padding };
+    case 'bottomLeft':
+      return { x: padding, y: cornerY };
+    case 'bottomRight':
+      return { x: cornerX, y: cornerY };
+    case 'perSeat': {
+      const count = Math.max(1, total);
+      const radius = Math.max(0, Math.min(bounds.width, bounds.height) / 2 - padding * 2);
+      const angle = (TAU / count) * index - Math.PI / 2;
+      return {
+        x: bounds.width / 2 + Math.cos(angle) * radius - cardSize.width / 2,
+        y: bounds.height / 2 + Math.sin(angle) * radius - cardSize.height / 2
+      };
+    }
+    default:
+      return { x: centerX, y: centerY };
+  }
+};
+
+const buildDeckStacks = (allCardIds, quantity) => {
+  if (!allCardIds.length || quantity <= 0) {
+    return [];
+  }
+  const count = Math.max(1, quantity);
+  const chunkSize = Math.ceil(allCardIds.length / count);
+  return Array.from({ length: count }, (_, index) =>
+    allCardIds.slice(index * chunkSize, (index + 1) * chunkSize)
+  ).filter((chunk) => chunk.length > 0);
+};
+
 const createEmptyHand = () => ({ cardIds: [], revealed: {} });
 
 export const useTableState = (tableRect, cardSize, initialSettings, seatCount) => {
@@ -306,11 +353,19 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
       }
       const settings = normalizeSettings(settingsInput ?? DEFAULT_SETTINGS);
       const tableShape = settings.roomSettings?.tableShape ?? 'rectangle';
+      const customPreset = settings.customPresets?.[settings.presetLayout];
+      const spawnSettings = customPreset
+        ? {
+            ...settings,
+            includeJokers: customPreset.includeJokers ?? settings.includeJokers,
+            deckCount: customPreset.deckCount ?? settings.deckCount
+          }
+        : settings;
       const {
         cardsById: nextCardsById,
         deckCardIds,
         allCardIds
-      } = buildDecks(settings);
+      } = buildDecks(spawnSettings);
       const boundsWidth = tableRect.width;
       const boundsHeight = tableRect.height;
       const feltShape = getFeltShape({
@@ -321,9 +376,11 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
       const nextStacks = [];
       nextStackIdRef.current = 1;
 
-      const pushStack = (x, y, cardIds, faceUp) => {
+      const pushStack = (x, y, cardIds, faceUp, options = {}) => {
         if (!cardIds?.length) {
-          return;
+          if (!options.token) {
+            return;
+          }
         }
         const centerX = x + cardSize.width / 2;
         const centerY = y + cardSize.height / 2;
@@ -346,20 +403,100 @@ export const useTableState = (tableRect, cardSize, initialSettings, seatCount) =
           faceUp,
           cardIds,
           zone: 'table',
-          ownerSeatIndex: null
+          ownerSeatIndex: null,
+          token: options.token ?? null
         });
       };
 
-      applyPresetLayout(settings.presetLayout, tableShape, {
-        width: boundsWidth,
-        height: boundsHeight
-      }, {
-        cardSize,
-        deckCardIds,
-        allCardIds,
-        settings,
-        pushStack
-      });
+      if (customPreset) {
+        const spawnItems = Array.isArray(customPreset.spawnItems)
+          ? customPreset.spawnItems
+          : [];
+        const deckStacks = buildDeckStacks(
+          allCardIds,
+          spawnItems.find((item) => item.type === 'standardDeck')?.quantity ?? 1
+        );
+        let deckIndex = 0;
+        const seatCount = settings.roomSettings?.seatCount ?? DEFAULT_SETTINGS.roomSettings.seatCount;
+        spawnItems.forEach((item) => {
+          if (item?.enabled === false) {
+            return;
+          }
+          const quantity = Math.max(1, Number.parseInt(item.quantity, 10) || 1);
+          const positionRule = item.positionRule ?? 'center';
+          if (item.type === 'standardDeck') {
+            for (let index = 0; index < quantity; index += 1) {
+              const nextDeck = deckStacks[deckIndex];
+              if (!nextDeck) {
+                continue;
+              }
+              const anchor = getSpawnAnchor(positionRule, {
+                width: boundsWidth,
+                height: boundsHeight
+              }, cardSize, index, quantity);
+              pushStack(anchor.x, anchor.y, nextDeck, !settings.resetFaceDown);
+              deckIndex += 1;
+            }
+            return;
+          }
+          if (item.type === 'handTokens') {
+            const perSeat = Math.max(1, seatCount);
+            for (let index = 0; index < perSeat; index += 1) {
+              const anchor = getSpawnAnchor(
+                positionRule,
+                { width: boundsWidth, height: boundsHeight },
+                cardSize,
+                index,
+                perSeat
+              );
+              pushStack(anchor.x, anchor.y, [], true, {
+                token: { type: 'handToken', label: `Seat ${index + 1}` }
+              });
+            }
+            return;
+          }
+          for (let index = 0; index < quantity; index += 1) {
+            const anchor = getSpawnAnchor(
+              positionRule,
+              { width: boundsWidth, height: boundsHeight },
+              cardSize,
+              index,
+              quantity
+            );
+            const tokenLabel = (() => {
+              if (item.type === 'discardPile') {
+                return 'Discard';
+              }
+              if (item.type === 'drawPile') {
+                return 'Draw';
+              }
+              if (item.type === 'dealerButton') {
+                return 'Dealer';
+              }
+              return 'Token';
+            })();
+            pushStack(anchor.x, anchor.y, [], true, {
+              token: { type: item.type, label: tokenLabel }
+            });
+          }
+        });
+      } else {
+        applyPresetLayout(
+          settings.presetLayout,
+          tableShape,
+          {
+            width: boundsWidth,
+            height: boundsHeight
+          },
+          {
+            cardSize,
+            deckCardIds,
+            allCardIds,
+            settings,
+            pushStack
+          }
+        );
+      }
 
       return {
         nextCardsById,

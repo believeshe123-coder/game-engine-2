@@ -22,7 +22,7 @@ import {
   isPointInsideFelt
 } from '../geometry/feltBounds.js';
 import { useTableState } from '../state/useTableState.js';
-import { BASE_DEFAULTS, loadSettings, saveSettings } from '../state/tableSettings.js';
+import { loadSettings, saveSettings } from '../state/tableSettings.js';
 
 const RIGHT_PANEL_SAFE_WIDTH = 340;
 const TABLETOP_MARGIN = 24;
@@ -58,15 +58,8 @@ const SLIDE_START_DIR_THRESHOLD_PX = 10;
 const HAND_ZONE_SEAT_OFFSET_BASE = 52;
 const HELD_STACK_ID = '__HELD__';
 
-const DECK_REBUILD_KEYS = new Set([
-  'includeJokers',
-  'deckCount',
-  'presetLayout',
-  'resetFaceDown'
-]);
-const VISUAL_APPLY_KEYS = new Set(['cardStyle']);
-const ROOM_GEOMETRY_KEYS = new Set(['tableStyle', 'tableShape']);
-const ROOM_SEAT_KEYS = new Set(['seatCount']);
+const CUSTOM_PRESET_STORAGE_PREFIX = 'tablePreset:';
+const PRESET_CODE_LENGTHS = [6, 7, 8];
 
 const SIDE_ORDER = ['top', 'right', 'bottom', 'left'];
 const SIDE_NORMALS = {
@@ -84,6 +77,64 @@ const normalizeParam = (value, max) => {
   return wrapped < 0 ? wrapped + max : wrapped;
 };
 
+const DEFAULT_CUSTOM_PRESET = {
+  cardStyle: 'medieval',
+  includeJokers: true,
+  deckCount: 1,
+  spawnItems: [
+    {
+      id: 'standardDeck',
+      type: 'standardDeck',
+      label: 'Standard Deck Stack',
+      enabled: true,
+      quantity: 1,
+      positionRule: 'center'
+    },
+    {
+      id: 'discardPile',
+      type: 'discardPile',
+      label: 'Discard Pile',
+      enabled: true,
+      quantity: 1,
+      positionRule: 'topRight'
+    },
+    {
+      id: 'drawPile',
+      type: 'drawPile',
+      label: 'Draw Pile',
+      enabled: true,
+      quantity: 1,
+      positionRule: 'topLeft'
+    },
+    {
+      id: 'dealerButton',
+      type: 'dealerButton',
+      label: 'Dealer Button',
+      enabled: true,
+      quantity: 1,
+      positionRule: 'nearSeat1'
+    },
+    {
+      id: 'handTokens',
+      type: 'handTokens',
+      label: 'Hand Tokens',
+      enabled: false,
+      quantity: 1,
+      positionRule: 'perSeat'
+    }
+  ]
+};
+
+const SPAWN_RULE_OPTIONS = [
+  { value: 'center', label: 'Center' },
+  { value: 'nearSeat1', label: 'Near Seat 1' },
+  { value: 'topLeft', label: 'Top Left' },
+  { value: 'topRight', label: 'Top Right' },
+  { value: 'bottomLeft', label: 'Bottom Left' },
+  { value: 'bottomRight', label: 'Bottom Right' },
+  { value: 'perSeat', label: 'Per Seat' }
+];
+
 const getSeatSideFromAngle = (angle) => {
   const normalized = normalizeParam(angle, TAU);
   if (normalized < Math.PI / 4 || normalized >= (Math.PI * 7) / 4) {
@@ -98,44 +149,41 @@ const getSeatSideFromAngle = (angle) => {
   return 'top';
 };
 
-const getSettingsDiff = (draftSettings, applied) => {
-  const deckRebuild = [];
-  const visualApply = [];
-  const roomGeometry = [];
-  let seatResize = false;
+const generatePresetCode = () => {
+  const length =
+    PRESET_CODE_LENGTHS[Math.floor(Math.random() * PRESET_CODE_LENGTHS.length)];
+  let code = '';
+  for (let i = 0; i < length; i += 1) {
+    code += Math.floor(Math.random() * 10).toString();
+  }
+  return code;
+};
 
-  DECK_REBUILD_KEYS.forEach((key) => {
-    if (draftSettings[key] !== applied[key]) {
-      deckRebuild.push(key);
-    }
-  });
-  VISUAL_APPLY_KEYS.forEach((key) => {
-    if (draftSettings[key] !== applied[key]) {
-      visualApply.push(key);
-    }
-  });
-  ROOM_GEOMETRY_KEYS.forEach((key) => {
-    if (draftSettings.roomSettings[key] !== applied.roomSettings[key]) {
-      roomGeometry.push(key);
-    }
-  });
-  ROOM_SEAT_KEYS.forEach((key) => {
-    if (draftSettings.roomSettings[key] !== applied.roomSettings[key]) {
-      seatResize = true;
-    }
-  });
+const loadCustomPreset = (code) => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(`${CUSTOM_PRESET_STORAGE_PREFIX}${code}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch (error) {
+    return null;
+  }
+};
 
-  return {
-    deckRebuild,
-    visualApply,
-    roomGeometry,
-    seatResize,
-    hasPending:
-      deckRebuild.length > 0 ||
-      visualApply.length > 0 ||
-      roomGeometry.length > 0 ||
-      seatResize
-  };
+const saveCustomPreset = (code, preset) => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  try {
+    window.localStorage.setItem(
+      `${CUSTOM_PRESET_STORAGE_PREFIX}${code}`,
+      JSON.stringify(preset)
+    );
+    return true;
+  } catch (error) {
+    return false;
+  }
 };
 
 const computeSeatAnchorsFromParams = ({ seatParams, tableShape, seatRailBounds }) => {
@@ -172,8 +220,8 @@ const Table = () => {
   const [tableFootprintPx, setTableFootprintPx] = useState(null);
   const tableScaleRef = useRef(1);
   const capturedPointerRef = useRef({ pointerId: null, element: null });
+  // Local player settings live in `settings`, room-config values are nested under `roomSettings`.
   const [settings, setSettings] = useState(() => loadSettings());
-  const [appliedSettings, setAppliedSettings] = useState(() => loadSettings());
   const tableZoom = settings.tableZoom ?? 1;
   const cardScale = settings.cardScale ?? 1;
   const viewTransform = useMemo(
@@ -202,14 +250,13 @@ const Table = () => {
     () => HAND_ZONE_SEAT_OFFSET_BASE * viewTransform.cardScale,
     [viewTransform.cardScale]
   );
-  const seatCount = appliedSettings.roomSettings.seatCount;
+  const seatCount = settings.roomSettings.seatCount;
   const {
     cardsById,
     allCardIds,
     stacks,
     setStacks,
     createStackId,
-    rebuildTableSurfacePreservingHands,
     players,
     player,
     mySeatIndex,
@@ -219,7 +266,6 @@ const Table = () => {
     actionLog,
     presence,
     sitAtSeat,
-    standUp,
     setPlayerName,
     setSeatColor,
     logAction,
@@ -228,11 +274,11 @@ const Table = () => {
     moveFromHandToTable,
     reorderHand,
     toggleReveal,
-    hardResetTableState
+    resetTableSurface
   } = useTableState(
     tableRect,
     cardSize,
-    appliedSettings,
+    settings,
     seatCount
   );
   const hands = handsBySeat;
@@ -268,6 +314,14 @@ const Table = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState('player');
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [customLayoutOpen, setCustomLayoutOpen] = useState(false);
+  const [presetCodeInput, setPresetCodeInput] = useState('');
+  const [presetImportStatus, setPresetImportStatus] = useState(null);
+  const [savedPresetCode, setSavedPresetCode] = useState(null);
+  const [customPresetDraft, setCustomPresetDraft] = useState(() => ({
+    ...DEFAULT_CUSTOM_PRESET,
+    spawnItems: DEFAULT_CUSTOM_PRESET.spawnItems.map((item) => ({ ...item }))
+  }));
   const [dragSeatIndex, setDragSeatIndex] = useState(null);
   const inventoryPanelRef = useRef(null);
   const [inventoryPos, setInventoryPos] = useState(() => {
@@ -297,6 +351,9 @@ const Table = () => {
   const [hoverSeatDropIndex, setHoverSeatDropIndex] = useState(null);
   const [hoverSeatCard, setHoverSeatCard] = useState(null);
   const myName = player?.name ?? 'Player';
+  const tableStyle = settings.tableStyle;
+  const tableShape = settings.roomSettings.tableShape;
+  const isModalOpen = resetConfirmOpen || customLayoutOpen;
 
   const actions = useMemo(() => ({}), []);
   const interactionRef = useRef(interaction);
@@ -512,8 +569,6 @@ const Table = () => {
     }
   }, [hoverSeatDropIndex, interaction.held, interaction.mode]);
 
-  const tableStyle = appliedSettings.roomSettings.tableStyle;
-  const tableShape = appliedSettings.roomSettings.tableShape;
   const [feltBounds, setFeltBounds] = useState(null);
   const [seatRailBounds, setSeatRailBounds] = useState(null);
   const [feltEllipse, setFeltEllipse] = useState(null);
@@ -1105,22 +1160,6 @@ const Table = () => {
           }
         };
       });
-      setAppliedSettings((prev) => {
-        const paramsByShape = prev.roomSettings.seatParams ?? {};
-        const params = normalizeSeatParams(paramsByShape[tableShape], seatCount, tableShape);
-        const nextParams = [...params];
-        nextParams[seatIndex] = value;
-        return {
-          ...prev,
-          roomSettings: {
-            ...prev.roomSettings,
-            seatParams: {
-              ...paramsByShape,
-              [tableShape]: nextParams
-            }
-          }
-        };
-      });
     },
     [normalizeSeatParams, seatCount, tableShape]
   );
@@ -1280,7 +1319,7 @@ const Table = () => {
 
   actions.handleSeatPointerDown = useCallback(
     (event, seatIndex) => {
-      if (interaction.mode !== 'idle') {
+      if (interaction.mode !== 'idle' || settings.roomSettings.seatLock || isModalOpen) {
         return;
       }
       event.preventDefault();
@@ -1298,11 +1337,14 @@ const Table = () => {
       setDragSeatIndex(seatIndex);
       updateSeatParamFromPointer(event, seatIndex);
     },
-    [interaction.mode, updateSeatParamFromPointer]
+    [interaction.mode, isModalOpen, settings.roomSettings.seatLock, updateSeatParamFromPointer]
   );
 
   actions.handleSeatPointerMove = useCallback(
     (event, seatIndex) => {
+      if (settings.roomSettings.seatLock || isModalOpen) {
+        return;
+      }
       if (interaction.held && dragSeatIndex !== seatIndex) {
         actions.updateSeatDropHover?.(event.clientX, event.clientY);
         return;
@@ -1321,7 +1363,14 @@ const Table = () => {
       }
       updateSeatParamFromPointer(event, seatIndex);
     },
-    [actions, dragSeatIndex, interaction.held, updateSeatParamFromPointer]
+    [
+      actions,
+      dragSeatIndex,
+      interaction.held,
+      isModalOpen,
+      settings.roomSettings.seatLock,
+      updateSeatParamFromPointer
+    ]
   );
 
   actions.handleSeatPointerUp = useCallback(() => {
@@ -2043,8 +2092,9 @@ const Table = () => {
       }
       if (event.key === 'Escape') {
         event.preventDefault();
-        if (resetConfirmOpen) {
+        if (isModalOpen) {
           setResetConfirmOpen(false);
+          setCustomLayoutOpen(false);
         }
         actions.cancelDrag?.();
         actions.closeSeatMenu?.();
@@ -2076,11 +2126,7 @@ const Table = () => {
         actions.pickupFromStack?.(interaction.selectedStackId, pickCount);
       }
     },
-    [
-      actions,
-      interaction.selectedStackId,
-      resetConfirmOpen
-    ]
+    [actions, interaction.selectedStackId, isModalOpen]
   );
 
   useEffect(() => {
@@ -2088,6 +2134,20 @@ const Table = () => {
     window.addEventListener('keydown', handleKeyDownEvent);
     return () => window.removeEventListener('keydown', handleKeyDownEvent);
   }, [actions]);
+
+  useEffect(() => {
+    if (!isModalOpen) {
+      return;
+    }
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setResetConfirmOpen(false);
+        setCustomLayoutOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [isModalOpen]);
 
   useEffect(() => {
     const handleCancelEvent = () => {
@@ -2158,7 +2218,7 @@ const Table = () => {
 
   actions.handleSurfacePointerDown = useCallback(
     (event) => {
-      if (resetConfirmOpen) {
+      if (isModalOpen) {
         return;
       }
       lastPointerRef.current = { x: event.clientX, y: event.clientY };
@@ -2297,7 +2357,7 @@ const Table = () => {
       hitTestStack,
       interaction.held,
       interaction.menu.open,
-      resetConfirmOpen,
+      isModalOpen,
       setInteraction,
       updatePresence
     ]
@@ -2305,7 +2365,7 @@ const Table = () => {
 
   actions.handleSurfacePointerMove = useCallback(
     (event) => {
-      if (resetConfirmOpen) {
+      if (isModalOpen) {
         return;
       }
       const pointerWorld = getTablePointerPosition(event);
@@ -2385,13 +2445,13 @@ const Table = () => {
       sweepPlaceFromHeld,
       updateDrag,
       updatePresence,
-      resetConfirmOpen
+      isModalOpen
     ]
   );
 
   actions.handleSurfacePointerUp = useCallback(
     (event) => {
-      if (resetConfirmOpen) {
+      if (isModalOpen) {
         return;
       }
       actions.clearRmbHoldTimer();
@@ -2449,7 +2509,7 @@ const Table = () => {
       placeOneFromHeld,
       actions.pickupFromStack,
       actions.selectStack,
-      resetConfirmOpen
+      isModalOpen
     ]
   );
 
@@ -2571,17 +2631,73 @@ const Table = () => {
     [hands, myName, mySeatIndex, logRevealChange, toggleReveal]
   );
 
+  const presetOptions = useMemo(() => {
+    const customCodes = settings.customPresetCodes ?? [];
+    return [
+      { value: 'none', label: 'None' },
+      { value: 'solitaire', label: 'Solitaire' },
+      { value: 'grid', label: 'Grid' },
+      ...customCodes.map((code) => ({
+        value: code,
+        label: `Custom ${code}`
+      }))
+    ];
+  }, [settings.customPresetCodes]);
+
+  const handleAddPresetCode = useCallback(() => {
+    const code = presetCodeInput.trim();
+    if (!code) {
+      return;
+    }
+    const preset = loadCustomPreset(code);
+    if (!preset) {
+      setPresetImportStatus('missing');
+      return;
+    }
+    setSettings((prev) => {
+      const nextCodes = Array.from(
+        new Set([...(prev.customPresetCodes ?? []), code])
+      );
+      return {
+        ...prev,
+        customPresetCodes: nextCodes,
+        customPresets: {
+          ...(prev.customPresets ?? {}),
+          [code]: preset
+        }
+      };
+    });
+    setPresetImportStatus('added');
+  }, [presetCodeInput]);
+
+  const normalizeCustomPresetDraft = useCallback((draft) => {
+    const deckCount = Math.min(8, Math.max(1, Number(draft.deckCount) || 1));
+    const spawnItems = Array.isArray(draft.spawnItems)
+      ? draft.spawnItems.map((item) => ({
+          ...item,
+          quantity: Math.min(8, Math.max(1, Number(item.quantity) || 1))
+        }))
+      : [];
+    return {
+      ...draft,
+      cardStyle: draft.cardStyle === 'classic' ? 'classic' : 'medieval',
+      includeJokers: Boolean(draft.includeJokers),
+      deckCount,
+      spawnItems
+    };
+  }, []);
+
+  const handleSaveCustomPreset = useCallback(() => {
+    const code = generatePresetCode();
+    const normalized = normalizeCustomPresetDraft(customPresetDraft);
+    const saved = saveCustomPreset(code, normalized);
+    if (saved) {
+      setSavedPresetCode(code);
+    }
+  }, [customPresetDraft, normalizeCustomPresetDraft]);
+
   const visibleBadgeStackId =
     settings.stackCountDisplayMode === 'hover' ? hoveredStackId : null;
-  const settingsDiff = useMemo(
-    () => getSettingsDiff(settings, appliedSettings),
-    [appliedSettings, settings]
-  );
-  const tableSettingsDirty =
-    settingsDiff.deckRebuild.length > 0 || settingsDiff.visualApply.length > 0;
-  const roomSettingsDirty =
-    settingsDiff.roomGeometry.length > 0 || settingsDiff.seatResize;
-  const hasRebuildPending = settingsDiff.hasPending;
 
   const clampStacksToFeltShape = useCallback(
     (shape) => {
@@ -2615,50 +2731,25 @@ const Table = () => {
     [cardSize.height, cardSize.width, setStacks, tableRect?.height, tableRect?.width]
   );
 
-  actions.applySettings = useCallback(() => {
-    const diff = getSettingsDiff(settings, appliedSettings);
-    if (!diff.hasPending) {
-      return;
-    }
-    const shouldRebuildDeck = diff.deckRebuild.length > 0;
-    const shouldRecomputeGeometry =
-      diff.roomGeometry.length > 0 || diff.seatResize;
+  useEffect(() => {
+    clampStacksToFeltShape(tableShape);
+  }, [clampStacksToFeltShape, tableShape]);
 
-    if (shouldRebuildDeck) {
-      rebuildTableSurfacePreservingHands(settings);
+  const handleResetTable = useCallback(() => {
+    const customPreset = settings.customPresets?.[settings.presetLayout];
+    const nextCardStyle = customPreset?.cardStyle ?? settings.cardStyle;
+    if (customPreset?.cardStyle && customPreset.cardStyle !== settings.cardStyle) {
+      setSettings((prev) => ({ ...prev, cardStyle: customPreset.cardStyle }));
     }
-    if (shouldRecomputeGeometry) {
-      clampStacksToFeltShape(settings.roomSettings.tableShape);
-    }
-    if (shouldRebuildDeck) {
-      setCardFaceOverrides({});
-    }
-    if (shouldRecomputeGeometry) {
-      actions.updateTabletopScale?.();
-    }
-    setAppliedSettings(settings);
-  }, [
-    actions,
-    appliedSettings,
-    clampStacksToFeltShape,
-    rebuildTableSurfacePreservingHands,
-    settings
-  ]);
-
-  const hardResetToBaseDefaults = useCallback(() => {
-    setSettings(BASE_DEFAULTS);
-    setAppliedSettings(BASE_DEFAULTS);
-    saveSettings(BASE_DEFAULTS);
-    hardResetTableState(BASE_DEFAULTS);
+    resetTableSurface({ ...settings, cardStyle: nextCardStyle });
     actions.resetInteractionStates?.();
     actions.resetInteractionToDefaults?.();
     setCardFaceOverrides({});
     setSettingsOpen(false);
     actions.updateTabletopScale?.();
-    logAction('Reset table to defaults');
+    logAction('Reset table using preset settings');
     setResetConfirmOpen(false);
-  }, [actions, hardResetTableState, logAction]);
-  actions.handleHardResetToBaseDefaults = hardResetToBaseDefaults;
+  }, [actions, logAction, resetTableSurface, settings]);
 
   actions.handleStackDoubleClick = useCallback((event, stackId) => {
     event.preventDefault();
@@ -2890,7 +2981,7 @@ const Table = () => {
                   ref={(el) => {
                     seatRefs.current[seat.seatIndex] = el;
                   }}
-                  className={`seat seat--${seat.side} ${occupied ? 'seat--occupied' : ''} ${isMine ? 'seat--mine' : ''} ${seatHandCount ? 'seat--has-cards' : ''} ${dragSeatIndex === seat.seatIndex ? 'seat--dragging' : ''} ${hoverSeatDropIndex === seat.seatIndex ? 'dropTarget' : ''}`}
+                  className={`seat seat--${seat.side} ${occupied ? 'seat--occupied' : ''} ${isMine ? 'seat--mine' : ''} ${seatHandCount ? 'seat--has-cards' : ''} ${dragSeatIndex === seat.seatIndex ? 'seat--dragging' : ''} ${hoverSeatDropIndex === seat.seatIndex ? 'dropTarget' : ''} ${settings.roomSettings.seatLock ? 'seat--locked' : ''}`}
                   data-seat-index={seat.seatIndex}
                   style={seatStyle}
                   onClick={() => actions.handleSeatClick?.(seat.seatIndex)}
@@ -2969,7 +3060,8 @@ const Table = () => {
                                 y={0}
                                 rotation={0}
                                 faceUp={isRevealed}
-                                cardStyle={appliedSettings.cardStyle}
+                                cardStyle={settings.cardStyle}
+                                colorBlindMode={settings.colorBlindMode}
                                 zIndex={index + 1}
                                 rank={card?.rank}
                                 suit={card?.suit}
@@ -3120,7 +3212,8 @@ const Table = () => {
                                 y={0}
                                 rotation={0}
                                 faceUp
-                                cardStyle={appliedSettings.cardStyle}
+                                cardStyle={settings.cardStyle}
+                                colorBlindMode={settings.colorBlindMode}
                                 zIndex={1}
                                 rank={card?.rank}
                                 suit={card?.suit}
@@ -3172,6 +3265,7 @@ const Table = () => {
                 const isMenuTarget =
                   interaction.menu.open && interaction.menu.stackId === stack.id;
                 const isMergeTarget = stack.id === mergeHighlightStackId;
+                const isTokenStack = Boolean(stack.token);
                 const highlightState = isHeldStack
                   ? 'held'
                   : isSelectedStack
@@ -3187,6 +3281,7 @@ const Table = () => {
                 const showBadge =
                   !stack.isHeldVisual &&
                   stack.cardIds.length > 1 &&
+                  settings.stackCountDisplayMode !== 'off' &&
                   (settings.stackCountDisplayMode === 'always' ||
                     (settings.stackCountDisplayMode === 'hover' &&
                       stack.id === visibleBadgeStackId));
@@ -3204,14 +3299,23 @@ const Table = () => {
                       zIndex
                     }}
                   >
-                    {stack.isHeldVisual ? null : (
+                    {stack.isHeldVisual ? null : isTokenStack ? (
+                      <div
+                        className={`table-token table-token--${stack.token?.type ?? 'generic'}`}
+                      >
+                        <span className="table-token__label">
+                          {stack.token?.label ?? 'Token'}
+                        </span>
+                      </div>
+                    ) : (
                       <Card
                         id={stack.id}
                         x={0}
                         y={0}
                         rotation={0}
                         faceUp={getCardFace(stack, topCardId)}
-                        cardStyle={appliedSettings.cardStyle}
+                        cardStyle={settings.cardStyle}
+                        colorBlindMode={settings.colorBlindMode}
                         zIndex={1}
                         rank={topCard?.rank}
                         suit={topCard?.suit}
@@ -3254,7 +3358,8 @@ const Table = () => {
             actions.handleInventoryHeaderPointerDown?.(event)
           }
           seatColor={players[myPlayerId]?.seatColor}
-          cardStyle={appliedSettings.cardStyle}
+          cardStyle={settings.cardStyle}
+          colorBlindMode={settings.colorBlindMode}
           panelStyle={inventoryPanelStyle}
           isDragging={Boolean(inventoryDrag)}
         />
@@ -3276,7 +3381,8 @@ const Table = () => {
                 y={0}
                 rotation={0}
                 faceUp={hoverSeatCardInfo.faceUp}
-                cardStyle={appliedSettings.cardStyle}
+                cardStyle={settings.cardStyle}
+                colorBlindMode={settings.colorBlindMode}
                 zIndex={999999}
                 rank={hoverSeatCardInfo.card?.rank}
                 suit={hoverSeatCardInfo.card?.suit}
@@ -3300,7 +3406,8 @@ const Table = () => {
                   y={dragCardPosition.y}
                   rotation={0}
                   faceUp={interaction.held.faceUp ?? true}
-                  cardStyle={appliedSettings.cardStyle}
+                  cardStyle={settings.cardStyle}
+                  colorBlindMode={settings.colorBlindMode}
                   zIndex={2000}
                   rank={heldTopCard?.rank}
                   suit={heldTopCard?.suit}
@@ -3343,10 +3450,7 @@ const Table = () => {
                   type="button"
                   onClick={() => setSettingsTab('table')}
                 >
-                  Table
-                  {tableSettingsDirty ? (
-                    <span className="table-settings__tab-note">Changes Pending</span>
-                  ) : null}
+                  Table Presets
                 </button>
                 <button
                   className={`table-settings__tab ${
@@ -3356,363 +3460,348 @@ const Table = () => {
                   onClick={() => setSettingsTab('room')}
                 >
                   Room
-                  {roomSettingsDirty ? (
-                    <span className="table-settings__tab-note">Changes Pending</span>
-                  ) : null}
                 </button>
               </div>
               <div className="table-settings__content">
                 {settingsTab === 'player' ? (
                   <div className="table-settings__section">
-                    <label className="table-settings__row table-settings__row--stacked">
-                      <span className="table-settings__label">Player Name</span>
-                      <input
-                        className="table-settings__input table-settings__input--full"
-                        type="text"
-                        maxLength={20}
-                        value={player?.name ?? ''}
-                        onChange={(event) => setPlayerName(event.target.value)}
-                      />
-                    </label>
-                    <label className="table-settings__row">
-                      <span className="table-settings__label">Seat Color</span>
-                      <input
-                        className="table-settings__color"
-                        type="color"
-                        value={player?.seatColor ?? '#6aa9ff'}
-                        onChange={(event) => setSeatColor(event.target.value)}
-                      />
-                    </label>
-                    <div className="table-settings__row">
-                      <span className="table-settings__label">Drag inventory freely</span>
-                      <label className="table-settings__switch">
+                    <div className="table-settings__group">
+                      <div className="table-settings__group-title">Identity (Local)</div>
+                      <label className="table-settings__row table-settings__row--stacked">
+                        <span className="table-settings__label">Player Name</span>
                         <input
-                          type="checkbox"
-                          checked={settings.inventoryDragEnabled}
+                          className="table-settings__input table-settings__input--full"
+                          type="text"
+                          maxLength={20}
+                          value={player?.name ?? ''}
+                          onChange={(event) => setPlayerName(event.target.value)}
+                        />
+                      </label>
+                      <label className="table-settings__row">
+                        <span className="table-settings__label">Seat Color</span>
+                        <input
+                          className="table-settings__color"
+                          type="color"
+                          value={player?.seatColor ?? '#6aa9ff'}
+                          onChange={(event) => setSeatColor(event.target.value)}
+                        />
+                      </label>
+                    </div>
+                    <div className="table-settings__group">
+                      <div className="table-settings__group-title">
+                        Local Visual / Accessibility
+                      </div>
+                      <label className="table-settings__row">
+                        <span className="table-settings__label">Table Style</span>
+                        <select
+                          className="table-settings__select"
+                          value={settings.tableStyle}
                           onChange={(event) =>
                             setSettings((prev) => ({
                               ...prev,
-                              inventoryDragEnabled: event.target.checked
+                              tableStyle: event.target.value
                             }))
                           }
-                        />
-                        <span>Enabled</span>
+                        >
+                          <option value="medieval">Medieval</option>
+                          <option value="classic">Classic</option>
+                        </select>
+                      </label>
+                      <div className="table-settings__row">
+                        <span className="table-settings__label">
+                          Color Blind Mode for Cards
+                        </span>
+                        <label className="table-settings__switch">
+                          <input
+                            type="checkbox"
+                            checked={settings.colorBlindMode}
+                            onChange={(event) =>
+                              setSettings((prev) => ({
+                                ...prev,
+                                colorBlindMode: event.target.checked
+                              }))
+                            }
+                          />
+                          <span>Enabled</span>
+                        </label>
+                      </div>
+                      <label className="table-settings__row">
+                        <span className="table-settings__label">Table Zoom</span>
+                        <div className="table-settings__range">
+                          <input
+                            type="range"
+                            min="0.5"
+                            max="1.4"
+                            step="0.01"
+                            value={settings.tableZoom ?? 1}
+                            onChange={(event) =>
+                              setSettings((prev) => ({
+                                ...prev,
+                                tableZoom: clamp(Number(event.target.value), 0.5, 1.4)
+                              }))
+                            }
+                          />
+                          <span className="table-settings__value">
+                            {Math.round((settings.tableZoom ?? 1) * 100)}%
+                          </span>
+                        </div>
+                      </label>
+                      <label className="table-settings__row">
+                        <span className="table-settings__label">
+                          Stack Count Display
+                        </span>
+                        <select
+                          className="table-settings__select"
+                          value={settings.stackCountDisplayMode}
+                          onChange={(event) =>
+                            setSettings((prev) => ({
+                              ...prev,
+                              stackCountDisplayMode: event.target.value
+                            }))
+                          }
+                        >
+                          <option value="always">Always On</option>
+                          <option value="hover">Hover</option>
+                          <option value="off">Off</option>
+                        </select>
                       </label>
                     </div>
-          <button
-            className="table-settings__button table-settings__button--secondary"
-            type="button"
-            onClick={() => actions.resetInventoryPosition?.()}
-            disabled={!inventoryPos}
-          >
-                      Reset inventory position
-                    </button>
-                    {mySeatIndex !== null && mySeatIndex !== undefined ? (
+                    <div className="table-settings__group">
+                      <div className="table-settings__group-title">Inventory</div>
                       <button
                         className="table-settings__button table-settings__button--secondary"
                         type="button"
-                        onClick={() => {
-                          standUp();
-                          if (mySeatIndex !== null && mySeatIndex !== undefined) {
-                            logAction(`${myName} left Seat ${mySeatIndex + 1}`);
-                          }
-                        }}
+                        onClick={() => actions.resetInventoryPosition?.()}
+                        disabled={!inventoryPos}
                       >
-                        Stand Up
+                        Reset Inventory Location
                       </button>
-                    ) : null}
+                    </div>
                   </div>
                 ) : null}
                 {settingsTab === 'table' ? (
                   <div className="table-settings__section">
-                    {tableSettingsDirty ? (
-                      <div className="table-settings__pending">Changes Pending</div>
-                    ) : null}
-                    <div className="table-settings__row">
-                      <span className="table-settings__label">Reset spawns face down</span>
-                      <label className="table-settings__switch">
-                        <input
-                          type="checkbox"
-                          checked={settings.resetFaceDown}
+                    <div className="table-settings__group">
+                      <div className="table-settings__group-title">Spawn Defaults</div>
+                      <div className="table-settings__row">
+                        <span className="table-settings__label">
+                          Spawn new stacks face-down
+                        </span>
+                        <label className="table-settings__switch">
+                          <input
+                            type="checkbox"
+                            checked={settings.resetFaceDown}
+                            onChange={(event) =>
+                              setSettings((prev) => ({
+                                ...prev,
+                                resetFaceDown: event.target.checked
+                              }))
+                            }
+                          />
+                          <span>Face-Down</span>
+                        </label>
+                      </div>
+                      <label className="table-settings__row">
+                        <span className="table-settings__label">Card Size</span>
+                        <div className="table-settings__range">
+                          <input
+                            type="range"
+                            min="0.7"
+                            max="1.6"
+                            step="0.01"
+                            value={settings.cardScale ?? 1}
+                            onChange={(event) =>
+                              setSettings((prev) => ({
+                                ...prev,
+                                cardScale: clamp(Number(event.target.value), 0.7, 1.6)
+                              }))
+                            }
+                          />
+                          <span className="table-settings__value">
+                            {Math.round((settings.cardScale ?? 1) * 100)}%
+                          </span>
+                        </div>
+                      </label>
+                      <label className="table-settings__row">
+                        <span className="table-settings__label">Preset Layout</span>
+                        <select
+                          className="table-settings__select"
+                          value={settings.presetLayout}
                           onChange={(event) =>
                             setSettings((prev) => ({
                               ...prev,
-                              resetFaceDown: event.target.checked
+                              presetLayout: event.target.value
                             }))
                           }
-                        />
-                        <span>Reset Face-Down</span>
+                        >
+                          {presetOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
                       </label>
                     </div>
-                    <label className="table-settings__row">
-                      <span className="table-settings__label">Card Style</span>
-                      <select
-                        className="table-settings__select"
-                        value={settings.cardStyle}
-                        onChange={(event) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            cardStyle: event.target.value
-                          }))
-                        }
-                      >
-                        <option value="medieval">Medieval</option>
-                        <option value="classic">Classic</option>
-                      </select>
-                    </label>
-                    <label className="table-settings__row">
-                      <span className="table-settings__label">Table Zoom</span>
-                      <div className="table-settings__range">
+                    <div className="table-settings__group">
+                      <div className="table-settings__group-title">Preset Layout</div>
+                      <label className="table-settings__row table-settings__row--stacked">
+                        <span className="table-settings__label">Enter preset code</span>
                         <input
-                          type="range"
-                          min="0.5"
-                          max="1.4"
-                          step="0.01"
-                          value={settings.tableZoom ?? 1}
-                          onChange={(event) =>
-                            setSettings((prev) => ({
-                              ...prev,
-                              tableZoom: clamp(Number(event.target.value), 0.5, 1.4)
-                            }))
-                          }
+                          className="table-settings__input table-settings__input--full"
+                          type="text"
+                          value={presetCodeInput}
+                          onChange={(event) => {
+                            setPresetCodeInput(event.target.value);
+                            setPresetImportStatus(null);
+                          }}
                         />
-                        <span className="table-settings__value">
-                          {Math.round((settings.tableZoom ?? 1) * 100)}%
-                        </span>
-                      </div>
-                    </label>
-                    <label className="table-settings__row">
-                      <span className="table-settings__label">Card Size</span>
-                      <div className="table-settings__range">
-                        <input
-                          type="range"
-                          min="0.7"
-                          max="1.6"
-                          step="0.01"
-                          value={settings.cardScale ?? 1}
-                          onChange={(event) =>
-                            setSettings((prev) => ({
-                              ...prev,
-                              cardScale: clamp(Number(event.target.value), 0.7, 1.6)
-                            }))
-                          }
-                        />
-                        <span className="table-settings__value">
-                          {Math.round((settings.cardScale ?? 1) * 100)}%
-                        </span>
-                      </div>
-                    </label>
-                    <label className="table-settings__row">
-                      <span className="table-settings__label">Stack Count Display</span>
-                      <select
-                        className="table-settings__select"
-                        value={settings.stackCountDisplayMode}
-                        onChange={(event) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            stackCountDisplayMode: event.target.value
-                          }))
-                        }
-                      >
-                        <option value="always">Always On</option>
-                        <option value="hover">Hover Only</option>
-                      </select>
-                    </label>
-                    <div className="table-settings__row">
-                      <span className="table-settings__label">Include Jokers</span>
-                      <label className="table-settings__switch">
-                        <input
-                          type="checkbox"
-                          checked={settings.includeJokers}
-                          onChange={(event) =>
-                            setSettings((prev) => ({
-                              ...prev,
-                              includeJokers: event.target.checked
-                            }))
-                          }
-                        />
-                        <span>Include Jokers</span>
                       </label>
+                      <div className="table-settings__row table-settings__row--stacked">
+                        <button
+                          className="table-settings__button table-settings__button--secondary"
+                          type="button"
+                          onClick={handleAddPresetCode}
+                        >
+                          Add Preset
+                        </button>
+                        {presetImportStatus === 'missing' ? (
+                          <span className="table-settings__hint">
+                            Preset not found on this device
+                          </span>
+                        ) : null}
+                        {presetImportStatus === 'added' ? (
+                          <span className="table-settings__hint">
+                            Preset added to the list
+                          </span>
+                        ) : null}
+                      </div>
+                      <button
+                        className="table-settings__button table-settings__button--secondary"
+                        type="button"
+                      onClick={() => {
+                        setCustomPresetDraft({
+                          ...DEFAULT_CUSTOM_PRESET,
+                          cardStyle: settings.cardStyle,
+                          includeJokers: settings.includeJokers,
+                          deckCount: settings.deckCount,
+                          spawnItems: DEFAULT_CUSTOM_PRESET.spawnItems.map((item) => ({
+                            ...item
+                          }))
+                        });
+                          setSavedPresetCode(null);
+                          setCustomLayoutOpen(true);
+                        }}
+                      >
+                        Custom Layout...
+                      </button>
                     </div>
-                    <label className="table-settings__row">
-                      <span className="table-settings__label">Deck Count</span>
-                      <input
-                        className="table-settings__input"
-                        type="number"
-                        min="1"
-                        max="8"
-                        value={settings.deckCount}
-                        onChange={(event) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            deckCount: (() => {
-                              const parsed = Number.parseInt(event.target.value, 10);
-                              if (Number.isNaN(parsed)) {
-                                return 1;
-                              }
-                              return Math.min(8, Math.max(1, parsed));
-                            })()
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="table-settings__row">
-                      <span className="table-settings__label">Preset Layout</span>
-                      <select
-                        className="table-settings__select"
-                        value={settings.presetLayout}
-                        onChange={(event) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            presetLayout: event.target.value
-                          }))
-                        }
+                    <div className="table-settings__danger">
+                      <div className="table-settings__danger-title">Danger Zone</div>
+                      <button
+                        className="table-settings__button table-settings__button--danger"
+                        type="button"
+                        onClick={() => setResetConfirmOpen(true)}
                       >
-                        <option value="none">None</option>
-                        <option value="solitaire">Solitaire</option>
-                        <option value="grid">Test: Face-Up Grid</option>
-                      </select>
-                    </label>
-                    <button
-                      className="table-settings__button table-settings__button--secondary"
-                      type="button"
-                      onClick={() =>
-                        setSettings((prev) => ({
-                          ...prev,
-                          presetLayout: 'none'
-                        }))
-                      }
-                    >
-                      Reset Preset Settings
-                    </button>
-                    <div className="table-settings__row">
-                      <span className="table-settings__label">Felt Debug (Debug)</span>
-                      <label className="table-settings__switch">
-                        <input
-                          type="checkbox"
-                          checked={showFeltDebug}
-                          onChange={(event) => setShowFeltDebug(event.target.checked)}
-                        />
-                        <span>Debug</span>
-                      </label>
+                        Reset Table
+                      </button>
                     </div>
                   </div>
                 ) : null}
                 {settingsTab === 'room' ? (
                   <div className="table-settings__section">
-                    {roomSettingsDirty ? (
-                      <div className="table-settings__pending">Changes Pending</div>
-                    ) : null}
-                    <label className="table-settings__row">
-                      <span className="table-settings__label">Table Style</span>
-                      <select
-                        className="table-settings__select"
-                        value={settings.roomSettings.tableStyle}
-                        onChange={(event) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            roomSettings: {
-                              ...prev.roomSettings,
-                              tableStyle: event.target.value
-                            }
-                          }))
-                        }
-                      >
-                        <option value="medieval">Medieval</option>
-                        <option value="plain">Plain</option>
-                      </select>
-                    </label>
-                    <label className="table-settings__row">
-                      <span className="table-settings__label">Table Shape</span>
-                      <select
-                        className="table-settings__select"
-                        value={settings.roomSettings.tableShape}
-                        onChange={(event) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            roomSettings: {
-                              ...prev.roomSettings,
-                              tableShape: event.target.value
-                            }
-                          }))
-                        }
-                      >
-                        <option value="rectangle">Rectangle</option>
-                        <option value="oval">Oval</option>
-                        <option value="circle">Circle</option>
-                      </select>
-                    </label>
-                    <label className="table-settings__row">
-                      <span className="table-settings__label">Number of Seats</span>
-                      <input
-                        className="table-settings__input"
-                        type="number"
-                        min="2"
-                        max="12"
-                        value={settings.roomSettings.seatCount}
-                        onChange={(event) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            roomSettings: {
-                              ...prev.roomSettings,
-                              seatCount: (() => {
-                                const parsed = Number.parseInt(event.target.value, 10);
-                                if (Number.isNaN(parsed)) {
-                                  return 2;
-                                }
-                                return Math.min(12, Math.max(2, parsed));
-                              })()
-                            }
-                          }))
-                        }
-                      />
-                    </label>
-                    <div className="table-settings__row">
-                      <span className="table-settings__label">Seat Lock</span>
-                      <label className="table-settings__switch">
-                        <input
-                          type="checkbox"
-                          checked={settings.roomSettings.seatLock}
+                    <div className="table-settings__group">
+                      <div className="table-settings__group-title">Table Layout</div>
+                      <label className="table-settings__row">
+                        <span className="table-settings__label">Table Shape</span>
+                        <select
+                          className="table-settings__select"
+                          value={settings.roomSettings.tableShape}
                           onChange={(event) =>
                             setSettings((prev) => ({
                               ...prev,
                               roomSettings: {
                                 ...prev.roomSettings,
-                                seatLock: event.target.checked
+                                tableShape: event.target.value
+                              }
+                            }))
+                          }
+                        >
+                          <option value="rectangle">Rectangle</option>
+                          <option value="oval">Oval</option>
+                          <option value="circle">Circle</option>
+                        </select>
+                      </label>
+                      <label className="table-settings__row">
+                        <span className="table-settings__label"># of Seats</span>
+                        <input
+                          className="table-settings__input"
+                          type="number"
+                          min="2"
+                          max="12"
+                          value={settings.roomSettings.seatCount}
+                          onChange={(event) =>
+                            setSettings((prev) => ({
+                              ...prev,
+                              roomSettings: {
+                                ...prev.roomSettings,
+                                seatCount: (() => {
+                                  const parsed = Number.parseInt(event.target.value, 10);
+                                  if (Number.isNaN(parsed)) {
+                                    return 2;
+                                  }
+                                  return Math.min(12, Math.max(2, parsed));
+                                })()
                               }
                             }))
                           }
                         />
-                        <span>Lock Seats</span>
                       </label>
+                      <div className="table-settings__row">
+                        <span className="table-settings__label">Lock Seats</span>
+                        <label className="table-settings__switch">
+                          <input
+                            type="checkbox"
+                            checked={settings.roomSettings.seatLock}
+                            onChange={(event) =>
+                              setSettings((prev) => ({
+                                ...prev,
+                                roomSettings: {
+                                  ...prev.roomSettings,
+                                  seatLock: event.target.checked
+                                }
+                              }))
+                            }
+                          />
+                          <span>Locked</span>
+                        </label>
+                      </div>
+                      <button
+                        className="table-settings__button table-settings__button--secondary"
+                        type="button"
+                        onClick={() =>
+                          setSettings((prev) => {
+                            const paramsByShape = prev.roomSettings.seatParams ?? {};
+                            const nextParams = buildDefaultSeatParams(
+                              prev.roomSettings.seatCount
+                            );
+                            return {
+                              ...prev,
+                              roomSettings: {
+                                ...prev.roomSettings,
+                                seatParams: {
+                                  ...paramsByShape,
+                                  [tableShape]: nextParams
+                                }
+                              }
+                            };
+                          })
+                        }
+                      >
+                        Reset Seat Locations
+                      </button>
                     </div>
                   </div>
                 ) : null}
-              </div>
-              <div className="table-settings__actions">
-                {hasRebuildPending ? (
-                  <>
-                    <div className="table-settings__pending">Changes Pending</div>
-                    <button
-                      className="table-settings__button"
-                      type="button"
-                      title="Rebuilds table using current room/table settings"
-                      onClick={() => actions.applySettings?.()}
-                    >
-                      Apply Changes
-                    </button>
-                  </>
-                ) : null}
-                <div className="table-settings__danger">
-                  <div className="table-settings__danger-title">Danger Zone</div>
-                  <button
-                    className="table-settings__button table-settings__button--danger"
-                    type="button"
-                    onClick={() => setResetConfirmOpen(true)}
-                  >
-                    Reset Table
-                  </button>
-                </div>
               </div>
             </div>
           ) : null}
@@ -3750,7 +3839,8 @@ const Table = () => {
                   Reset table?
                 </h3>
                 <p className="modal__body">
-                  This will reset the table to default.
+                  This will clear the table and hands, then rebuild using the current
+                  preset settings.
                 </p>
                 <div className="modal__actions">
                   <button
@@ -3758,7 +3848,7 @@ const Table = () => {
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
-                      hardResetToBaseDefaults();
+                      handleResetTable();
                     }}
                   >
                     Yes
@@ -3772,6 +3862,201 @@ const Table = () => {
                     }}
                   >
                     No
+                  </button>
+                </div>
+              </div>
+            </div>,
+            uiOverlayRoot
+          )
+        : null}
+      {customLayoutOpen && uiOverlayRoot
+        ? createPortal(
+            <div
+              className="modal-backdrop"
+              role="presentation"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setCustomLayoutOpen(false);
+              }}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+            >
+              <div
+                className="modal modal--wide"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="custom-layout-title"
+                onPointerDown={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <h3 id="custom-layout-title" className="modal__title">
+                  Custom Layout Builder
+                </h3>
+                <div className="modal__section">
+                  <div className="modal__section-title">Deck/Card Rules</div>
+                  <label className="table-settings__row">
+                    <span className="table-settings__label">Card Type/Style</span>
+                    <select
+                      className="table-settings__select"
+                      value={customPresetDraft.cardStyle}
+                      onChange={(event) =>
+                        setCustomPresetDraft((prev) => ({
+                          ...prev,
+                          cardStyle: event.target.value
+                        }))
+                      }
+                    >
+                      <option value="classic">Classic</option>
+                      <option value="medieval">Medieval</option>
+                    </select>
+                  </label>
+                  <div className="table-settings__row">
+                    <span className="table-settings__label">Include Jokers</span>
+                    <label className="table-settings__switch">
+                      <input
+                        type="checkbox"
+                        checked={customPresetDraft.includeJokers}
+                        onChange={(event) =>
+                          setCustomPresetDraft((prev) => ({
+                            ...prev,
+                            includeJokers: event.target.checked
+                          }))
+                        }
+                      />
+                      <span>Include</span>
+                    </label>
+                  </div>
+                  <label className="table-settings__row">
+                    <span className="table-settings__label"># of Decks</span>
+                    <input
+                      className="table-settings__input"
+                      type="number"
+                      min="1"
+                      max="8"
+                      value={customPresetDraft.deckCount}
+                      onChange={(event) =>
+                        setCustomPresetDraft((prev) => ({
+                          ...prev,
+                          deckCount: event.target.value
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+                <div className="modal__section">
+                  <div className="modal__section-title">Spawn Objects</div>
+                  <div className="table-settings__spawn-list">
+                    {customPresetDraft.spawnItems.map((item) => (
+                      <div key={item.id} className="table-settings__spawn-item">
+                        <label className="table-settings__switch table-settings__switch--dense">
+                          <input
+                            type="checkbox"
+                            checked={item.enabled}
+                            onChange={(event) =>
+                              setCustomPresetDraft((prev) => ({
+                                ...prev,
+                                spawnItems: prev.spawnItems.map((entry) =>
+                                  entry.id === item.id
+                                    ? { ...entry, enabled: event.target.checked }
+                                    : entry
+                                )
+                              }))
+                            }
+                          />
+                          <span>{item.label}</span>
+                        </label>
+                        <div className="table-settings__spawn-controls">
+                          <label className="table-settings__row">
+                            <span className="table-settings__label">Quantity</span>
+                            <input
+                              className="table-settings__input"
+                              type="number"
+                              min="1"
+                              max="8"
+                              disabled={!item.enabled || item.type === 'handTokens'}
+                              value={item.quantity}
+                              onChange={(event) =>
+                                setCustomPresetDraft((prev) => ({
+                                  ...prev,
+                                  spawnItems: prev.spawnItems.map((entry) =>
+                                    entry.id === item.id
+                                      ? { ...entry, quantity: event.target.value }
+                                      : entry
+                                  )
+                                }))
+                              }
+                            />
+                          </label>
+                          <label className="table-settings__row">
+                            <span className="table-settings__label">Position</span>
+                            <select
+                              className="table-settings__select"
+                              value={item.positionRule}
+                              onChange={(event) =>
+                                setCustomPresetDraft((prev) => ({
+                                  ...prev,
+                                  spawnItems: prev.spawnItems.map((entry) =>
+                                    entry.id === item.id
+                                      ? { ...entry, positionRule: event.target.value }
+                                      : entry
+                                  )
+                                }))
+                              }
+                            >
+                              {SPAWN_RULE_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="modal__section">
+                  <div className="modal__section-title">Save Preset Locally with Code</div>
+                  <button
+                    className="table-settings__button table-settings__button--secondary"
+                    type="button"
+                    onClick={handleSaveCustomPreset}
+                  >
+                    Save Preset
+                  </button>
+                  {savedPresetCode ? (
+                    <div className="table-settings__code">
+                      <span>Code:</span>
+                      <strong>{savedPresetCode}</strong>
+                      <button
+                        className="table-settings__button table-settings__button--secondary"
+                        type="button"
+                        onClick={() => {
+                          if (navigator.clipboard) {
+                            navigator.clipboard.writeText(savedPresetCode);
+                          }
+                        }}
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="modal__actions">
+                  <button
+                    className="modal__button modal__button--secondary"
+                    type="button"
+                    onClick={() => setCustomLayoutOpen(false)}
+                  >
+                    Close
                   </button>
                 </div>
               </div>

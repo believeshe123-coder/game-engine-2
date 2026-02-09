@@ -6,12 +6,15 @@ const BASE_DEFAULTS = {
   includeJokers: true,
   deckCount: 1,
   presetLayout: 'none',
+  customPresetCodes: [],
+  customPresets: {},
   stackCountDisplayMode: 'always',
   tableZoom: 1,
   cardScale: 1,
+  tableStyle: 'medieval',
+  colorBlindMode: false,
   inventoryDragEnabled: true,
   roomSettings: {
-    tableStyle: 'medieval',
     tableShape: 'rectangle',
     seatCount: 8,
     seatLock: false,
@@ -49,12 +52,28 @@ const normalizeSettings = (settings) => {
   if (!['medieval', 'classic'].includes(next.cardStyle)) {
     next.cardStyle = DEFAULT_SETTINGS.cardStyle;
   }
-  if (!['none', 'solitaire', 'grid'].includes(next.presetLayout)) {
+  if (!['medieval', 'classic'].includes(next.tableStyle)) {
+    next.tableStyle = DEFAULT_SETTINGS.tableStyle;
+  }
+  const presetCodes = Array.isArray(next.customPresetCodes)
+    ? next.customPresetCodes.filter((code) => typeof code === 'string')
+    : [];
+  next.customPresetCodes = presetCodes;
+  next.customPresets =
+    next.customPresets && typeof next.customPresets === 'object'
+      ? next.customPresets
+      : {};
+  const allowedPresets = new Set(['none', 'solitaire', 'grid', ...presetCodes]);
+  if (!allowedPresets.has(next.presetLayout)) {
     next.presetLayout = DEFAULT_SETTINGS.presetLayout;
   }
-  if (!['always', 'hover'].includes(next.stackCountDisplayMode)) {
+  if (!['always', 'hover', 'off'].includes(next.stackCountDisplayMode)) {
     next.stackCountDisplayMode = DEFAULT_SETTINGS.stackCountDisplayMode;
   }
+  next.colorBlindMode =
+    typeof next.colorBlindMode === 'boolean'
+      ? next.colorBlindMode
+      : DEFAULT_SETTINGS.colorBlindMode;
   next.inventoryDragEnabled =
     typeof next.inventoryDragEnabled === 'boolean'
       ? next.inventoryDragEnabled
@@ -63,9 +82,6 @@ const normalizeSettings = (settings) => {
     ...DEFAULT_SETTINGS.roomSettings,
     ...(next.roomSettings ?? {})
   };
-  if (!['medieval', 'plain'].includes(roomSettings.tableStyle)) {
-    roomSettings.tableStyle = DEFAULT_SETTINGS.roomSettings.tableStyle;
-  }
   if (!['rectangle', 'oval', 'circle'].includes(roomSettings.tableShape)) {
     roomSettings.tableShape = DEFAULT_SETTINGS.roomSettings.tableShape;
   }
