@@ -1379,7 +1379,8 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 4000;
+  z-index: 9999;
+  pointer-events: auto;
 }
 
 .modal {
@@ -1389,6 +1390,7 @@ body,
   padding: 16px;
   color: #f5ede1;
   box-shadow: 0 16px 30px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
 }
 
 .modal__title {

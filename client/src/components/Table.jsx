@@ -2158,6 +2158,9 @@ const Table = () => {
 
   actions.handleSurfacePointerDown = useCallback(
     (event) => {
+      if (resetConfirmOpen) {
+        return;
+      }
       lastPointerRef.current = { x: event.clientX, y: event.clientY };
       const pointerWorld = getTablePointerPosition(event);
       if (!pointerWorld) {
@@ -2294,6 +2297,7 @@ const Table = () => {
       hitTestStack,
       interaction.held,
       interaction.menu.open,
+      resetConfirmOpen,
       setInteraction,
       updatePresence
     ]
@@ -2301,6 +2305,9 @@ const Table = () => {
 
   actions.handleSurfacePointerMove = useCallback(
     (event) => {
+      if (resetConfirmOpen) {
+        return;
+      }
       const pointerWorld = getTablePointerPosition(event);
       if (!pointerWorld) {
         return;
@@ -2377,12 +2384,16 @@ const Table = () => {
       placeOneFromHeld,
       sweepPlaceFromHeld,
       updateDrag,
-      updatePresence
+      updatePresence,
+      resetConfirmOpen
     ]
   );
 
   actions.handleSurfacePointerUp = useCallback(
     (event) => {
+      if (resetConfirmOpen) {
+        return;
+      }
       actions.clearRmbHoldTimer();
       const pointerWorld = getTablePointerPosition(event);
       if (pointerWorld) {
@@ -2437,7 +2448,8 @@ const Table = () => {
       interaction.isSliding,
       placeOneFromHeld,
       actions.pickupFromStack,
-      actions.selectStack
+      actions.selectStack,
+      resetConfirmOpen
     ]
   );
 
@@ -3711,7 +3723,19 @@ const Table = () => {
             <div
               className="modal-backdrop"
               role="presentation"
-              onPointerDown={() => setResetConfirmOpen(false)}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setResetConfirmOpen(false);
+              }}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
             >
               <div
                 className="modal"
@@ -3719,6 +3743,8 @@ const Table = () => {
                 aria-modal="true"
                 aria-labelledby="reset-table-title"
                 onPointerDown={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+                onClick={(event) => event.stopPropagation()}
               >
                 <h3 id="reset-table-title" className="modal__title">
                   Reset table?
@@ -3730,14 +3756,20 @@ const Table = () => {
                   <button
                     className="modal__button modal__button--primary"
                     type="button"
-                    onClick={() => hardResetToBaseDefaults()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      hardResetToBaseDefaults();
+                    }}
                   >
                     Yes
                   </button>
                   <button
                     className="modal__button modal__button--secondary"
                     type="button"
-                    onClick={() => setResetConfirmOpen(false)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setResetConfirmOpen(false);
+                    }}
                   >
                     No
                   </button>
