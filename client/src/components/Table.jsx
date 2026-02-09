@@ -194,6 +194,82 @@ const getViewportFromRect = (rect) => ({
   cy: (rect?.height ?? 0) / 2
 });
 
+const ENDLESS_SEAT_PATTERN = [
+  'left',
+  'left',
+  'left',
+  'top',
+  'top',
+  'right',
+  'right',
+  'right',
+  'bottom',
+  'bottom'
+];
+
+const getEndlessDefaultSeatPositions = (seatCount, viewportW, viewportH) => {
+  const count = Math.max(1, seatCount);
+  const width = Math.max(1, viewportW);
+  const height = Math.max(1, viewportH);
+  const padding = Math.max(60, Math.min(width, height) * 0.08);
+  const sideAssignments = Array.from({ length: count }, (_, index) =>
+    ENDLESS_SEAT_PATTERN[index % ENDLESS_SEAT_PATTERN.length]
+  );
+  const sideCounts = sideAssignments.reduce(
+    (acc, side) => {
+      acc[side] += 1;
+      return acc;
+    },
+    {
+      left: 0,
+      right: 0,
+      top: 0,
+      bottom: 0
+    }
+  );
+  const usableWidth = Math.max(1, width - padding * 2);
+  const usableHeight = Math.max(1, height - padding * 2);
+  const sidePositions = {
+    left: Array.from({ length: sideCounts.left }, (_, index) => ({
+      x: padding,
+      y: padding + (usableHeight / (sideCounts.left + 1)) * (index + 1)
+    })),
+    right: Array.from({ length: sideCounts.right }, (_, index) => ({
+      x: width - padding,
+      y: padding + (usableHeight / (sideCounts.right + 1)) * (index + 1)
+    })),
+    top: Array.from({ length: sideCounts.top }, (_, index) => ({
+      x: padding + (usableWidth / (sideCounts.top + 1)) * (index + 1),
+      y: padding
+    })),
+    bottom: Array.from({ length: sideCounts.bottom }, (_, index) => ({
+      x: padding + (usableWidth / (sideCounts.bottom + 1)) * (index + 1),
+      y: height - padding
+    }))
+  };
+  const sideOffsets = { left: 0, right: 0, top: 0, bottom: 0 };
+  return sideAssignments.map((side) => {
+    const index = sideOffsets[side] ?? 0;
+    sideOffsets[side] += 1;
+    const entry = sidePositions[side][index] ?? { x: width / 2, y: height / 2 };
+    return {
+      ...entry,
+      side
+    };
+  });
+};
+
+const getEndlessSeatAngleFromLocal = (x, y, viewportW, viewportH) =>
+  Math.atan2(y - viewportH / 2, x - viewportW / 2);
+
+const getEndlessSeatAngleFromWorld = (x, y, camera, viewport, viewportW, viewportH) => {
+  if (!viewportW || !viewportH) {
+    return Math.atan2(y, x);
+  }
+  const centerWorld = localToWorld(viewportW / 2, viewportH / 2, camera, viewport, true);
+  return Math.atan2(y - centerWorld.y, x - centerWorld.x);
+};
+
 const formatCardName = (card) => {
   if (!card) {
     return 'Card';
@@ -783,49 +859,35 @@ const Table = () => {
     if (!tableRect?.width || !tableRect?.height) {
       return seatsDerived.map((seat) => ({ ...seat, x: 0, y: 0 }));
     }
-    const count = Math.max(1, seatsDerived.length);
-    const padding = Math.max(32, SEAT_DIAMETER_PX / 2 + 16);
-    const usableWidth = Math.max(1, tableRect.width - padding * 2);
-    const usableHeight = Math.max(1, tableRect.height - padding * 2);
-    const perimeter = Math.max(1, 2 * (usableWidth + usableHeight));
+    const positions = getEndlessDefaultSeatPositions(
+      seatsDerived.length,
+      tableRect.width,
+      tableRect.height
+    );
     return seatsDerived.map((seat, index) => {
-      const distance = (perimeter / count) * index;
-      let x = padding;
-      let y = padding;
-      let side = 'top';
-      if (distance < usableWidth) {
-        x = padding + distance;
-        y = padding;
-        side = 'top';
-      } else if (distance < usableWidth + usableHeight) {
-        x = padding + usableWidth;
-        y = padding + (distance - usableWidth);
-        side = 'right';
-      } else if (distance < 2 * usableWidth + usableHeight) {
-        x = padding + usableWidth - (distance - (usableWidth + usableHeight));
-        y = padding + usableHeight;
-        side = 'bottom';
-      } else {
-        x = padding;
-        y =
-          padding +
-          usableHeight -
-          (distance - (2 * usableWidth + usableHeight));
-        side = 'left';
-      }
+      const entry = positions[index] ?? {
+        x: tableRect.width / 2,
+        y: tableRect.height / 2,
+        side: 'top'
+      };
       const world = localToWorld(
-        x,
-        y,
+        entry.x,
+        entry.y,
         cameraRef.current,
         viewportRef.current,
         true
       );
-      const angle = Math.atan2(world.y, world.x);
+      const angle = getEndlessSeatAngleFromLocal(
+        entry.x,
+        entry.y,
+        tableRect.width,
+        tableRect.height
+      );
       return {
         ...seat,
         x: world.x,
         y: world.y,
-        side,
+        side: entry.side,
         angle
       };
     });
@@ -1106,7 +1168,14 @@ const Table = () => {
     const layout = hasValid
       ? seatsDerived.map((seat, index) => {
           const entry = stored[index];
-          const angle = Math.atan2(entry.y, entry.x);
+          const angle = getEndlessSeatAngleFromWorld(
+            entry.x,
+            entry.y,
+            cameraRef.current,
+            viewportRef.current,
+            tableRect?.width ?? 0,
+            tableRect?.height ?? 0
+          );
           return {
             ...seat,
             x: entry.x,
@@ -3654,206 +3723,209 @@ const Table = () => {
                   ) : null}
                 </svg>
               ) : null}
-              <div className="table__playfield" style={cameraTransformStyle}>
-              {handZones.map((zone) => {
-                const isOwnerZone = mySeatIndex === zone.seatIndex;
-                const isDragHover = Boolean(interaction.held) && hoverHandSeatId === zone.seatIndex;
-                const isValidDropZone = isDragHover;
-                const isInvalidDropZone = false;
-                const seatHand = hands?.[zone.seatIndex] ?? { cardIds: [], revealed: {} };
-                const count = seatHand.cardIds.length;
-                const seatPlayerId = seatAssignments[zone.seatIndex];
-                const seatPlayer = seatPlayerId ? players[seatPlayerId] : null;
-                return (
-                  <div
-                    key={`hand-zone-${zone.seatId}`}
-                    className={`hand-zone ${isOwnerZone ? 'hand-zone--owner' : ''} ${isDragHover ? 'hand-zone--hover' : ''} ${isValidDropZone ? 'hand-zone--valid' : ''} ${isInvalidDropZone ? 'hand-zone--invalid' : ''}`}
-                    style={{
-                      left: `${zone.x}px`,
-                      top: `${zone.y}px`,
-                      width: `${zone.width}px`,
-                      height: `${zone.height}px`,
-                      '--zone-rotation': `${zone.rotation ?? 0}rad`,
-                      '--seat-color': seatPlayer?.seatColor ?? null
-                    }}
-                  >
-                    <div className="hand-zone__count">
-                      Hand {count ? `(${count})` : ''}
-                    </div>
-                  </div>
-                );
-              })}
-              {handZones.map((zone) => {
-                const seatHand = hands?.[zone.seatIndex] ?? { cardIds: [], revealed: {} };
-                const count = seatHand.cardIds.length;
-                const isOwnerZone = mySeatIndex === zone.seatIndex;
-                const revealedIds = seatHand.cardIds.filter(
-                  (cardId) => seatHand.revealed?.[cardId]
-                );
-                if (!count && revealedIds.length === 0) {
-                  return null;
-                }
-                return (
-                  <div key={`hand-visual-${zone.seatId}`}>
-                    {!isOwnerZone && count ? (
+              <div className="table__stack-layer" style={cameraTransformStyle}>
+                <div className="table__playfield">
+                  {handZones.map((zone) => {
+                    const isOwnerZone = mySeatIndex === zone.seatIndex;
+                    const isDragHover =
+                      Boolean(interaction.held) && hoverHandSeatId === zone.seatIndex;
+                    const isValidDropZone = isDragHover;
+                    const isInvalidDropZone = false;
+                    const seatHand = hands?.[zone.seatIndex] ?? { cardIds: [], revealed: {} };
+                    const count = seatHand.cardIds.length;
+                    const seatPlayerId = seatAssignments[zone.seatIndex];
+                    const seatPlayer = seatPlayerId ? players[seatPlayerId] : null;
+                    return (
                       <div
-                        className="hand-proxy"
-                        style={{ left: `${zone.x}px`, top: `${zone.y}px` }}
+                        key={`hand-zone-${zone.seatId}`}
+                        className={`hand-zone ${isOwnerZone ? 'hand-zone--owner' : ''} ${isDragHover ? 'hand-zone--hover' : ''} ${isValidDropZone ? 'hand-zone--valid' : ''} ${isInvalidDropZone ? 'hand-zone--invalid' : ''}`}
+                        style={{
+                          left: `${zone.x}px`,
+                          top: `${zone.y}px`,
+                          width: `${zone.width}px`,
+                          height: `${zone.height}px`,
+                          '--zone-rotation': `${zone.rotation ?? 0}rad`,
+                          '--seat-color': seatPlayer?.seatColor ?? null
+                        }}
                       >
-                        <div className="hand-proxy__cards" />
-                        <div className="hand-proxy__count">{count}</div>
+                        <div className="hand-zone__count">
+                          Hand {count ? `(${count})` : ''}
+                        </div>
                       </div>
-                    ) : null}
-                    {revealedIds.length ? (
-                      <div
-                        className="hand-reveal"
-                        style={{ left: `${zone.x}px`, top: `${zone.y}px` }}
-                      >
-                        {revealedIds.map((cardId, index) => {
-                          const card = cardsById[cardId];
-                          return (
-                            <div
-                              key={`hand-reveal-${zone.seatId}-${cardId}`}
-                              className="hand-reveal__card"
-                              style={{
-                                transform: `translate(${index * cardSize.width * 0.35}px, 0)`
-                              }}
-                            >
-                              <Card
-                                id={`reveal-${cardId}`}
-                                x={0}
-                                y={0}
-                                rotation={0}
-                                faceUp
-                                cardStyle={settings.cardStyle}
-                                colorBlindMode={uiPrefs.colorBlindMode}
-                                zIndex={1}
-                                rank={card?.rank}
-                                suit={card?.suit}
-                                color={card?.color}
-                                onPointerDown={() => {}}
-                              />
-                            </div>
-                          );
-                        })}
+                    );
+                  })}
+                  {handZones.map((zone) => {
+                    const seatHand = hands?.[zone.seatIndex] ?? { cardIds: [], revealed: {} };
+                    const count = seatHand.cardIds.length;
+                    const isOwnerZone = mySeatIndex === zone.seatIndex;
+                    const revealedIds = seatHand.cardIds.filter(
+                      (cardId) => seatHand.revealed?.[cardId]
+                    );
+                    if (!count && revealedIds.length === 0) {
+                      return null;
+                    }
+                    return (
+                      <div key={`hand-visual-${zone.seatId}`}>
+                        {!isOwnerZone && count ? (
+                          <div
+                            className="hand-proxy"
+                            style={{ left: `${zone.x}px`, top: `${zone.y}px` }}
+                          >
+                            <div className="hand-proxy__cards" />
+                            <div className="hand-proxy__count">{count}</div>
+                          </div>
+                        ) : null}
+                        {revealedIds.length ? (
+                          <div
+                            className="hand-reveal"
+                            style={{ left: `${zone.x}px`, top: `${zone.y}px` }}
+                          >
+                            {revealedIds.map((cardId, index) => {
+                              const card = cardsById[cardId];
+                              return (
+                                <div
+                                  key={`hand-reveal-${zone.seatId}-${cardId}`}
+                                  className="hand-reveal__card"
+                                  style={{
+                                    transform: `translate(${index * cardSize.width * 0.35}px, 0)`
+                                  }}
+                                >
+                                  <Card
+                                    id={`reveal-${cardId}`}
+                                    x={0}
+                                    y={0}
+                                    rotation={0}
+                                    faceUp
+                                    cardStyle={settings.cardStyle}
+                                    colorBlindMode={uiPrefs.colorBlindMode}
+                                    zIndex={1}
+                                    rank={card?.rank}
+                                    suit={card?.suit}
+                                    color={card?.color}
+                                    onPointerDown={() => {}}
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : null}
                       </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-              {Object.entries(presence).map(([playerId, ghost]) => {
-                if (!Number.isFinite(ghost?.x) || !Number.isFinite(ghost?.y)) {
-                  return null;
-                }
-                const presencePlayer = players[playerId];
-                return (
-                  <CursorGhost
-                    key={`cursor-${playerId}`}
-                    ghost={ghost}
-                    label={presencePlayer?.name ?? 'Player'}
-                    seatColor={presencePlayer?.seatColor ?? '#6aa9ff'}
-                  />
-                );
-              })}
-
-              {placementGhost ? (
-                <div
-                  className="placement-ghost"
-                  aria-hidden="true"
-                  style={{
-                    transform: `translate(${placementGhost.x}px, ${placementGhost.y}px) rotate(${placementGhost.rot}deg)`,
-                    zIndex: 0
-                  }}
-                />
-              ) : null}
-              {renderStacks.map((stack, index) => {
-                const topCardId = stack.cardIds[stack.cardIds.length - 1];
-                const topCard = cardsById[topCardId];
-                const isSelectedStack = stack.id === highlightStackId;
-                const isHeldStack =
-                  stack.id === HELD_STACK_ID ||
-                  (interaction.mode === 'dragStack' &&
-                    interaction.drag?.stackId === stack.id);
-                const isHoveredStack = stack.id === hoveredStackId;
-                const isMenuTarget =
-                  interaction.menu.open && interaction.menu.stackId === stack.id;
-                const isMergeTarget = stack.id === mergeHighlightStackId;
-                const isTokenStack = Boolean(stack.token);
-                const highlightState = isHeldStack
-                  ? 'held'
-                  : isSelectedStack
-                    ? 'selected'
-                    : isMenuTarget
-                      ? 'menu-target'
-                      : isHoveredStack
-                        ? 'hovered'
-                        : isMergeTarget
-                          ? 'merge-target'
-                          : '';
-                const zIndex = index + 1;
-                const showBadge =
-                  !stack.isHeldVisual &&
-                  stack.cardIds.length > 1 &&
-                  settings.stackCountDisplayMode !== 'off' &&
-                  (settings.stackCountDisplayMode === 'always' ||
-                    (settings.stackCountDisplayMode === 'hover' &&
-                      stack.id === visibleBadgeStackId));
-                return (
-                  <div
-                    key={stack.id}
-                    className={`stack-entity ${highlightState}`}
-                    data-selected={isSelectedStack}
-                    data-held={isHeldStack}
-                    data-hovered={isHoveredStack}
-                    data-menu-target={isMenuTarget}
-                    data-merge-target={isMergeTarget}
-                    draggable={false}
-                    style={{
-                      transform: `translate(${stack.x}px, ${stack.y}px) rotate(${stack.rotation}deg)`,
-                      zIndex
-                    }}
-                    onDragStart={preventNativeDrag}
-                    onDragOver={preventNativeDrag}
-                    onDragEnter={preventNativeDrag}
-                    onDrop={preventNativeDrag}
-                  >
-                    {stack.isHeldVisual ? null : isTokenStack ? (
-                      <div
-                        className={`table-token table-token--${stack.token?.type ?? 'generic'}`}
-                      >
-                        <span className="table-token__label">
-                          {stack.token?.label ?? 'Token'}
-                        </span>
-                      </div>
-                    ) : (
-                      <Card
-                        id={stack.id}
-                        x={0}
-                        y={0}
-                        rotation={0}
-                        faceUp={getCardFace(stack, topCardId)}
-                        cardStyle={settings.cardStyle}
-                        colorBlindMode={uiPrefs.colorBlindMode}
-                        zIndex={1}
-                        rank={topCard?.rank}
-                        suit={topCard?.suit}
-                        color={topCard?.color}
-                        isHeld={false}
-                        isSelected={false}
-                        onPointerDown={() => {}}
-                        onDoubleClick={(event) =>
-                          actions.handleStackDoubleClick?.(event, stack.id)
-                        }
-                        onContextMenu={(event) => event.preventDefault()}
-                        onNativeDrag={preventNativeDrag}
+                    );
+                  })}
+                  {Object.entries(presence).map(([playerId, ghost]) => {
+                    if (!Number.isFinite(ghost?.x) || !Number.isFinite(ghost?.y)) {
+                      return null;
+                    }
+                    const presencePlayer = players[playerId];
+                    return (
+                      <CursorGhost
+                        key={`cursor-${playerId}`}
+                        ghost={ghost}
+                        label={presencePlayer?.name ?? 'Player'}
+                        seatColor={presencePlayer?.seatColor ?? '#6aa9ff'}
                       />
-                    )}
-                    {showBadge ? (
-                      <div className="stackCountBadge">Stack: {stack.cardIds.length}</div>
-                    ) : null}
-                  </div>
-                );
-              })}
+                    );
+                  })}
+
+                  {placementGhost ? (
+                    <div
+                      className="placement-ghost"
+                      aria-hidden="true"
+                      style={{
+                        transform: `translate(${placementGhost.x}px, ${placementGhost.y}px) rotate(${placementGhost.rot}deg)`,
+                        zIndex: 0
+                      }}
+                    />
+                  ) : null}
+                  {renderStacks.map((stack, index) => {
+                    const topCardId = stack.cardIds[stack.cardIds.length - 1];
+                    const topCard = cardsById[topCardId];
+                    const isSelectedStack = stack.id === highlightStackId;
+                    const isHeldStack =
+                      stack.id === HELD_STACK_ID ||
+                      (interaction.mode === 'dragStack' &&
+                        interaction.drag?.stackId === stack.id);
+                    const isHoveredStack = stack.id === hoveredStackId;
+                    const isMenuTarget =
+                      interaction.menu.open && interaction.menu.stackId === stack.id;
+                    const isMergeTarget = stack.id === mergeHighlightStackId;
+                    const isTokenStack = Boolean(stack.token);
+                    const highlightState = isHeldStack
+                      ? 'held'
+                      : isSelectedStack
+                        ? 'selected'
+                        : isMenuTarget
+                          ? 'menu-target'
+                          : isHoveredStack
+                            ? 'hovered'
+                            : isMergeTarget
+                              ? 'merge-target'
+                              : '';
+                    const zIndex = index + 1;
+                    const showBadge =
+                      !stack.isHeldVisual &&
+                      stack.cardIds.length > 1 &&
+                      settings.stackCountDisplayMode !== 'off' &&
+                      (settings.stackCountDisplayMode === 'always' ||
+                        (settings.stackCountDisplayMode === 'hover' &&
+                          stack.id === visibleBadgeStackId));
+                    return (
+                      <div
+                        key={stack.id}
+                        className={`stack-entity ${highlightState}`}
+                        data-selected={isSelectedStack}
+                        data-held={isHeldStack}
+                        data-hovered={isHoveredStack}
+                        data-menu-target={isMenuTarget}
+                        data-merge-target={isMergeTarget}
+                        draggable={false}
+                        style={{
+                          transform: `translate(${stack.x}px, ${stack.y}px) rotate(${stack.rotation}deg)`,
+                          zIndex
+                        }}
+                        onDragStart={preventNativeDrag}
+                        onDragOver={preventNativeDrag}
+                        onDragEnter={preventNativeDrag}
+                        onDrop={preventNativeDrag}
+                      >
+                        {stack.isHeldVisual ? null : isTokenStack ? (
+                          <div
+                            className={`table-token table-token--${stack.token?.type ?? 'generic'}`}
+                          >
+                            <span className="table-token__label">
+                              {stack.token?.label ?? 'Token'}
+                            </span>
+                          </div>
+                        ) : (
+                          <Card
+                            id={stack.id}
+                            x={0}
+                            y={0}
+                            rotation={0}
+                            faceUp={getCardFace(stack, topCardId)}
+                            cardStyle={settings.cardStyle}
+                            colorBlindMode={uiPrefs.colorBlindMode}
+                            zIndex={1}
+                            rank={topCard?.rank}
+                            suit={topCard?.suit}
+                            color={topCard?.color}
+                            isHeld={false}
+                            isSelected={false}
+                            onPointerDown={() => {}}
+                            onDoubleClick={(event) =>
+                              actions.handleStackDoubleClick?.(event, stack.id)
+                            }
+                            onContextMenu={(event) => event.preventDefault()}
+                            onNativeDrag={preventNativeDrag}
+                          />
+                        )}
+                        {showBadge ? (
+                          <div className="stackCountBadge">Stack: {stack.cardIds.length}</div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
         </div>
