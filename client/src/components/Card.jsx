@@ -113,7 +113,8 @@ const Card = ({
   colorBlindMode,
   isHeld,
   isSelected,
-  onContextMenu
+  onContextMenu,
+  onNativeDrag
 }) => {
   const displayRank = rank ?? '?';
   const isJoker = displayRank === 'JOKER';
@@ -137,6 +138,7 @@ const Card = ({
       className={`card card--style-${cardStyle ?? 'medieval'} ${
         faceUp ? 'card--faceup' : 'card--facedown'
       } ${isHeld ? 'card--held' : ''} ${isSelected ? 'card--selected' : ''}`}
+      draggable={false}
       style={{
         transform: `translate(${x}px, ${y}px) rotate(${rotation}deg)`,
         zIndex
@@ -144,6 +146,10 @@ const Card = ({
       onPointerDown={(event) => onPointerDown(event, id)}
       onDoubleClick={(event) => onDoubleClick?.(event, id)}
       onContextMenu={onContextMenu}
+      onDragStart={onNativeDrag}
+      onDragOver={onNativeDrag}
+      onDragEnter={onNativeDrag}
+      onDrop={onNativeDrag}
     >
       <div className="card__surface" aria-hidden="true">
         {faceUp ? (

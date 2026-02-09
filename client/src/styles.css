@@ -197,8 +197,14 @@
 
 .card,
 .stack,
-.stack-entity {
+.stack-entity,
+.handCard,
+.seat__handCard,
+.inventory-panel,
+.inventoryPanel {
   z-index: 40;
+  -webkit-user-drag: none;
+  user-select: none;
 }
 
 .card--held,
