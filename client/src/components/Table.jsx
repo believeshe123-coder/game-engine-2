@@ -2596,13 +2596,24 @@ const Table = () => {
   }, []);
 
   const playFromHand = useCallback(
-    (cardId, pointerWorld) => {
+    (cardIds, pointerWorld) => {
       if (mySeatIndex === null || mySeatIndex === undefined) {
         return;
       }
       if (!pointerWorld) {
         return;
       }
+      const ids = Array.isArray(cardIds) ? cardIds : [cardIds];
+      if (!ids.length) {
+        return;
+      }
+      const seatHand = hands?.[mySeatIndex]?.cardIds ?? [];
+      const validIds = ids.filter((id) => seatHand.includes(id));
+      if (!validIds.length) {
+        return;
+      }
+      const isRevealed = (id) => Boolean(hands?.[mySeatIndex]?.revealed?.[id]);
+      const faceUp = validIds.every(isRevealed);
       const handSeatIndex = getHandZoneAtPoint(pointerWorld.x, pointerWorld.y);
       if (handSeatIndex !== null && handSeatIndex !== undefined) {
         return;
@@ -2613,20 +2624,30 @@ const Table = () => {
       };
       const clamped = clampTopLeftToFelt(rawPlacement);
       const placement = clamped.position ?? rawPlacement;
-      moveFromHandToTable(mySeatIndex, cardId);
+      validIds.forEach((id) => moveFromHandToTable(mySeatIndex, id));
       setStacks((prev) =>
         prev.concat({
           id: createStackId(),
           x: placement.x,
           y: placement.y,
           rotation: 0,
-          faceUp: true,
-          cardIds: [cardId],
+          faceUp,
+          cardIds: validIds,
           zone: 'table',
           ownerSeatIndex: null
         })
       );
-      logAction(`${myName} played ${getCardLabel(cardId)}`);
+      if (faceUp) {
+        if (validIds.length === 1) {
+          logAction(`${myName} played ${getCardLabel(validIds[0])}`);
+        } else {
+          logAction(`${myName} played ${validIds.length} revealed cards`);
+        }
+      } else {
+        logAction(
+          `${myName} played ${validIds.length === 1 ? 'a card' : `${validIds.length} cards`} face-down`
+        );
+      }
     },
     [
       cardSize.height,
@@ -2635,6 +2656,7 @@ const Table = () => {
       createStackId,
       getCardLabel,
       getHandZoneAtPoint,
+      hands,
       moveFromHandToTable,
       myName,
       mySeatIndex,
@@ -2646,20 +2668,24 @@ const Table = () => {
   actions.handleTableDrop = useCallback(
     (event) => {
       event.preventDefault();
-      const cardId = event.dataTransfer?.getData('text/plain');
-      if (!cardId || mySeatIndex === null || mySeatIndex === undefined) {
+      const rawCardData = event.dataTransfer?.getData('text/plain');
+      if (!rawCardData || mySeatIndex === null || mySeatIndex === undefined) {
         return;
       }
-      const seatHand = hands?.[mySeatIndex]?.cardIds ?? [];
-      if (!seatHand.includes(cardId)) {
-        return;
+      let droppedCardIds = [rawCardData];
+      try {
+        const parsed = JSON.parse(rawCardData);
+        if (Array.isArray(parsed)) {
+          droppedCardIds = parsed;
+        }
+      } catch (error) {
+        // Ignore parse errors and treat as a single card id.
       }
       const pointer = getTablePointerPositionFromClient(event.clientX, event.clientY);
-      playFromHand(cardId, pointer);
+      playFromHand(droppedCardIds, pointer);
     },
     [
       getTablePointerPositionFromClient,
-      hands,
       mySeatIndex,
       playFromHand
     ]
