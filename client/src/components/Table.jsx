@@ -357,6 +357,15 @@ const Table = () => {
   const [uiPrefs, setUiPrefs] = useState(loadUiPrefs);
   const [cardPreview, setCardPreview] = useState(null);
   const isModalOpen = resetConfirmOpen || customLayoutOpen || Boolean(cardPreview);
+  const closeCardPreview = useCallback((event) => {
+    if (event?.preventDefault) {
+      event.preventDefault();
+    }
+    if (event?.stopPropagation) {
+      event.stopPropagation();
+    }
+    setCardPreview(null);
+  }, []);
 
   const actions = useMemo(() => ({}), []);
   const interactionRef = useRef(interaction);
@@ -678,18 +687,32 @@ const Table = () => {
 
 
 
+  const formatCardName = useCallback((card) => {
+    if (!card) {
+      return 'Card';
+    }
+    if (card.rank === 'JOKER') {
+      if (card.color) {
+        return `${card.color.charAt(0).toUpperCase()}${card.color.slice(1)} Joker`;
+      }
+      return 'Joker';
+    }
+    const rankNames = {
+      A: 'Ace',
+      J: 'Jack',
+      Q: 'Queen',
+      K: 'King'
+    };
+    const rankName = rankNames[card.rank] ?? card.rank;
+    if (rankName && card.suit) {
+      return `${rankName} of ${card.suit}`;
+    }
+    return rankName ?? card.suit ?? 'Card';
+  }, []);
+
   const getCardLabel = useCallback(
-    (cardId) => {
-      const card = cardsById[cardId];
-      if (!card) {
-        return 'Card';
-      }
-      if (card.rank && card.suit) {
-        return `${card.rank} of ${card.suit}`;
-      }
-      return card.rank ?? 'Card';
-    },
-    [cardsById]
+    (cardId) => formatCardName(cardsById[cardId]),
+    [cardsById, formatCardName]
   );
 
   const screenToWorld = useCallback((clientX, clientY, playfieldRect, zoom) => {
@@ -4104,7 +4127,7 @@ const Table = () => {
               onPointerDown={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                setCardPreview(null);
+                closeCardPreview();
               }}
               onMouseDown={(event) => {
                 event.preventDefault();
@@ -4126,13 +4149,16 @@ const Table = () => {
               >
                 <div className="modal__title-row">
                   <h3 id="card-preview-title" className="modal__title">
-                    Card Preview
+                    {cardPreview.faceUp
+                      ? `Card Preview — ${formatCardName(cardPreview.card)}`
+                      : 'Card Preview — Card (Hidden)'}
                   </h3>
                   <button
                     type="button"
                     className="modal__close"
                     aria-label="Close preview"
-                    onClick={() => setCardPreview(null)}
+                    onPointerDown={closeCardPreview}
+                    onClick={closeCardPreview}
                   >
                     ✕
                   </button>

@@ -1516,6 +1516,9 @@ body,
   color: rgba(245, 237, 225, 0.7);
   cursor: pointer;
   font-size: 16px;
+  pointer-events: auto;
+  position: relative;
+  z-index: 2;
 }
 
 .modal__close:hover {
@@ -2141,6 +2144,7 @@ body,
   box-shadow: 0 16px 28px rgba(0, 0, 0, 0.35);
   z-index: var(--ui-panel-z);
   backdrop-filter: blur(8px);
+  pointer-events: auto;
 }
 
 .action-log__header {
@@ -2171,6 +2175,9 @@ body,
   padding: 3px 8px;
   border-radius: 999px;
   cursor: pointer;
+  pointer-events: auto;
+  position: relative;
+  z-index: 2;
 }
 
 .action-log__tab.is-active {
@@ -2185,6 +2192,9 @@ body,
   color: rgba(255, 232, 200, 0.7);
   cursor: pointer;
   font-size: 14px;
+  pointer-events: auto;
+  position: relative;
+  z-index: 2;
 }
 
 .action-log__close:hover {
@@ -2297,6 +2307,7 @@ body,
   cursor: pointer;
   z-index: var(--ui-panel-z);
   backdrop-filter: blur(8px);
+  pointer-events: auto;
 }
 
 .action-log__reopen:hover {
