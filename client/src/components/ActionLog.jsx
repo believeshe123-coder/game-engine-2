@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
-const ACTION_LOG_OPEN_KEY = 'tt_actionLogOpen';
+const ACTION_LOG_OPEN_KEY = 'tt_logOpen';
 const CHAT_STORAGE_KEY = 'tt_chat';
 
 const loadActionLogOpen = () => {
@@ -93,7 +93,15 @@ const ActionLog = ({ entries, playerName }) => {
       <button
         type="button"
         className="action-log__reopen"
-        onClick={() => setIsOpen(true)}
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setIsOpen(true);
+        }}
       >
         Action Log
       </button>
@@ -101,7 +109,16 @@ const ActionLog = ({ entries, playerName }) => {
   }
 
   return (
-    <section className="action-log" aria-label="Action log">
+    <section
+      className="action-log"
+      aria-label="Action log"
+      onPointerDown={(event) => {
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.stopPropagation();
+      }}
+    >
       <div className="action-log__header">
         <div className="action-log__tabs" role="tablist" aria-label="Activity tabs">
           <button
@@ -127,7 +144,15 @@ const ActionLog = ({ entries, playerName }) => {
           type="button"
           className="action-log__close"
           aria-label="Close action log"
-          onClick={() => setIsOpen(false)}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setIsOpen(false);
+          }}
         >
           ✕
         </button>
