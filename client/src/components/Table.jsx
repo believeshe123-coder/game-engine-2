@@ -58,6 +58,8 @@ const SLIDE_MIN_SEPARATION_PX = 40;
 const SLIDE_START_DIR_THRESHOLD_PX = 10;
 const HAND_ZONE_SEAT_OFFSET_BASE = 52;
 const HELD_STACK_ID = '__HELD__';
+const CAMERA_ZOOM_MIN = 0.5;
+const CAMERA_ZOOM_MAX = 2.5;
 
 const CUSTOM_PRESET_STORAGE_PREFIX = 'tablePreset:';
 const PRESET_CODE_LENGTHS = [6, 7, 8];
@@ -354,6 +356,7 @@ const Table = () => {
   const myName = player?.name ?? 'Player';
   const tableStyle = settings.tableStyle;
   const tableShape = settings.roomSettings.tableShape;
+  const isEndless = tableShape === 'endless';
   const [uiPrefs, setUiPrefs] = useState(loadUiPrefs);
   const [cardPreview, setCardPreview] = useState(null);
   const isModalOpen = resetConfirmOpen || customLayoutOpen || Boolean(cardPreview);
@@ -637,12 +640,70 @@ const Table = () => {
     [buildDefaultSeatParams]
   );
 
+  const buildEndlessSeatLayout = useCallback(() => {
+    if (!tableRect?.width || !tableRect?.height) {
+      return seats.map((seat) => ({ ...seat, x: 0, y: 0 }));
+    }
+    const count = Math.max(1, seats.length);
+    const padding = Math.max(32, SEAT_DIAMETER_PX / 2 + 16);
+    const usableWidth = Math.max(1, tableRect.width - padding * 2);
+    const usableHeight = Math.max(1, tableRect.height - padding * 2);
+    const perimeter = Math.max(1, 2 * (usableWidth + usableHeight));
+    return seats.map((seat, index) => {
+      const distance = (perimeter / count) * index;
+      let x = padding;
+      let y = padding;
+      let side = 'top';
+      if (distance < usableWidth) {
+        x = padding + distance;
+        y = padding;
+        side = 'top';
+      } else if (distance < usableWidth + usableHeight) {
+        x = padding + usableWidth;
+        y = padding + (distance - usableWidth);
+        side = 'right';
+      } else if (distance < 2 * usableWidth + usableHeight) {
+        x = padding + usableWidth - (distance - (usableWidth + usableHeight));
+        y = padding + usableHeight;
+        side = 'bottom';
+      } else {
+        x = padding;
+        y =
+          padding +
+          usableHeight -
+          (distance - (2 * usableWidth + usableHeight));
+        side = 'left';
+      }
+      const world = localToWorld(x, y, tableRect);
+      const angle = Math.atan2(world.y, world.x);
+      return {
+        ...seat,
+        x: world.x,
+        y: world.y,
+        side,
+        angle
+      };
+    });
+  }, [localToWorld, seats, tableRect]);
+
   const seatParams = useMemo(() => {
     const paramsByShape = settings.roomSettings.seatParams ?? {};
+    if (isEndless) {
+      return [];
+    }
     return normalizeSeatParams(paramsByShape[tableShape], seatCount, tableShape);
-  }, [normalizeSeatParams, seatCount, settings.roomSettings.seatParams, tableShape]);
+  }, [
+    isEndless,
+    normalizeSeatParams,
+    seatCount,
+    settings.roomSettings.seatParams,
+    tableShape
+  ]);
 
   useEffect(() => {
+    if (isEndless) {
+      return;
+    }
     setSettings((prev) => {
       const paramsByShape = prev.roomSettings.seatParams ?? {};
       const current = paramsByShape[tableShape];
@@ -665,7 +726,7 @@ const Table = () => {
         }
       };
     });
-  }, [normalizeSeatParams, seatCount, tableShape]);
+  }, [isEndless, normalizeSeatParams, seatCount, tableShape]);
 
   const seats = useMemo(() => {
     const count = Math.max(2, seatCount);
@@ -684,6 +745,15 @@ const Table = () => {
     seats.map((seat) => ({ ...seat, x: 0, y: 0 }))
   );
   const [handZones, setHandZones] = useState([]);
+  const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
+  const cameraRef = useRef(camera);
+  const panRef = useRef({ pointerId: null, start: null, camera: null });
+  const [isPanning, setIsPanning] = useState(false);
+  const [isSpaceDown, setIsSpaceDown] = useState(false);
+
+  useEffect(() => {
+    cameraRef.current = camera;
+  }, [camera]);
 
 
 
@@ -715,15 +785,64 @@ const Table = () => {
     [cardsById, formatCardName]
   );
 
-  const screenToWorld = useCallback((clientX, clientY, playfieldRect, zoom) => {
-    if (!playfieldRect || !zoom) {
-      return null;
-    }
-    return {
-      x: (clientX - playfieldRect.left) / zoom,
-      y: (clientY - playfieldRect.top) / zoom
-    };
-  }, []);
+  const screenToWorld = useCallback(
+    (clientX, clientY, playfieldRect, zoom) => {
+      if (!playfieldRect || !zoom) {
+        return null;
+      }
+      const localX = (clientX - playfieldRect.left) / zoom;
+      const localY = (clientY - playfieldRect.top) / zoom;
+      if (!isEndless) {
+        return { x: localX, y: localY };
+      }
+      const activeCamera = cameraRef.current ?? camera;
+      const centerX = (playfieldRect.width ?? 0) / 2;
+      const centerY = (playfieldRect.height ?? 0) / 2;
+      return {
+        x: (localX - centerX) / (activeCamera.zoom || 1) + activeCamera.x,
+        y: (localY - centerY) / (activeCamera.zoom || 1) + activeCamera.y
+      };
+    },
+    [camera, isEndless]
+  );
+
+  const worldToLocal = useCallback(
+    (worldX, worldY, playfieldRect) => {
+      if (!playfieldRect) {
+        return { x: worldX, y: worldY };
+      }
+      if (!isEndless) {
+        return { x: worldX, y: worldY };
+      }
+      const activeCamera = cameraRef.current ?? camera;
+      const centerX = (playfieldRect.width ?? 0) / 2;
+      const centerY = (playfieldRect.height ?? 0) / 2;
+      return {
+        x: (worldX - activeCamera.x) * (activeCamera.zoom || 1) + centerX,
+        y: (worldY - activeCamera.y) * (activeCamera.zoom || 1) + centerY
+      };
+    },
+    [camera, isEndless]
+  );
+
+  const localToWorld = useCallback(
+    (localX, localY, playfieldRect) => {
+      if (!playfieldRect) {
+        return { x: localX, y: localY };
+      }
+      if (!isEndless) {
+        return { x: localX, y: localY };
+      }
+      const activeCamera = cameraRef.current ?? camera;
+      const centerX = (playfieldRect.width ?? 0) / 2;
+      const centerY = (playfieldRect.height ?? 0) / 2;
+      return {
+        x: (localX - centerX) / (activeCamera.zoom || 1) + activeCamera.x,
+        y: (localY - centerY) / (activeCamera.zoom || 1) + activeCamera.y
+      };
+    },
+    [camera, isEndless]
+  );
 
   const updateHandZonesFromDom = useCallback(() => {
     const tableNode = tableRef.current;
@@ -777,6 +896,16 @@ const Table = () => {
     seatPositions
   ]);
 
+  const cameraTransformStyle = useMemo(() => {
+    if (!isEndless || !tableRect?.width || !tableRect?.height) {
+      return undefined;
+    }
+    return {
+      transform: `translate(${tableRect.width / 2}px, ${tableRect.height / 2}px) scale(${camera.zoom}) translate(${-camera.x}px, ${-camera.y}px)`,
+      transformOrigin: '0 0'
+    };
+  }, [camera.x, camera.y, camera.zoom, isEndless, tableRect?.height, tableRect?.width]);
+
   const getHandZoneAtPoint = useCallback(
     (x, y) => {
       let closestSeatIndex = null;
@@ -826,6 +955,11 @@ const Table = () => {
   }, [seats]);
 
   const layoutSeats = useCallback(() => {
+    if (isEndless) {
+      setFeltBounds(null);
+      setSeatRailBounds(null);
+      return;
+    }
     const frameNode = tableFrameRef.current;
     const tableNode = tableRef.current;
     if (!frameNode || !tableNode) {
@@ -896,7 +1030,45 @@ const Table = () => {
         };
       })
     );
-  }, [seatParams, seats, tableShape]);
+  }, [isEndless, seatParams, seats, tableShape]);
+
+  useEffect(() => {
+    if (!isEndless) {
+      return;
+    }
+    const stored = settings.roomSettings.seatPositions?.endless ?? [];
+    const hasValid =
+      Array.isArray(stored) &&
+      stored.length === seats.length &&
+      stored.every((entry) => Number.isFinite(entry?.x) && Number.isFinite(entry?.y));
+    const layout = hasValid
+      ? seats.map((seat, index) => {
+          const entry = stored[index];
+          const angle = Math.atan2(entry.y, entry.x);
+          return {
+            ...seat,
+            x: entry.x,
+            y: entry.y,
+            angle,
+            side: getSeatSideFromAngle(angle)
+          };
+        })
+      : buildEndlessSeatLayout();
+    setSeatPositions(layout);
+    if (!hasValid) {
+      const nextPositions = layout.map((seat) => ({ x: seat.x, y: seat.y }));
+      setSettings((prev) => ({
+        ...prev,
+        roomSettings: {
+          ...prev.roomSettings,
+          seatPositions: {
+            ...(prev.roomSettings.seatPositions ?? {}),
+            endless: nextPositions
+          }
+        }
+      }));
+    }
+  }, [buildEndlessSeatLayout, isEndless, seats, setSettings, settings.roomSettings.seatPositions]);
 
   actions.updateTabletopScale = useCallback(() => {
     const frameNode = tableFrameRef.current;
@@ -987,6 +1159,28 @@ const Table = () => {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [actions, layoutSeats]);
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.code === 'Space') {
+        if (event.target?.tagName === 'INPUT' || event.target?.tagName === 'TEXTAREA') {
+          return;
+        }
+        setIsSpaceDown(true);
+      }
+    };
+    const handleKeyUp = (event) => {
+      if (event.code === 'Space') {
+        setIsSpaceDown(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
 
   useEffect(() => {
     actions.updateTabletopScale?.();
@@ -1128,6 +1322,9 @@ const Table = () => {
 
   const clampTopLeftToFelt = useCallback(
     (topLeft) => {
+      if (isEndless) {
+        return { position: topLeft, inside: true, clampedCenter: null };
+      }
       if (!feltScreenRect || !tableScreenRect) {
         return { position: topLeft, inside: true, clampedCenter: null };
       }
@@ -1168,7 +1365,14 @@ const Table = () => {
         clampedCenter: clampedCenterLocal
       };
     },
-    [cardSize.height, cardSize.width, feltScreenRect, tableScreenRect, tableShape]
+    [
+      cardSize.height,
+      cardSize.width,
+      feltScreenRect,
+      isEndless,
+      tableScreenRect,
+      tableShape
+    ]
   );
 
   const getTablePointerPositionFromClient = useCallback((clientX, clientY) => {
@@ -1214,8 +1418,54 @@ const Table = () => {
     [normalizeSeatParams, seatCount, tableShape]
   );
 
+  const updateSeatPosition = useCallback(
+    (seatIndex, nextPosition) => {
+      setSeatPositions((prev) => {
+        if (!prev[seatIndex]) {
+          return prev;
+        }
+        const angle = Math.atan2(nextPosition.y, nextPosition.x);
+        const side = getSeatSideFromAngle(angle);
+        const collides = prev.some(
+          (seat, index) =>
+            index !== seatIndex &&
+            Math.hypot(nextPosition.x - seat.x, nextPosition.y - seat.y) < SEAT_DIAMETER_PX
+        );
+        if (collides) {
+          return prev;
+        }
+        const next = prev.map((seat, index) =>
+          index === seatIndex
+            ? { ...seat, x: nextPosition.x, y: nextPosition.y, angle, side }
+            : seat
+        );
+        const nextPositions = next.map((seat) => ({ x: seat.x, y: seat.y }));
+        setSettings((prevSettings) => ({
+          ...prevSettings,
+          roomSettings: {
+            ...prevSettings.roomSettings,
+            seatPositions: {
+              ...(prevSettings.roomSettings.seatPositions ?? {}),
+              endless: nextPositions
+            }
+          }
+        }));
+        return next;
+      });
+    },
+    [setSettings]
+  );
+
   const updateSeatParamFromPointer = useCallback(
     (event, seatIndex) => {
+      if (isEndless) {
+        const position = getTablePointerPosition(event);
+        if (!position) {
+          return;
+        }
+        updateSeatPosition(seatIndex, position);
+        return;
+      }
       if (!seatRailBounds) {
         return;
       }
@@ -1235,7 +1485,15 @@ const Table = () => {
       );
       updateSeatParam(seatIndex, clamped);
     },
-    [seatRailBounds, getTablePointerPosition, seatParams, tableShape, updateSeatParam]
+    [
+      getTablePointerPosition,
+      isEndless,
+      seatParams,
+      seatRailBounds,
+      tableShape,
+      updateSeatParam,
+      updateSeatPosition
+    ]
   );
 
   actions.updateSeatDropHover = useCallback(
@@ -2287,6 +2545,22 @@ const Table = () => {
     [hitTestStack, interaction.mode]
   );
 
+  actions.handleSurfaceWheel = useCallback(
+    (event) => {
+      if (!isEndless) {
+        return;
+      }
+      event.preventDefault();
+      const direction = event.deltaY > 0 ? -1 : 1;
+      const zoomFactor = 1 + direction * 0.08;
+      setCamera((prev) => ({
+        ...prev,
+        zoom: clamp(prev.zoom * zoomFactor, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
+      }));
+    },
+    [isEndless]
+  );
+
   actions.handleSurfacePointerDown = useCallback(
     (event) => {
       if (isModalOpen) {
@@ -2305,6 +2579,26 @@ const Table = () => {
         actions.closeMenu?.();
       }
       const stackId = hitTestStack(pointerWorld.x, pointerWorld.y);
+      const shouldPan =
+        isEndless &&
+        !interaction.held &&
+        ((event.button === 2 && !stackId) || (event.button === 0 && isSpaceDown));
+      if (shouldPan) {
+        if (event.currentTarget?.setPointerCapture && event.pointerId !== undefined) {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          capturedPointerRef.current = {
+            pointerId: event.pointerId,
+            element: event.currentTarget
+          };
+        }
+        panRef.current = {
+          pointerId: event.pointerId,
+          start: { x: event.clientX, y: event.clientY },
+          camera: { ...cameraRef.current }
+        };
+        setIsPanning(true);
+        return;
+      }
       if (event.button === 2) {
         event.preventDefault();
         if (interaction.held) {
@@ -2424,6 +2718,8 @@ const Table = () => {
     },
     [
       actions,
+      isEndless,
+      isSpaceDown,
       getTablePointerPosition,
       hitTestStack,
       interaction.held,
@@ -2437,6 +2733,24 @@ const Table = () => {
   actions.handleSurfacePointerMove = useCallback(
     (event) => {
       if (isModalOpen) {
+        return;
+      }
+      if (isPanning && panRef.current.pointerId === event.pointerId) {
+        event.preventDefault();
+        const start = panRef.current.start;
+        const startCamera = panRef.current.camera ?? cameraRef.current;
+        if (!start || !startCamera) {
+          return;
+        }
+        const scale = tableScaleRef.current || 1;
+        const zoom = startCamera.zoom || 1;
+        const dx = (event.clientX - start.x) / scale;
+        const dy = (event.clientY - start.y) / scale;
+        setCamera({
+          ...startCamera,
+          x: startCamera.x - dx / zoom,
+          y: startCamera.y - dy / zoom
+        });
         return;
       }
       const pointerWorld = getTablePointerPosition(event);
@@ -2502,6 +2816,7 @@ const Table = () => {
       DRAG_THRESHOLD,
       actions,
       beginRmbSlide,
+      isPanning,
       defaultRmbState,
       getTablePointerPosition,
       handlePointerMoveHover,
@@ -2523,6 +2838,12 @@ const Table = () => {
   actions.handleSurfacePointerUp = useCallback(
     (event) => {
       if (isModalOpen) {
+        return;
+      }
+      if (isPanning && panRef.current.pointerId === event.pointerId) {
+        setIsPanning(false);
+        panRef.current = { pointerId: null, start: null, camera: null };
+        actions.releaseCapturedPointer();
         return;
       }
       actions.clearRmbHoldTimer();
@@ -2573,6 +2894,7 @@ const Table = () => {
       dropHeld,
       endDrag,
       getTablePointerPosition,
+      isPanning,
       interaction.mode,
       interaction.pointerId,
       interaction.rmbDown,
@@ -2769,6 +3091,9 @@ const Table = () => {
 
   const clampStacksToFeltShape = useCallback(
     (shape) => {
+      if (shape === 'endless') {
+        return;
+      }
       if (!tableRect?.width || !tableRect?.height) {
         return;
       }
@@ -2815,9 +3140,33 @@ const Table = () => {
     setCardFaceOverrides({});
     setSettingsOpen(false);
     actions.updateTabletopScale?.();
+    if (isEndless) {
+      const resetCamera = { x: 0, y: 0, zoom: 1 };
+      cameraRef.current = resetCamera;
+      setCamera(resetCamera);
+      const nextLayout = buildEndlessSeatLayout();
+      setSeatPositions(nextLayout);
+      setSettings((prev) => ({
+        ...prev,
+        roomSettings: {
+          ...prev.roomSettings,
+          seatPositions: {
+            ...(prev.roomSettings.seatPositions ?? {}),
+            endless: nextLayout.map((seat) => ({ x: seat.x, y: seat.y }))
+          }
+        }
+      }));
+    }
     logAction('Reset table using preset settings');
     setResetConfirmOpen(false);
-  }, [actions, logAction, resetTableSurface, settings]);
+  }, [
+    actions,
+    buildEndlessSeatLayout,
+    isEndless,
+    logAction,
+    resetTableSurface,
+    settings
+  ]);
 
   actions.handleStackDoubleClick = useCallback((event, stackId) => {
     event.preventDefault();
@@ -2959,10 +3308,17 @@ const Table = () => {
       : null;
   const seatMenuPosition =
     seatMenuSeat && tableScreenRect
-      ? {
-          left: tableScreenRect.left + seatMenuSeat.x * combinedScale,
-          top: tableScreenRect.top + seatMenuSeat.y * combinedScale
-        }
+      ? (() => {
+          const local = worldToLocal(
+            seatMenuSeat.x,
+            seatMenuSeat.y,
+            tableRect
+          );
+          return {
+            left: tableScreenRect.left + local.x * combinedScale,
+            top: tableScreenRect.top + local.y * combinedScale
+          };
+        })()
       : null;
   const seatMenuPlayerId =
     seatMenuSeat && seatMenuSeat.seatIndex !== undefined
@@ -3023,18 +3379,28 @@ const Table = () => {
           className={`table-frame table-frame--${tableStyle} table-frame--${tableShape}`}
           style={{
             '--card-scale': viewTransform.cardScale,
-            '--table-width': `${(() => {
-              const footprint =
-                tableFootprintPx ?? Math.min(TABLE_BASE_WIDTH, TABLE_BASE_HEIGHT);
-              if (tableShape === 'circle') {
-                return footprint;
-              }
-              return footprint * (TABLE_BASE_WIDTH / TABLE_BASE_HEIGHT);
-            })()}px`,
-            '--table-height': `${tableFootprintPx ?? Math.min(TABLE_BASE_WIDTH, TABLE_BASE_HEIGHT)}px`
+            '--table-width': isEndless
+              ? '100%'
+              : `${(() => {
+                  const footprint =
+                    tableFootprintPx ?? Math.min(TABLE_BASE_WIDTH, TABLE_BASE_HEIGHT);
+                  if (tableShape === 'circle') {
+                    return footprint;
+                  }
+                  return footprint * (TABLE_BASE_WIDTH / TABLE_BASE_HEIGHT);
+                })()}px`,
+            '--table-height': isEndless
+              ? '100%'
+              : `${tableFootprintPx ?? Math.min(TABLE_BASE_WIDTH, TABLE_BASE_HEIGHT)}px`,
+            '--frame-size': isEndless ? '0px' : undefined
           }}
         >
-          <div id="seatLayer" className="table__seats" aria-label="Table seats">
+          <div
+            id="seatLayer"
+            className="table__seats"
+            aria-label="Table seats"
+            style={cameraTransformStyle}
+          >
             {seatPositions.map((seat) => {
               const seatPlayerId = seatAssignments[seat.seatIndex];
               const seatPlayer = seatPlayerId ? players[seatPlayerId] : null;
@@ -3163,7 +3529,7 @@ const Table = () => {
               );
             })}
           </div>
-          <div className="table__surface-wrapper">
+          <div className={`table__surface-wrapper table__surface-wrapper--${tableShape}`}>
             <div
               ref={tableRef}
               className={`table__surface table__surface--${tableStyle} table__surface--${tableShape}`}
@@ -3171,6 +3537,7 @@ const Table = () => {
               onPointerMove={(event) => actions.handleSurfacePointerMove?.(event)}
               onPointerUp={(event) => actions.handleSurfacePointerUp?.(event)}
               onPointerCancel={(event) => actions.handleSurfacePointerUp?.(event)}
+              onWheel={(event) => actions.handleSurfaceWheel?.(event)}
               onContextMenu={(event) => event.preventDefault()}
               onDragStart={preventNativeDrag}
               onDragOver={preventNativeDrag}
@@ -3188,7 +3555,7 @@ const Table = () => {
                   viewBox={`0 0 ${tableRect.width} ${tableRect.height}`}
                   aria-hidden="true"
                 >
-                  {tableShape === 'rectangle' ? (
+                  {tableShape === 'rectangle' || tableShape === 'endless' ? (
                     <rect
                       className="table__felt-debug-rect"
                       x={feltEllipse.bounds?.left ?? 0}
@@ -3226,6 +3593,7 @@ const Table = () => {
                   ) : null}
                 </svg>
               ) : null}
+              <div className="table__playfield" style={cameraTransformStyle}>
               {handZones.map((zone) => {
                 const isOwnerZone = mySeatIndex === zone.seatIndex;
                 const isDragHover = Boolean(interaction.held) && hoverHandSeatId === zone.seatIndex;
@@ -3425,6 +3793,7 @@ const Table = () => {
                   </div>
                 );
               })}
+              </div>
             </div>
         </div>
       </div>
@@ -3817,6 +4186,7 @@ const Table = () => {
                           <option value="rectangle">Rectangle</option>
                           <option value="oval">Oval</option>
                           <option value="circle">Circle</option>
+                          <option value="endless">Endless</option>
                         </select>
                       </label>
                       <label className="table-settings__row">
@@ -3868,6 +4238,22 @@ const Table = () => {
                         type="button"
                         onClick={() =>
                           setSettings((prev) => {
+                            if (tableShape === 'endless') {
+                              const nextLayout = buildEndlessSeatLayout();
+                              return {
+                                ...prev,
+                                roomSettings: {
+                                  ...prev.roomSettings,
+                                  seatPositions: {
+                                    ...(prev.roomSettings.seatPositions ?? {}),
+                                    endless: nextLayout.map((seat) => ({
+                                      x: seat.x,
+                                      y: seat.y
+                                    }))
+                                  }
+                                }
+                              };
+                            }
                             const paramsByShape = prev.roomSettings.seatParams ?? {};
                             const nextParams = buildDefaultSeatParams(
                               prev.roomSettings.seatCount
