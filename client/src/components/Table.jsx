@@ -2043,6 +2043,9 @@ const Table = () => {
       }
       if (event.key === 'Escape') {
         event.preventDefault();
+        if (resetConfirmOpen) {
+          setResetConfirmOpen(false);
+        }
         actions.cancelDrag?.();
         actions.closeSeatMenu?.();
         return;
@@ -2075,7 +2078,8 @@ const Table = () => {
     },
     [
       actions,
-      interaction.selectedStackId
+      interaction.selectedStackId,
+      resetConfirmOpen
     ]
   );
 
@@ -2629,9 +2633,7 @@ const Table = () => {
     settings
   ]);
 
-  actions.handleHardResetToBaseDefaults = useCallback(() => {
-    // eslint-disable-next-line no-console
-    console.log('HARD RESET FIRED');
+  const hardResetToBaseDefaults = useCallback(() => {
     setSettings(BASE_DEFAULTS);
     setAppliedSettings(BASE_DEFAULTS);
     saveSettings(BASE_DEFAULTS);
@@ -2644,6 +2646,7 @@ const Table = () => {
     logAction('Reset table to defaults');
     setResetConfirmOpen(false);
   }, [actions, hardResetTableState, logAction]);
+  actions.handleHardResetToBaseDefaults = hardResetToBaseDefaults;
 
   actions.handleStackDoubleClick = useCallback((event, stackId) => {
     event.preventDefault();
@@ -3718,25 +3721,25 @@ const Table = () => {
                 onPointerDown={(event) => event.stopPropagation()}
               >
                 <h3 id="reset-table-title" className="modal__title">
-                  Reset Table
+                  Reset table?
                 </h3>
                 <p className="modal__body">
-                  This will clear the table and everyone’s hands. Continue?
+                  This will reset the table to default.
                 </p>
                 <div className="modal__actions">
                   <button
-                    className="modal__button modal__button--danger"
+                    className="modal__button modal__button--primary"
                     type="button"
-                    onClick={() => actions.handleHardResetToBaseDefaults?.()}
+                    onClick={() => hardResetToBaseDefaults()}
                   >
-                    Reset Table
+                    Yes
                   </button>
                   <button
                     className="modal__button modal__button--secondary"
                     type="button"
                     onClick={() => setResetConfirmOpen(false)}
                   >
-                    Cancel
+                    No
                   </button>
                 </div>
               </div>
