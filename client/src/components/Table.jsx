@@ -413,6 +413,22 @@ const Table = () => {
     [viewTransform.cardScale]
   );
   const seatCount = settings.roomSettings.seatCount;
+  const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
+  const cameraRef = useRef(camera);
+  const viewportRef = useRef(getViewportFromRect(tableRect));
+  const getEndlessSpawnPoint = useCallback(() => {
+    const viewport = viewportRef.current;
+    if (!viewport?.cx && !viewport?.cy) {
+      return { x: 0, y: 0 };
+    }
+    return localToWorld(
+      viewport.cx,
+      viewport.cy,
+      cameraRef.current,
+      viewportRef.current,
+      true
+    );
+  }, []);
   const {
     cardsById,
     allCardIds,
@@ -440,7 +456,8 @@ const Table = () => {
     tableRect,
     cardSize,
     settings,
-    seatCount
+    seatCount,
+    getEndlessSpawnPoint
   );
   const hands = handsBySeat;
   const [cardFaceOverrides, setCardFaceOverrides] = useState({});
@@ -859,9 +876,6 @@ const Table = () => {
     seatsDerived.map((seat) => ({ ...seat, x: 0, y: 0 }))
   );
   const [handZones, setHandZones] = useState([]);
-  const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
-  const cameraRef = useRef(camera);
-  const viewportRef = useRef(getViewportFromRect(tableRect));
   const panRef = useRef({ pointerId: null, start: null, camera: null });
   const [isPanning, setIsPanning] = useState(false);
   const [isSpaceDown, setIsSpaceDown] = useState(false);
@@ -3155,9 +3169,6 @@ const Table = () => {
     setSettingsOpen(false);
     actions.updateTabletopScale?.();
     if (isEndless) {
-      const resetCamera = { x: 0, y: 0, zoom: 1 };
-      cameraRef.current = resetCamera;
-      setCamera(resetCamera);
       const nextLayout = buildEndlessSeatLayout();
       setSeatPositions(nextLayout);
       setSettings((prev) => ({
@@ -3415,6 +3426,7 @@ const Table = () => {
     : undefined;
   return (
     <div className="tabletop">
+      {isEndless ? <div className="felt--endless" aria-hidden="true" /> : null}
       <div
         id="sceneRoot"
         ref={sceneRootRef}
