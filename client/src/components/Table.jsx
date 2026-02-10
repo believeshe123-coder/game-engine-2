@@ -24,6 +24,7 @@ import {
 import { useTableState } from '../state/useTableState.js';
 import { loadSettings, saveSettings } from '../state/tableSettings.js';
 import { loadUiPrefs, saveUiPrefs } from '../state/uiPrefs.js';
+import { arr, normalizeCustomLayout, normalizeTableState } from '../state/tableStateNormalizer.js';
 
 const RIGHT_PANEL_SAFE_WIDTH = 340;
 const TABLETOP_MARGIN = 24;
@@ -273,7 +274,13 @@ const loadCustomLayoutByCode = (code) => {
   }
   try {
     const raw = window.localStorage.getItem(`${CUSTOM_LAYOUT_STORAGE_PREFIX}${code}`);
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    const normalized = normalizeCustomLayout(parsed, code);
+    window.localStorage.setItem(`${CUSTOM_LAYOUT_STORAGE_PREFIX}${code}`, JSON.stringify(normalized));
+    return normalized;
   } catch (error) {
     return null;
   }
@@ -289,10 +296,11 @@ const loadCustomLayoutsIndex = () => {
       return [];
     }
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed.filter((entry) => typeof entry?.code === 'string' && typeof entry?.name === 'string');
+    const normalized = arr(parsed)
+      .map((entry, index) => normalizeCustomLayout(entry, entry?.code ?? `layout-${index + 1}`))
+      .map((entry) => ({ code: entry.code, name: entry.name }));
+    window.localStorage.setItem(CUSTOM_LAYOUT_INDEX_KEY, JSON.stringify(normalized));
+    return normalized;
   } catch (error) {
     return [];
   }
@@ -943,8 +951,8 @@ const Table = () => {
     const addCard = (cardId) => {
       counts.set(cardId, (counts.get(cardId) ?? 0) + 1);
     };
-    stacks.forEach((stack) => {
-      stack.cardIds.forEach(addCard);
+    arr(stacks).forEach((stack) => {
+      arr(stack?.cardIds).forEach(addCard);
     });
     Object.values(hands ?? {}).forEach((hand) => {
       (hand?.cardIds ?? []).forEach(addCard);
@@ -1128,10 +1136,10 @@ const Table = () => {
   }, []);
 
   const buildUndoSnapshot = useCallback(
-    () => ({
+    () => normalizeTableState({
       stacks: cloneState(stacks),
       hands: cloneState(hands),
-      seatPositions: cloneState(seatPositions),
+      seats: cloneState(seatPositions),
       selectedStackId: interaction.selectedStackId ?? null,
       held: interaction.held ? cloneState(interaction.held) : null
     }),
@@ -2933,10 +2941,11 @@ const Table = () => {
     }
     historyRef.current = historyRef.current.slice(0, -1);
     setCanUndo(historyRef.current.length > 0);
+    const normalizedSnapshot = normalizeTableState(previousSnapshot);
     restoringFromUndoRef.current = true;
-    setStacks(cloneState(previousSnapshot.stacks ?? []));
-    setHands(cloneState(previousSnapshot.hands ?? {}));
-    setSeatPositions(cloneState(previousSnapshot.seatPositions ?? []));
+    setStacks(cloneState(normalizedSnapshot.stacks));
+    setHands(cloneState(normalizedSnapshot.hands ?? {}));
+    setSeatPositions(cloneState(normalizedSnapshot.seats));
     setInteraction((prev) => ({
       ...prev,
       mode: 'idle',
@@ -3051,7 +3060,7 @@ const Table = () => {
     if (selected) {
       setCardFaceOverrides((prev) => {
         const next = { ...prev };
-        selected.cardIds.forEach((cardId) => {
+        arr(selected.cardIds).forEach((cardId) => {
           const currentFace = typeof next[cardId] === 'boolean' ? next[cardId] : selected.faceUp;
           next[cardId] = !currentFace;
         });
@@ -3070,7 +3079,7 @@ const Table = () => {
         if (stack.id !== interaction.selectedStackId) {
           return stack;
         }
-        const nextCardIds = [...stack.cardIds];
+        const nextCardIds = [...arr(stack.cardIds)];
         for (let i = nextCardIds.length - 1; i > 0; i -= 1) {
           const j = Math.floor(Math.random() * (i + 1));
           [nextCardIds[i], nextCardIds[j]] = [nextCardIds[j], nextCardIds[i]];
@@ -3916,11 +3925,12 @@ const Table = () => {
     if (!code) {
       return;
     }
-    const layout = loadCustomLayoutByCode(code);
-    if (!layout) {
+    const rawLayout = loadCustomLayoutByCode(code);
+    if (!rawLayout) {
       setLayoutImportStatus('missing');
       return;
     }
+    const layout = normalizeCustomLayout(rawLayout, code);
     setCustomLayoutsIndex((prev) => {
       const next = prev.some((entry) => entry.code === code)
         ? prev
@@ -3946,11 +3956,11 @@ const Table = () => {
       notes: saveLayoutNotes.trim(),
       createdAt: Date.now(),
       include,
-      stacks: stacks.map((stack) => ({
+      stacks: arr(stacks).map((stack) => ({
         x: stack.x,
         y: stack.y,
         faceUp: stack.faceUp,
-        cardIds: [...stack.cardIds]
+        cardIds: arr(stack?.cardIds)
       })),
       shape: include.shape ? settings.roomSettings.tableShape : undefined,
       seatCount: include.seatCount ? settings.roomSettings.seatCount : undefined,
@@ -3965,7 +3975,8 @@ const Table = () => {
           }
         : undefined
     };
-    window.localStorage.setItem(`${CUSTOM_LAYOUT_STORAGE_PREFIX}${code}`, JSON.stringify(layout));
+    const normalizedLayout = normalizeCustomLayout(layout, code);
+    window.localStorage.setItem(`${CUSTOM_LAYOUT_STORAGE_PREFIX}${code}`, JSON.stringify(normalizedLayout));
     setCustomLayoutsIndex((prev) => {
       const next = [...prev, { code, name: trimmedName }];
       saveCustomLayoutsIndex(next);
@@ -3979,10 +3990,11 @@ const Table = () => {
     if (!selectedLayoutCode) {
       return;
     }
-    const layout = loadCustomLayoutByCode(selectedLayoutCode);
-    if (!layout) {
+    const rawLayout = loadCustomLayoutByCode(selectedLayoutCode);
+    if (!rawLayout) {
       return;
     }
+    const layout = normalizeCustomLayout(rawLayout, selectedLayoutCode);
     const include = layout.include ?? {};
     const shapeToUse = normalizeTableShape(
       include.shape && layout.shape ? layout.shape : settings.roomSettings.tableShape
@@ -4014,12 +4026,12 @@ const Table = () => {
           : prev.roomSettings.seatCount
       }
     }));
-    setHands((prev) => Object.keys(prev).reduce((acc, seatIndex) => {
+    setHands((prev) => Object.keys(prev ?? {}).reduce((acc, seatIndex) => {
       acc[seatIndex] = { cardIds: [], revealed: {} };
       return acc;
     }, {}));
     setStacks(() =>
-      (Array.isArray(layout.stacks) ? layout.stacks : []).map((stack) => ({
+      arr(layout.stacks).map((stack) => ({
         id: createStackId(),
         x: Number(stack.x) || 0,
         y: Number(stack.y) || 0,
@@ -4030,7 +4042,7 @@ const Table = () => {
         ownerSeatIndex: null
       }))
     );
-    if (include.seatPositions && Array.isArray(layout.seatPositions) && layout.seatPositions.length) {
+    if (include.seatPositions && arr(layout.seatPositions).length) {
       setSeatPositions(
         seatsDerived.map((seat, index) => {
           const entry = layout.seatPositions[index] ?? { x: 0, y: 0 };
@@ -4198,7 +4210,7 @@ const Table = () => {
         return prev;
       }
       const next = { ...prev };
-      stack.cardIds.forEach((cardId) => {
+      arr(stack.cardIds).forEach((cardId) => {
         const currentFace = typeof next[cardId] === 'boolean' ? next[cardId] : stack.faceUp;
         next[cardId] = !currentFace;
       });
