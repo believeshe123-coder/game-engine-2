@@ -31,9 +31,18 @@ const loadChatMessages = () => {
   }
 };
 
-const ActionLog = ({ entries, playerName }) => {
+const ActionLog = ({
+  entries,
+  playerName,
+  isOpen: controlledIsOpen,
+  activeTab: controlledActiveTab,
+  onOpenChange,
+  onTabChange
+}) => {
   const [isOpen, setIsOpen] = useState(loadActionLogOpen);
   const [activeTab, setActiveTab] = useState('log');
+  const resolvedIsOpen = typeof controlledIsOpen === 'boolean' ? controlledIsOpen : isOpen;
+  const resolvedActiveTab = controlledActiveTab === 'chat' ? 'chat' : activeTab;
   const [chatMessages, setChatMessages] = useState(loadChatMessages);
   const [chatInput, setChatInput] = useState('');
   const formattedMessages = useMemo(
@@ -56,11 +65,28 @@ const ActionLog = ({ entries, playerName }) => {
       return;
     }
     try {
-      window.localStorage.setItem(ACTION_LOG_OPEN_KEY, String(isOpen));
+      window.localStorage.setItem(ACTION_LOG_OPEN_KEY, String(resolvedIsOpen));
     } catch (error) {
       // noop
     }
-  }, [isOpen]);
+  }, [resolvedIsOpen]);
+
+  useEffect(() => {
+    if (controlledActiveTab === 'chat' || controlledActiveTab === 'log') {
+      setActiveTab(controlledActiveTab);
+    }
+  }, [controlledActiveTab]);
+
+  const updateOpen = (nextOpen) => {
+    setIsOpen(nextOpen);
+    onOpenChange?.(nextOpen);
+  };
+
+  const updateTab = (nextTab) => {
+    const normalizedTab = nextTab === 'chat' ? 'chat' : 'log';
+    setActiveTab(normalizedTab);
+    onTabChange?.(normalizedTab);
+  };
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -88,7 +114,7 @@ const ActionLog = ({ entries, playerName }) => {
     setChatInput('');
   };
 
-  if (!isOpen) {
+  if (!resolvedIsOpen) {
     return (
       <button
         type="button"
@@ -100,7 +126,7 @@ const ActionLog = ({ entries, playerName }) => {
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
-          setIsOpen(true);
+          updateOpen(true);
         }}
       >
         Action Log
@@ -123,19 +149,19 @@ const ActionLog = ({ entries, playerName }) => {
         <div className="action-log__tabs" role="tablist" aria-label="Activity tabs">
           <button
             type="button"
-            className={`action-log__tab ${activeTab === 'log' ? 'is-active' : ''}`}
+            className={`action-log__tab ${resolvedActiveTab === 'log' ? 'is-active' : ''}`}
             role="tab"
-            aria-selected={activeTab === 'log'}
-            onClick={() => setActiveTab('log')}
+            aria-selected={resolvedActiveTab === 'log'}
+            onClick={() => updateTab('log')}
           >
             Log
           </button>
           <button
             type="button"
-            className={`action-log__tab ${activeTab === 'chat' ? 'is-active' : ''}`}
+            className={`action-log__tab ${resolvedActiveTab === 'chat' ? 'is-active' : ''}`}
             role="tab"
-            aria-selected={activeTab === 'chat'}
-            onClick={() => setActiveTab('chat')}
+            aria-selected={resolvedActiveTab === 'chat'}
+            onClick={() => updateTab('chat')}
           >
             Chat
           </button>
@@ -151,13 +177,13 @@ const ActionLog = ({ entries, playerName }) => {
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            setIsOpen(false);
+            updateOpen(false);
           }}
         >
           ✕
         </button>
       </div>
-      {activeTab === 'log' ? (
+      {resolvedActiveTab === 'log' ? (
         <div className="action-log__entries" role="tabpanel">
           {entries?.length ? (
             entries.map((entry) => (
