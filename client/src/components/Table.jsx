@@ -614,6 +614,7 @@ const preventNativeDrag = (event) => {
 
 
 const Table = () => {
+  // Refs
   const sceneRootRef = useRef(null);
   const tableFrameRef = useRef(null);
   const tableRef = useRef(null);
@@ -711,6 +712,16 @@ const Table = () => {
     seatCount,
     getLegacyDisabledShapeSpawnPoint
   );
+
+  // Derived data
+  const stacksById = useMemo(() => {
+    return stacks.reduce((acc, stack) => {
+      acc[stack.id] = stack;
+      return acc;
+    }, {});
+  }, [stacks]);
+
+  // State
   const hands = handsBySeat;
   const [cardFaceOverrides, setCardFaceOverrides] = useState({});
   const [interaction, setInteraction] = useState({
@@ -1623,13 +1634,6 @@ const Table = () => {
     },
     [cardsById]
   );
-
-  const stacksById = useMemo(() => {
-    return stacks.reduce((acc, stack) => {
-      acc[stack.id] = stack;
-      return acc;
-    }, {});
-  }, [stacks]);
 
   useEffect(() => {
     if (!interaction.selectedStackId) {
