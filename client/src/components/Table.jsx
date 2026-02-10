@@ -2958,6 +2958,16 @@ const Table = () => {
     ]
   );
 
+  actions.handleStackPointerDown = useCallback((event, stackId) => {
+    if (IS_DEV) {
+      console.debug('[table] onStackPointerDown', {
+        stackId,
+        button: event.button,
+        pointerId: event.pointerId
+      });
+    }
+  }, []);
+
   actions.handleSurfacePointerMove = useCallback(
     (event) => {
       if (isModalOpen) {
@@ -4245,6 +4255,9 @@ const Table = () => {
                         onDragOver={preventNativeDrag}
                         onDragEnter={preventNativeDrag}
                         onDrop={preventNativeDrag}
+                        onPointerDown={(event) =>
+                          actions.handleStackPointerDown?.(event, stack.id)
+                        }
                       >
                         {stack.isHeldVisual ? null : isTokenStack ? (
                           <div
