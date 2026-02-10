@@ -1611,29 +1611,48 @@ const Table = () => {
     ]
   );
 
-  const getTablePointerPositionFromClient = useCallback((clientX, clientY) => {
+  const getPointerLocalFromClient = useCallback((clientX, clientY) => {
     const table = tableRef.current;
     if (!table) {
       return null;
     }
-    const scale = tableScaleRef.current;
+    const scale = tableScaleRef.current || 1;
     const tableRect = table.getBoundingClientRect();
+    return {
+      x: (clientX - tableRect.left) / scale,
+      y: (clientY - tableRect.top) / scale,
+      tableRect,
+      scale
+    };
+  }, []);
+
+  const getTablePointerPositionFromClient = useCallback((clientX, clientY) => {
+    const pointerLocal = getPointerLocalFromClient(clientX, clientY);
+    if (!pointerLocal) {
+      return null;
+    }
     return screenToWorld(
       clientX,
       clientY,
-      tableRect,
-      scale,
+      pointerLocal.tableRect,
+      pointerLocal.scale,
       cameraRef.current,
       viewportRef.current,
       isEndless
     );
-  }, [isEndless]);
+  }, [getPointerLocalFromClient, isEndless]);
 
   const getTablePointerPosition = useCallback(
     (event) =>
       getTablePointerPositionFromClient(event.clientX, event.clientY),
     [getTablePointerPositionFromClient]
   );
+
+  const getStackIdFromEventTarget = useCallback((event) => {
+    const node = event.target?.closest?.('.stack-entity');
+    const id = node?.getAttribute?.('data-stack-id');
+    return id || null;
+  }, []);
 
   const updateSeatParam = useCallback(
     (seatIndex, value) => {
@@ -2806,7 +2825,8 @@ const Table = () => {
       if (interaction.menu.open) {
         actions.closeMenu?.();
       }
-      const stackId = hitTestStack(pointerWorld.x, pointerWorld.y);
+      const stackIdFromTarget = getStackIdFromEventTarget(event);
+      const stackId = stackIdFromTarget ?? hitTestStack(pointerWorld.x, pointerWorld.y);
       const shouldPan =
         isEndless &&
         !interaction.held &&
@@ -2946,6 +2966,7 @@ const Table = () => {
     },
     [
       actions,
+      getStackIdFromEventTarget,
       isEndless,
       isSpaceDown,
       getTablePointerPosition,
@@ -2958,14 +2979,11 @@ const Table = () => {
     ]
   );
 
-  actions.handleStackPointerDown = useCallback((event, stackId) => {
-    if (IS_DEV) {
-      console.debug('[table] onStackPointerDown', {
-        stackId,
-        button: event.button,
-        pointerId: event.pointerId
-      });
+  actions.handleStackPointerDown = useCallback((_event, stackId) => {
+    if (!stackId) {
+      return;
     }
+    // Keep stack IDs available from event targets so surface handlers can avoid hit-test drift.
   }, []);
 
   actions.handleSurfacePointerMove = useCallback(
@@ -3143,6 +3161,20 @@ const Table = () => {
       isModalOpen
     ]
   );
+
+  useEffect(() => {
+    const handleRelease = () => {
+      actionsRef.current.releaseCapturedPointer?.();
+    };
+    window.addEventListener('pointerup', handleRelease);
+    window.addEventListener('pointercancel', handleRelease);
+    window.addEventListener('blur', handleRelease);
+    return () => {
+      window.removeEventListener('pointerup', handleRelease);
+      window.removeEventListener('pointercancel', handleRelease);
+      window.removeEventListener('blur', handleRelease);
+    };
+  }, []);
 
 
   const playFromHand = useCallback(
@@ -4241,6 +4273,7 @@ const Table = () => {
                       <div
                         key={stack.id}
                         className={`stack-entity ${highlightState}`}
+                        data-stack-id={stack.id}
                         data-selected={isSelectedStack}
                         data-held={isHeldStack}
                         data-hovered={isHoveredStack}
