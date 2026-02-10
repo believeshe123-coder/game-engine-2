@@ -59,19 +59,7 @@ const SLIDE_START_DIR_THRESHOLD_PX = 10;
 const HAND_ZONE_SEAT_OFFSET_BASE = 52;
 const HELD_STACK_ID = '__HELD__';
 const CAMERA_ZOOM_MIN = 0.5;
-const IS_DEV = Boolean(import.meta.env.DEV);
-const DEV_INTERACTION_EVENTS = [
-  'selectStack',
-  'pickupFull',
-  'pickupN',
-  'flip',
-  'shuffle',
-  'placeStack',
-  'slideDealTick',
-  'mergeStacks',
-  'dropToSeat',
-  'dropToTable'
-];
+const UNDO_HISTORY_LIMIT = 50;
 const CAMERA_ZOOM_MAX = 2.5;
 
 const CUSTOM_LAYOUT_STORAGE_PREFIX = 'tt_layout_';
@@ -669,13 +657,6 @@ const Table = () => {
     spawnFaceDown: false,
     deckDefaults: false
   });
-  const [interactionSelfTestEnabled, setInteractionSelfTestEnabled] = useState(false);
-  const [interactionSelfTestState, setInteractionSelfTestState] = useState(() =>
-    DEV_INTERACTION_EVENTS.reduce((acc, key) => {
-      acc[key] = false;
-      return acc;
-    }, {})
-  );
   const [dragSeatIndex, setDragSeatIndex] = useState(null);
   const inventoryPanelRef = useRef(null);
   const [inventoryPos, setInventoryPos] = useState(() => {
@@ -711,7 +692,18 @@ const Table = () => {
   const isEndless = tableShape === 'endless';
   const [uiPrefs, setUiPrefs] = useState(loadUiPrefs);
   const [cardPreview, setCardPreview] = useState(null);
-  const isModalOpen = resetConfirmOpen || itemSpawnerOpen || saveLayoutOpen || Boolean(cardPreview);
+  const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
+  const historyRef = useRef([]);
+  const [canUndo, setCanUndo] = useState(false);
+  const lastSnapshotRef = useRef(null);
+  const restoringFromUndoRef = useRef(false);
+  const suppressNextHistoryRef = useRef(false);
+  const isModalOpen =
+    resetConfirmOpen ||
+    itemSpawnerOpen ||
+    saveLayoutOpen ||
+    Boolean(cardPreview) ||
+    removeConfirmOpen;
   const closeCardPreview = useCallback((event) => {
     if (event?.preventDefault) {
       event.preventDefault();
@@ -721,18 +713,6 @@ const Table = () => {
     }
     setCardPreview(null);
   }, []);
-
-  const markInteractionSelfTest = useCallback((eventName, details = null) => {
-    if (!IS_DEV || !interactionSelfTestEnabled) {
-      return;
-    }
-    if (!DEV_INTERACTION_EVENTS.includes(eventName)) {
-      return;
-    }
-    setInteractionSelfTestState((prev) => ({ ...prev, [eventName]: true }));
-    // eslint-disable-next-line no-console
-    console.info(`[interaction-self-test] ${eventName}`, details ?? {});
-  }, [interactionSelfTestEnabled]);
 
   const actions = useMemo(() => ({}), []);
   const interactionRef = useRef(interaction);
@@ -839,7 +819,6 @@ const Table = () => {
   }, []);
 
   actions.selectStack = useCallback((stackId, screenXY) => {
-    markInteractionSelfTest('selectStack', { stackId });
     setPickCountOpen(false);
     setInteraction((prev) => ({
       ...prev,
@@ -852,7 +831,7 @@ const Table = () => {
         screenY: screenXY?.y ?? 0
       }
     }));
-  }, [defaultRmbState, markInteractionSelfTest]);
+  }, [defaultRmbState]);
 
   useEffect(() => {
     if (process.env.NODE_ENV === 'production') {
@@ -1039,6 +1018,24 @@ const Table = () => {
   const [isPanning, setIsPanning] = useState(false);
   const [isSpaceDown, setIsSpaceDown] = useState(false);
 
+  const cloneState = useCallback((value) => {
+    if (typeof structuredClone === 'function') {
+      return structuredClone(value);
+    }
+    return JSON.parse(JSON.stringify(value));
+  }, []);
+
+  const buildUndoSnapshot = useCallback(
+    () => ({
+      stacks: cloneState(stacks),
+      hands: cloneState(hands),
+      seatPositions: cloneState(seatPositions),
+      selectedStackId: interaction.selectedStackId ?? null,
+      held: interaction.held ? cloneState(interaction.held) : null
+    }),
+    [cloneState, hands, interaction.held, interaction.selectedStackId, seatPositions, stacks]
+  );
+
   useEffect(() => {
     cameraRef.current = camera;
   }, [camera]);
@@ -1047,6 +1044,28 @@ const Table = () => {
     viewportRef.current = getViewportFromRect(tableRect);
   }, [tableRect]);
 
+  useEffect(() => {
+    const currentSnapshot = buildUndoSnapshot();
+    if (!lastSnapshotRef.current) {
+      lastSnapshotRef.current = currentSnapshot;
+      return;
+    }
+    const changed =
+      JSON.stringify(currentSnapshot) !== JSON.stringify(lastSnapshotRef.current);
+    if (!changed) {
+      return;
+    }
+    if (restoringFromUndoRef.current || suppressNextHistoryRef.current) {
+      suppressNextHistoryRef.current = false;
+      lastSnapshotRef.current = currentSnapshot;
+      return;
+    }
+    const previousSnapshot = lastSnapshotRef.current;
+    const nextHistory = [...historyRef.current, previousSnapshot].slice(-UNDO_HISTORY_LIMIT);
+    historyRef.current = nextHistory;
+    setCanUndo(nextHistory.length > 0);
+    lastSnapshotRef.current = currentSnapshot;
+  }, [buildUndoSnapshot]);
 
 
   const getCardLabel = useCallback(
@@ -1962,7 +1981,6 @@ const Table = () => {
       seatDragRef.current = { seatIndex: null, moved: false, start: null };
       if (interaction.held || interaction.mode === 'holdStack') {
         if (interaction.held) {
-          markInteractionSelfTest('dropToSeat', { seatIndex, count: interaction.held.cardIds.length });
           moveCardIdsToHand(seatIndex, interaction.held.cardIds);
           logDealt(seatIndex, interaction.held.cardIds.length);
           actions.clearInteraction({ preserveSelection: false });
@@ -1971,7 +1989,7 @@ const Table = () => {
       }
       actions.openSeatMenu?.(seatIndex);
     },
-    [actions, interaction.held, interaction.mode, logDealt, markInteractionSelfTest, moveCardIdsToHand]
+    [actions, interaction.held, interaction.mode, logDealt, moveCardIdsToHand]
   );
 
   const restoreHeldToOrigin = useCallback(() => {
@@ -2038,7 +2056,6 @@ const Table = () => {
         };
         const originX = origin.x ?? 0;
         const originY = origin.y ?? 0;
-        markInteractionSelfTest(clamped === total ? 'pickupFull' : 'pickupN', { stackId, count: clamped });
         const offset = { x: cardSize.width / 2, y: cardSize.height / 2 };
         setInteraction((prevInteraction) => ({
           ...prevInteraction,
@@ -2071,7 +2088,7 @@ const Table = () => {
           .filter((stack) => stack.id !== stackId || remaining.length > 0);
       });
     },
-    [cardSize.height, cardSize.width, createStackId, defaultRmbState, markInteractionSelfTest, setStacks]
+    [cardSize.height, cardSize.width, createStackId, defaultRmbState, setStacks]
   );
 
   const startDragStack = useCallback(
@@ -2137,7 +2154,6 @@ const Table = () => {
 
   const mergeStacks = useCallback(
     (sourceId, targetId) => {
-      markInteractionSelfTest('mergeStacks', { sourceId, targetId });
       setStacks((prev) => {
         const source = prev.find((stack) => stack.id === sourceId);
         const target = prev.find((stack) => stack.id === targetId);
@@ -2151,7 +2167,7 @@ const Table = () => {
         return prev.filter((stack) => stack.id !== sourceId && stack.id !== targetId).concat(merged);
       });
     },
-    [markInteractionSelfTest, setStacks]
+    [setStacks]
   );
 
   const dropHeld = useCallback(
@@ -2165,7 +2181,6 @@ const Table = () => {
           ? getSeatIndexAtScreenPoint(clientX, clientY)
           : null;
       if (seatDropIndex !== null && seatDropIndex !== undefined) {
-        markInteractionSelfTest('dropToSeat', { seatIndex: seatDropIndex, count: held.cardIds.length });
         moveCardIdsToHand(seatDropIndex, held.cardIds);
         logDealt(seatDropIndex, held.cardIds.length);
         actions.clearInteraction({ preserveSelection: false });
@@ -2186,7 +2201,6 @@ const Table = () => {
         placement.y + cardSize.height / 2
       );
       if (handSeatIndex !== null && handSeatIndex !== undefined) {
-        markInteractionSelfTest('dropToSeat', { seatIndex: handSeatIndex, count: held.cardIds.length });
         moveCardIdsToHand(handSeatIndex, held.cardIds);
         logDealt(handSeatIndex, held.cardIds.length);
         actions.clearInteraction({ preserveSelection: false });
@@ -2205,14 +2219,12 @@ const Table = () => {
           };
           return prev.filter((stack) => stack.id !== overlapId).concat(merged);
         });
-        markInteractionSelfTest('dropToTable', { mergedInto: overlapId, count: held.cardIds.length });
         actions.clearInteraction({
           preserveSelection: true,
           nextSelectedStackId: overlapId
         });
         return;
       } else {
-        markInteractionSelfTest('dropToTable', { count: held.cardIds.length });
         setStacks((prev) =>
           prev.concat({
             id: held.stackId,
@@ -2243,7 +2255,6 @@ const Table = () => {
       interaction.held,
       interaction.selectedStackId,
       logDealt,
-      markInteractionSelfTest,
       moveCardIdsToHand,
       setStacks
     ]
@@ -2309,7 +2320,6 @@ const Table = () => {
       interaction.selectedStackId,
       logDealt,
       mergeStacks,
-      markInteractionSelfTest,
       moveCardIdsToHand,
       setStacks,
       stacksById
@@ -2385,7 +2395,6 @@ const Table = () => {
         }
         return next;
       });
-      markInteractionSelfTest('placeStack', { count: 1 });
       logAction(`${myName} placed 1 card`);
       if (remaining.length === 0) {
         actions.clearInteraction({ preserveSelection: true });
@@ -2403,7 +2412,6 @@ const Table = () => {
       findTableOverlapStackId,
       interaction.drag,
       interaction.held,
-      markInteractionSelfTest,
       myName,
       logAction,
       setStacks
@@ -2502,8 +2510,6 @@ const Table = () => {
         actions.clearInteraction({ preserveSelection: true });
         return;
       }
-
-      markInteractionSelfTest('slideDealTick', { count: placements.length });
       setStacks((prev) => prev.concat(placements));
       logAction(`${myName} placed ${placements.length} card${placements.length === 1 ? '' : 's'}`);
 
@@ -2538,7 +2544,6 @@ const Table = () => {
       interaction.slideLastPos,
       interaction.slideTrail,
       interaction.isSliding,
-      markInteractionSelfTest,
       myName,
       logAction,
       setStacks
@@ -2610,6 +2615,73 @@ const Table = () => {
   );
 
   // --- handlers (must be declared before menus/hotkeys) ---
+  actions.handleUndo = useCallback(() => {
+    if (isModalOpen) {
+      return;
+    }
+    const previousSnapshot = historyRef.current[historyRef.current.length - 1];
+    if (!previousSnapshot) {
+      return;
+    }
+    historyRef.current = historyRef.current.slice(0, -1);
+    setCanUndo(historyRef.current.length > 0);
+    restoringFromUndoRef.current = true;
+    setStacks(cloneState(previousSnapshot.stacks ?? []));
+    setHands(cloneState(previousSnapshot.hands ?? {}));
+    setSeatPositions(cloneState(previousSnapshot.seatPositions ?? []));
+    setInteraction((prev) => ({
+      ...prev,
+      mode: 'idle',
+      pointerId: null,
+      source: null,
+      drag: null,
+      held: cloneState(previousSnapshot.held ?? null),
+      selectedStackId: previousSnapshot.selectedStackId ?? null,
+      menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
+    }));
+    setTimeout(() => {
+      restoringFromUndoRef.current = false;
+    }, 0);
+    logAction(`${myName} undid an action`);
+  }, [cloneState, isModalOpen, logAction, myName, setHands, setSeatPositions, setStacks]);
+
+  actions.promptRemoveSelected = useCallback(() => {
+    if (!interaction.selectedStackId || isModalOpen) {
+      return;
+    }
+    setRemoveConfirmOpen(true);
+  }, [interaction.selectedStackId, isModalOpen]);
+
+  actions.handleRemoveSelected = useCallback(() => {
+    const stackId = interaction.selectedStackId;
+    if (!stackId) {
+      setRemoveConfirmOpen(false);
+      return;
+    }
+    setStacks((prev) => {
+      if (!prev.some((stack) => stack.id === stackId)) {
+        return prev;
+      }
+      return prev.filter((stack) => stack.id !== stackId);
+    });
+    setInteraction((prev) => {
+      const shouldClearHeld = prev.held?.stackId === stackId;
+      return {
+        ...prev,
+        mode: shouldClearHeld ? 'idle' : prev.mode,
+        pointerId: shouldClearHeld ? null : prev.pointerId,
+        source: shouldClearHeld ? null : prev.source,
+        drag: shouldClearHeld ? null : prev.drag,
+        held: shouldClearHeld ? null : prev.held,
+        selectedStackId: prev.selectedStackId === stackId ? null : prev.selectedStackId,
+        menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
+      };
+    });
+    setPickCountOpen(false);
+    setRemoveConfirmOpen(false);
+    logAction(`${myName} removed a stack`);
+  }, [interaction.selectedStackId, logAction, myName, setStacks]);
+
   actions.handleFlipSelected = useCallback(() => {
     if (!interaction.selectedStackId) {
       return;
@@ -2632,9 +2704,8 @@ const Table = () => {
         return next;
       });
     }
-    markInteractionSelfTest('flip', { stackId: interaction.selectedStackId });
     logAction(`${myName} flipped a stack`);
-  }, [interaction.selectedStackId, markInteractionSelfTest, myName, logAction, setStacks, stacksById]);
+  }, [interaction.selectedStackId, myName, logAction, setStacks, stacksById]);
 
   actions.handleShuffleSelected = useCallback(() => {
     if (!interaction.selectedStackId) {
@@ -2653,9 +2724,8 @@ const Table = () => {
         return { ...stack, cardIds: nextCardIds };
       })
     );
-    markInteractionSelfTest('shuffle', { stackId: interaction.selectedStackId });
     logAction(`${myName} shuffled a stack`);
-  }, [interaction.selectedStackId, markInteractionSelfTest, myName, logAction, setStacks]);
+  }, [interaction.selectedStackId, myName, logAction, setStacks]);
 
   actions.handleKeyDown = useCallback(
     (event) => {
@@ -2669,6 +2739,7 @@ const Table = () => {
           setItemSpawnerOpen(false);
           setSaveLayoutOpen(false);
           setCardPreview(null);
+          setRemoveConfirmOpen(false);
         }
         actions.cancelDrag?.();
         actions.closeSeatMenu?.();
@@ -2680,10 +2751,21 @@ const Table = () => {
           event.target.tagName === 'TEXTAREA' ||
           event.target.tagName === 'SELECT' ||
           event.target.isContentEditable);
-      if (isFormElement || !interaction.selectedStackId) {
+      const lowerKey = event.key.toLowerCase();
+      const isUndoShortcut = (event.ctrlKey || event.metaKey) && lowerKey === 'z';
+      if (isUndoShortcut && !isFormElement && !isModalOpen) {
+        event.preventDefault();
+        actions.handleUndo?.();
         return;
       }
-      const lowerKey = event.key.toLowerCase();
+      if (isModalOpen || isFormElement || !interaction.selectedStackId) {
+        return;
+      }
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault();
+        actions.promptRemoveSelected?.();
+        return;
+      }
       if (lowerKey === 'f') {
         event.preventDefault();
         actions.handleFlipSelected?.();
@@ -2719,6 +2801,7 @@ const Table = () => {
         setItemSpawnerOpen(false);
         setSaveLayoutOpen(false);
         setCardPreview(null);
+        setRemoveConfirmOpen(false);
       }
     };
     window.addEventListener('keydown', handleEscape);
@@ -3630,6 +3713,9 @@ const Table = () => {
   }, [clampStacksToFeltShape, tableShape]);
 
   const handleResetTable = useCallback(() => {
+    suppressNextHistoryRef.current = true;
+    historyRef.current = [];
+    setCanUndo(false);
     resetTableSurface(settings);
     actions.resetInteractionStates?.();
     actions.resetInteractionToDefaults?.();
@@ -3669,7 +3755,6 @@ const Table = () => {
         stack.id === stackId ? { ...stack, faceUp: !stack.faceUp } : stack
       )
     );
-    markInteractionSelfTest('flip', { stackId: interaction.selectedStackId });
     logAction(`${myName} flipped a stack`);
     setCardFaceOverrides((prev) => {
       const stack = stacksById[stackId];
@@ -3683,43 +3768,7 @@ const Table = () => {
       });
       return next;
     });
-  }, [markInteractionSelfTest, myName, logAction, setStacks, stacksById]);
-
-  actions.handleMoveSelectedToHand = useCallback(() => {
-    if (
-      !interaction.selectedStackId ||
-      mySeatIndex === null ||
-      mySeatIndex === undefined
-    ) {
-      return;
-    }
-    const selected = stacksById[interaction.selectedStackId];
-    if (!selected) {
-      return;
-    }
-    moveCardIdsToHand(mySeatIndex, selected.cardIds);
-    logAction(
-      `${myName} moved ${selected.cardIds.length} ${selected.cardIds.length === 1 ? 'card' : 'cards'} to hand`
-    );
-    setStacks((prev) =>
-      prev.filter((stack) => stack.id !== interaction.selectedStackId)
-    );
-    setInteraction((prev) => ({
-      ...prev,
-      selectedStackId: null,
-      menu: { ...prev.menu, open: false, stackId: null }
-    }));
-    setPickCountOpen(false);
-  }, [
-    interaction.selectedStackId,
-    moveCardIdsToHand,
-    myName,
-    mySeatIndex,
-    logAction,
-    setInteraction,
-    setStacks,
-    stacksById
-  ]);
+  }, [myName, logAction, setStacks, stacksById]);
 
   actionsRef.current = {
     clearRmbHoldTimer: actions.clearRmbHoldTimer,
@@ -3744,6 +3793,9 @@ const Table = () => {
     cancelDrag: actions.cancelDrag,
     handleFlipSelected: actions.handleFlipSelected,
     handleShuffleSelected: actions.handleShuffleSelected,
+    handleUndo: actions.handleUndo,
+    promptRemoveSelected: actions.promptRemoveSelected,
+    handleRemoveSelected: actions.handleRemoveSelected,
     handleKeyDown: actions.handleKeyDown,
     handleSurfaceWheel: actions.handleSurfaceWheel,
     handleSurfacePointerDown: actions.handleSurfacePointerDown,
@@ -3751,7 +3803,6 @@ const Table = () => {
     handleSurfacePointerUp: actions.handleSurfacePointerUp,
     handleToggleReveal: actions.handleToggleReveal,
     handleStackDoubleClick: actions.handleStackDoubleClick,
-    handleMoveSelectedToHand: actions.handleMoveSelectedToHand
   };
 
   const selectedStack = interaction.selectedStackId
@@ -4561,6 +4612,17 @@ const Table = () => {
                       </label>
                     </div>
                     <div className="table-settings__group">
+                      <div className="table-settings__group-title">Actions</div>
+                      <button
+                        className="table-settings__button table-settings__button--secondary"
+                        type="button"
+                        onClick={() => actions.handleUndo?.()}
+                        disabled={!canUndo || isModalOpen}
+                      >
+                        Undo
+                      </button>
+                    </div>
+                    <div className="table-settings__group">
                       <div className="table-settings__group-title">Inventory</div>
                       <button
                         className="table-settings__button table-settings__button--secondary"
@@ -4575,40 +4637,6 @@ const Table = () => {
                 ) : null}
                 {settingsTab === 'table' ? (
                   <div className="table-settings__section">
-                    {IS_DEV ? (
-                      <div className="table-settings__group">
-                        <div className="table-settings__group-title">Card Interaction Self-Test (Dev)</div>
-                        <div className="table-settings__row">
-                          <span className="table-settings__label">Enable interaction event logging</span>
-                          <label className="table-settings__switch">
-                            <input
-                              type="checkbox"
-                              checked={interactionSelfTestEnabled}
-                              onChange={(event) => {
-                                const enabled = event.target.checked;
-                                setInteractionSelfTestEnabled(enabled);
-                                if (!enabled) {
-                                  setInteractionSelfTestState(
-                                    DEV_INTERACTION_EVENTS.reduce((acc, key) => {
-                                      acc[key] = false;
-                                      return acc;
-                                    }, {})
-                                  );
-                                }
-                              }}
-                            />
-                            <span>{interactionSelfTestEnabled ? 'On' : 'Off'}</span>
-                          </label>
-                        </div>
-                        {interactionSelfTestEnabled ? (
-                          <div className="table-settings__hint">
-                            {DEV_INTERACTION_EVENTS.map((eventName) =>
-                              `${interactionSelfTestState[eventName] ? '✅' : '⬜'} ${eventName}`
-                            ).join(' · ')}
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
                     <div className="table-settings__group">
                       <div className="table-settings__group-title">Spawn Defaults</div>
                       <div className="table-settings__row">
@@ -4880,6 +4908,20 @@ const Table = () => {
           ) : null}
         </div>
       </div>
+      {removeConfirmOpen && uiOverlayRoot
+        ? createPortal(
+            <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }}>
+              <div className="modal" role="dialog" aria-modal="true" aria-labelledby="remove-stack-title" onPointerDown={(event) => event.stopPropagation()}>
+                <h3 id="remove-stack-title" className="modal__title">Remove this stack?</h3>
+                <div className="modal__actions">
+                  <button className="modal__button modal__button--primary" type="button" onClick={() => actions.handleRemoveSelected?.()}>Yes</button>
+                  <button className="modal__button modal__button--secondary" type="button" onClick={() => setRemoveConfirmOpen(false)}>No</button>
+                </div>
+              </div>
+            </div>,
+            uiOverlayRoot
+          )
+        : null}
       {resetConfirmOpen && uiOverlayRoot
         ? createPortal(
             <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setResetConfirmOpen(false); }}>
@@ -5121,18 +5163,16 @@ const Table = () => {
                   </div>
                 </div>
               ) : null}
-              {mySeatIndex !== null ? (
-                <button
-                  type="button"
-                  className="stack-menu__button"
-                  onClick={() => {
-                    actions.handleMoveSelectedToHand?.();
-                    actions.closeMenu?.();
-                  }}
-                >
-                  Move to Hand
-                </button>
-              ) : null}
+              <button
+                type="button"
+                className="stack-menu__button stack-menu__button--danger"
+                onClick={() => {
+                  actions.promptRemoveSelected?.();
+                  actions.closeMenu?.();
+                }}
+              >
+                Remove Item
+              </button>
               {previewTopCardId ? (
                 <button
                   type="button"
