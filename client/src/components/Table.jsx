@@ -84,42 +84,90 @@ const normalizeParam = (value, max) => {
   return wrapped < 0 ? wrapped + max : wrapped;
 };
 
-const CUSTOM_LAYOUT_ITEMS = [
+const ITEM_SPAWNER_ITEMS = [
   {
     id: 'classicDeckWithJokers',
     label: 'Classic Poker Deck (with jokers)',
     style: 'classic',
-    type: 'deckWithJokers'
+    type: 'deckWithJokers',
+    usage: 'Standard 54-card deck with jokers for poker variants and wild-card games.'
   },
   {
     id: 'classicDeckNoJokers',
     label: 'Classic Poker Deck (no jokers)',
     style: 'classic',
-    type: 'deckNoJokers'
+    type: 'deckNoJokers',
+    usage: 'Standard 52-card deck for most poker and trick-taking games.'
   },
   {
     id: 'classicJokersOnly',
     label: 'Classic Jokers Only',
     style: 'classic',
-    type: 'jokersOnly'
+    type: 'jokersOnly',
+    usage: 'Two jokers only, useful as markers or wild cards.'
   },
   {
     id: 'medievalDeckWithJokers',
     label: 'Medieval Poker Deck (with jokers)',
     style: 'medieval',
-    type: 'deckWithJokers'
+    type: 'deckWithJokers',
+    usage: 'Themed 54-card deck with jokers.'
   },
   {
     id: 'medievalDeckNoJokers',
     label: 'Medieval Poker Deck (no jokers)',
     style: 'medieval',
-    type: 'deckNoJokers'
+    type: 'deckNoJokers',
+    usage: 'Themed 52-card deck without jokers.'
   },
   {
     id: 'medievalJokersOnly',
     label: 'Medieval Jokers Only',
     style: 'medieval',
-    type: 'jokersOnly'
+    type: 'jokersOnly',
+    usage: 'Themed joker pair for variant rules.'
+  },
+  {
+    id: 'chips1',
+    label: 'Poker Chips — $1',
+    type: 'chips',
+    denom: 1,
+    usage: 'Low-value chips for small bets, blinds/antes, and making change.'
+  },
+  {
+    id: 'chips5',
+    label: 'Poker Chips — $5',
+    type: 'chips',
+    denom: 5,
+    usage: 'Common chip for normal betting and mid-sized pots.'
+  },
+  {
+    id: 'chips25',
+    label: 'Poker Chips — $25',
+    type: 'chips',
+    denom: 25,
+    usage: 'Higher-value chip for larger bets.'
+  },
+  {
+    id: 'chips100',
+    label: 'Poker Chips — $100',
+    type: 'chips',
+    denom: 100,
+    usage: 'High-value chip for big bets and buy-ins.'
+  },
+  {
+    id: 'dieD6',
+    label: 'Die (d6)',
+    type: 'die',
+    sides: 6,
+    usage: 'Roll for simple random outcomes (1–6).'
+  },
+  {
+    id: 'dieD20',
+    label: 'Die (d20)',
+    type: 'die',
+    sides: 20,
+    usage: 'Roll for broader random outcomes (1–20).'
   }
 ];
 
@@ -166,6 +214,43 @@ const buildSpawnCardsForItem = (item, prefix) => {
     );
   }
   return cards;
+};
+
+const CHIP_COLORS = {
+  1: '#f4f5f7',
+  5: '#d94444',
+  25: '#2f9c57',
+  100: '#1f2438'
+};
+
+const isCardStack = (stack) => Array.isArray(stack?.cardIds);
+const isChipStack = (stack) => stack?.kind === 'chips';
+const isDieStack = (stack) => stack?.kind === 'die';
+
+const getStackBounds = (stack, cardSize) => {
+  if (isChipStack(stack)) {
+    return { width: 88, height: 88 };
+  }
+  if (isDieStack(stack)) {
+    return { width: 68, height: 68 };
+  }
+  return { width: cardSize.width, height: cardSize.height };
+};
+
+const getChipStackLabel = (stack) => {
+  const count = Math.max(0, Number(stack?.count) || 0);
+  const denom = Number(stack?.denom) || 0;
+  return `${count} × $${denom} = $${count * denom}`;
+};
+
+const formatSpawnSummaryItem = (item, qty) => {
+  if (item.type === 'chips') {
+    return `${qty}× $${item.denom} Chips`;
+  }
+  if (item.type === 'die') {
+    return `${qty}× d${item.sides}`;
+  }
+  return `${qty}× ${item.label}`;
 };
 
 const getSeatSideFromAngle = (angle) => {
@@ -641,13 +726,15 @@ const Table = () => {
   const lastPointerRef = useRef({ x: 0, y: 0 });
   const [pickCountOpen, setPickCountOpen] = useState(false);
   const [pickCountValue, setPickCountValue] = useState('1');
+  const [splitCountOpen, setSplitCountOpen] = useState(false);
+  const [splitCountValue, setSplitCountValue] = useState('1');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState('player');
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [itemSpawnerOpen, setItemSpawnerOpen] = useState(false);
   const [itemSpawnerSearchQuery, setItemSpawnerSearchQuery] = useState('');
   const [itemSpawnerSelected, setItemSpawnerSelected] = useState(() =>
-    CUSTOM_LAYOUT_ITEMS.reduce((acc, item) => {
+    ITEM_SPAWNER_ITEMS.reduce((acc, item) => {
       acc[item.id] = { checked: false, qty: 1 };
       return acc;
     }, {})
@@ -782,6 +869,8 @@ const Table = () => {
     setHoveredStackId(null);
     setPickCountOpen(false);
     setPickCountValue('1');
+    setSplitCountOpen(false);
+    setSplitCountValue('1');
     setSeatMenuState({ seatIndex: null, open: false });
     setHoverSeatDropIndex(null);
     setHoverSeatCard(null);
@@ -824,6 +913,7 @@ const Table = () => {
 
   actions.closeMenu = useCallback(() => {
     setPickCountOpen(false);
+    setSplitCountOpen(false);
     setInteraction((prev) => ({
       ...prev,
       menu: { ...prev.menu, open: false, stackId: null }
@@ -1544,17 +1634,18 @@ const Table = () => {
   );
 
   const findTableOverlapStackId = useCallback(
-    (draggedX, draggedY, excludedId) => {
+    (draggedX, draggedY, excludedId, draggedBounds = { width: cardSize.width, height: cardSize.height }) => {
       for (let i = tableStacks.length - 1; i >= 0; i -= 1) {
         const stack = tableStacks[i];
         if (stack.id === excludedId) {
           continue;
         }
+        const stackBounds = getStackBounds(stack, cardSize);
         const overlaps =
-          draggedX < stack.x + cardSize.width &&
-          draggedX + cardSize.width > stack.x &&
-          draggedY < stack.y + cardSize.height &&
-          draggedY + cardSize.height > stack.y;
+          draggedX < stack.x + stackBounds.width &&
+          draggedX + draggedBounds.width > stack.x &&
+          draggedY < stack.y + stackBounds.height &&
+          draggedY + draggedBounds.height > stack.y;
         if (overlaps) {
           return stack.id;
         }
@@ -1565,23 +1656,26 @@ const Table = () => {
   );
 
   const interactiveStackRects = useMemo(() => {
-    return tableStacks.map((stack) => ({ id: stack.id, x: stack.x, y: stack.y }));
-  }, [tableStacks]);
+    return tableStacks.map((stack) => {
+      const bounds = getStackBounds(stack, cardSize);
+      return { id: stack.id, x: stack.x, y: stack.y, width: bounds.width, height: bounds.height };
+    });
+  }, [cardSize, tableStacks]);
 
   const hitTestStack = useCallback((pointerX, pointerY) => {
     for (let i = interactiveStackRects.length - 1; i >= 0; i -= 1) {
       const stack = interactiveStackRects[i];
       if (
         pointerX >= stack.x &&
-        pointerX <= stack.x + cardSize.width &&
+        pointerX <= stack.x + stack.width &&
         pointerY >= stack.y &&
-        pointerY <= stack.y + cardSize.height
+        pointerY <= stack.y + stack.height
       ) {
         return stack.id;
       }
     }
     return null;
-  }, [cardSize.height, cardSize.width, interactiveStackRects]);
+  }, [interactiveStackRects]);
 
   const bringStackToFront = useCallback((stackId) => {
     setStacks((prev) => {
@@ -2023,15 +2117,38 @@ const Table = () => {
       if (origin.stackId) {
         const source = prev.find((stack) => stack.id === origin.stackId);
         if (source) {
-          return prev.map((stack) =>
-            stack.id === origin.stackId
-              ? {
-                  ...stack,
-                  cardIds: origin.cardIdsBefore ?? [...stack.cardIds, ...held.cardIds]
-                }
-              : stack
-          );
+          return prev.map((stack) => {
+            if (stack.id !== origin.stackId) {
+              return stack;
+            }
+            if (held.kind === 'chips' || origin.kind === 'chips') {
+              return {
+                ...stack,
+                kind: 'chips',
+                denom: origin.denom ?? held.denom ?? stack.denom,
+                count: origin.countBefore ?? ((stack.count ?? 0) + (held.count ?? 0))
+              };
+            }
+            return {
+              ...stack,
+              cardIds: origin.cardIdsBefore ?? [...stack.cardIds, ...(held.cardIds ?? [])]
+            };
+          });
         }
+      }
+      if (held.kind === 'chips') {
+        return prev.concat({
+          id: origin.stackId ?? held.stackId,
+          kind: 'chips',
+          denom: held.denom,
+          count: origin.countBefore ?? held.count,
+          x: origin.x ?? 0,
+          y: origin.y ?? 0,
+          z: 0,
+          zone: 'table',
+          ownerSeatIndex: null,
+          rotation: 0
+        });
       }
       return prev.concat({
         id: origin.stackId ?? held.stackId,
@@ -2055,29 +2172,77 @@ const Table = () => {
         if (!source) {
           return prev;
         }
-        const total = source.cardIds.length;
+        const isChips = isChipStack(source);
+        const isCards = isCardStack(source);
+        if (!isChips && !isCards) {
+          return prev;
+        }
+        const total = isChips ? source.count : source.cardIds.length;
         if (!total) {
           return prev;
         }
         const requested =
           count === 'all' ? total : Math.max(1, Number.parseInt(count, 10) || 1);
         const clamped = Math.min(requested, total);
-        const remaining = source.cardIds.slice(0, total - clamped);
-        const pickedIds = source.cardIds.slice(total - clamped);
-        if (!pickedIds.length) {
+        if (clamped <= 0) {
           return prev;
         }
+
         const heldStackId = createStackId();
         const origin = {
           stackId: source.id,
           x: source.x,
           y: source.y,
           faceUp: source.faceUp,
-          cardIdsBefore: source.cardIds
+          cardIdsBefore: source.cardIds,
+          countBefore: source.count,
+          denom: source.denom,
+          kind: source.kind
         };
         const originX = origin.x ?? 0;
         const originY = origin.y ?? 0;
-        const offset = { x: cardSize.width / 2, y: cardSize.height / 2 };
+        const bounds = getStackBounds(source, cardSize);
+        const offset = { x: bounds.width / 2, y: bounds.height / 2 };
+
+        if (isChips) {
+          const remaining = (source.count ?? 0) - clamped;
+          setInteraction((prevInteraction) => ({
+            ...prevInteraction,
+            mode: 'holdStack',
+            pointerId,
+            source: { stackId },
+            held: {
+              stackId: heldStackId,
+              kind: 'chips',
+              denom: source.denom,
+              count: clamped,
+              origin
+            },
+            drag: {
+              stackId: heldStackId,
+              startWorld: pointerPosition ?? { x: originX, y: originY },
+              offset,
+              originXY: { x: originX, y: originY }
+            },
+            ...defaultRmbState,
+            selectedStackId:
+              remaining === 0 && prevInteraction.selectedStackId === stackId
+                ? null
+                : prevInteraction.selectedStackId,
+            menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
+          }));
+          return prev
+            .map((stack) =>
+              stack.id === stackId ? { ...stack, count: remaining } : stack
+            )
+            .filter((stack) => stack.id !== stackId || (stack.count ?? 0) > 0);
+        }
+
+        const remaining = source.cardIds.slice(0, total - clamped);
+        const pickedIds = source.cardIds.slice(total - clamped);
+        if (!pickedIds.length) {
+          return prev;
+        }
         setInteraction((prevInteraction) => ({
           ...prevInteraction,
           mode: 'holdStack',
@@ -2109,7 +2274,7 @@ const Table = () => {
           .filter((stack) => stack.id !== stackId || remaining.length > 0);
       });
     },
-    [cardSize.height, cardSize.width, createStackId, defaultRmbState, setStacks]
+    [cardSize, createStackId, defaultRmbState, setStacks]
   );
 
   const startDragStack = useCallback(
@@ -2175,10 +2340,25 @@ const Table = () => {
 
   const mergeStacks = useCallback(
     (sourceId, targetId) => {
+      let mergedChips = null;
       setStacks((prev) => {
         const source = prev.find((stack) => stack.id === sourceId);
         const target = prev.find((stack) => stack.id === targetId);
         if (!source || !target) {
+          return prev;
+        }
+        if (isChipStack(source) || isChipStack(target)) {
+          if (!isChipStack(source) || !isChipStack(target) || source.denom !== target.denom) {
+            return prev;
+          }
+          mergedChips = { denom: source.denom, added: source.count ?? 0 };
+          const merged = {
+            ...target,
+            count: (target.count ?? 0) + (source.count ?? 0)
+          };
+          return prev.filter((stack) => stack.id !== sourceId && stack.id !== targetId).concat(merged);
+        }
+        if (!isCardStack(source) || !isCardStack(target)) {
           return prev;
         }
         const merged = {
@@ -2187,8 +2367,11 @@ const Table = () => {
         };
         return prev.filter((stack) => stack.id !== sourceId && stack.id !== targetId).concat(merged);
       });
+      if (mergedChips) {
+        logAction(`${myName} combined $${mergedChips.denom} chips (+${mergedChips.added})`);
+      }
     },
-    [setStacks]
+    [logAction, myName, setStacks]
   );
 
   const dropHeld = useCallback(
@@ -2197,6 +2380,44 @@ const Table = () => {
       if (!held || !interaction.drag) {
         return;
       }
+      if (!isCardStack(held)) {
+        const pointerPosition = pointerWorld ?? lastPointerWorldRef.current;
+        if (!pointerPosition) {
+          return;
+        }
+        const nextTopLeft = getHeldTopLeft(pointerPosition, interaction.drag.offset);
+        const clamped = clampTopLeftToFelt(nextTopLeft);
+        const placement = clamped.position ?? nextTopLeft;
+        const overlapId = findTableOverlapStackId(
+          placement.x,
+          placement.y,
+          null,
+          getStackBounds(held, cardSize)
+        );
+        if (overlapId) {
+          mergeStacks(held.stackId, overlapId);
+          actions.clearInteraction({ preserveSelection: true, nextSelectedStackId: overlapId });
+          return;
+        }
+        setStacks((prev) =>
+          prev.concat({
+            id: held.stackId,
+            kind: held.kind,
+            denom: held.denom,
+            count: held.count,
+            sides: held.sides,
+            value: held.value,
+            x: placement.x,
+            y: placement.y,
+            rotation: 0,
+            zone: 'table',
+            ownerSeatIndex: null
+          })
+        );
+        actions.clearInteraction({ preserveSelection: true, nextSelectedStackId: held.stackId });
+        return;
+      }
+
       const seatDropIndex =
         clientX !== undefined && clientY !== undefined
           ? getSeatIndexAtScreenPoint(clientX, clientY)
@@ -2231,7 +2452,7 @@ const Table = () => {
       if (overlapId) {
         setStacks((prev) => {
           const target = prev.find((stack) => stack.id === overlapId);
-          if (!target) {
+          if (!target || !isCardStack(target)) {
             return prev;
           }
           const merged = {
@@ -2245,20 +2466,19 @@ const Table = () => {
           nextSelectedStackId: overlapId
         });
         return;
-      } else {
-        setStacks((prev) =>
-          prev.concat({
-            id: held.stackId,
-            x: placement.x,
-            y: placement.y,
-            rotation: 0,
-            faceUp: held.faceUp ?? true,
-            cardIds: held.cardIds,
-            zone: 'table',
-            ownerSeatIndex: null
-          })
-        );
       }
+      setStacks((prev) =>
+        prev.concat({
+          id: held.stackId,
+          x: placement.x,
+          y: placement.y,
+          rotation: 0,
+          faceUp: held.faceUp ?? true,
+          cardIds: held.cardIds,
+          zone: 'table',
+          ownerSeatIndex: null
+        })
+      );
       actions.clearInteraction({
         preserveSelection: true,
         nextSelectedStackId: held.stackId
@@ -2274,8 +2494,8 @@ const Table = () => {
       getSeatIndexAtScreenPoint,
       interaction.drag,
       interaction.held,
-      interaction.selectedStackId,
       logDealt,
+      mergeStacks,
       moveCardIdsToHand,
       setStacks
     ]
@@ -2292,30 +2512,38 @@ const Table = () => {
         actions.clearInteraction({ preserveSelection: false });
         return;
       }
-      const seatDropIndex =
-        clientX !== undefined && clientY !== undefined
-          ? getSeatIndexAtScreenPoint(clientX, clientY)
-          : null;
-      if (seatDropIndex !== null && seatDropIndex !== undefined) {
-        moveCardIdsToHand(seatDropIndex, draggedStack.cardIds);
-        logDealt(seatDropIndex, draggedStack.cardIds.length);
-        setStacks((prev) => prev.filter((stack) => stack.id !== draggedId));
-        actions.clearInteraction();
-        return;
+      if (isCardStack(draggedStack)) {
+        const seatDropIndex =
+          clientX !== undefined && clientY !== undefined
+            ? getSeatIndexAtScreenPoint(clientX, clientY)
+            : null;
+        if (seatDropIndex !== null && seatDropIndex !== undefined) {
+          moveCardIdsToHand(seatDropIndex, draggedStack.cardIds);
+          logDealt(seatDropIndex, draggedStack.cardIds.length);
+          setStacks((prev) => prev.filter((stack) => stack.id !== draggedId));
+          actions.clearInteraction();
+          return;
+        }
+        const placement = { x: draggedStack.x, y: draggedStack.y };
+        const handSeatIndex = getHandZoneAtPoint(
+          placement.x + cardSize.width / 2,
+          placement.y + cardSize.height / 2
+        );
+        if (handSeatIndex !== null && handSeatIndex !== undefined) {
+          moveCardIdsToHand(handSeatIndex, draggedStack.cardIds);
+          logDealt(handSeatIndex, draggedStack.cardIds.length);
+          setStacks((prev) => prev.filter((stack) => stack.id !== draggedId));
+          actions.clearInteraction();
+          return;
+        }
       }
       const placement = { x: draggedStack.x, y: draggedStack.y };
-      const handSeatIndex = getHandZoneAtPoint(
-        placement.x + cardSize.width / 2,
-        placement.y + cardSize.height / 2
+      const overlapId = findTableOverlapStackId(
+        placement.x,
+        placement.y,
+        draggedId,
+        getStackBounds(draggedStack, cardSize)
       );
-      if (handSeatIndex !== null && handSeatIndex !== undefined) {
-        moveCardIdsToHand(handSeatIndex, draggedStack.cardIds);
-        logDealt(handSeatIndex, draggedStack.cardIds.length);
-        setStacks((prev) => prev.filter((stack) => stack.id !== draggedId));
-        actions.clearInteraction();
-        return;
-      }
-      const overlapId = findTableOverlapStackId(placement.x, placement.y, draggedId);
       if (overlapId) {
         mergeStacks(draggedId, overlapId);
         actions.clearInteraction({
@@ -2373,7 +2601,7 @@ const Table = () => {
 
   const placeOneFromHeld = useCallback(
     (pointerWorld) => {
-      if (!interaction.held || !interaction.drag) {
+      if (!interaction.held || !interaction.drag || !isCardStack(interaction.held)) {
         return;
       }
       const pointerPosition = pointerWorld ?? lastPointerWorldRef.current;
@@ -2435,6 +2663,65 @@ const Table = () => {
       interaction.held,
       myName,
       logAction,
+      setStacks
+    ]
+  );
+
+
+  const placeOneChipFromHeld = useCallback(
+    (pointerWorld) => {
+      if (!interaction.held || !interaction.drag || interaction.held.kind !== 'chips') {
+        return;
+      }
+      const pointerPosition = pointerWorld ?? lastPointerWorldRef.current;
+      if (!pointerPosition) {
+        return;
+      }
+      const nextTopLeft = getHeldTopLeft(pointerPosition, interaction.drag.offset);
+      const placement = clampTopLeftToFelt(nextTopLeft).position ?? nextTopLeft;
+      const overlapId = findTableOverlapStackId(placement.x, placement.y, null, { width: 88, height: 88 });
+      const placedStackId = createStackId();
+      setStacks((prev) => {
+        const next = prev.concat({
+          id: placedStackId,
+          kind: 'chips',
+          denom: interaction.held.denom,
+          count: 1,
+          x: placement.x,
+          y: placement.y,
+          z: 0,
+          zone: 'table',
+          ownerSeatIndex: null,
+          rotation: 0
+        });
+        if (!overlapId) {
+          return next;
+        }
+        const target = next.find((stack) => stack.id === overlapId);
+        if (!target || !isChipStack(target) || target.denom !== interaction.held.denom) {
+          return next;
+        }
+        return next
+          .filter((stack) => stack.id !== overlapId && stack.id !== placedStackId)
+          .concat({ ...target, count: (target.count ?? 0) + 1 });
+      });
+      const remaining = (interaction.held.count ?? 0) - 1;
+      if (remaining <= 0) {
+        actions.clearInteraction({ preserveSelection: true });
+        return;
+      }
+      setInteraction((prev) => ({
+        ...prev,
+        held: prev.held ? { ...prev.held, count: remaining } : prev.held
+      }));
+    },
+    [
+      actions.clearInteraction,
+      clampTopLeftToFelt,
+      createStackId,
+      findTableOverlapStackId,
+      interaction.drag,
+      interaction.held,
       setStacks
     ]
   );
@@ -2703,6 +2990,52 @@ const Table = () => {
     logAction(`${myName} removed a stack`);
   }, [interaction.selectedStackId, logAction, myName, setStacks]);
 
+
+  actions.splitSelectedChipStack = useCallback((count) => {
+    if (!interaction.selectedStackId) {
+      return;
+    }
+    const parsed = Math.max(1, Number.parseInt(count, 10) || 1);
+    let nextSelected = null;
+    setStacks((prev) => {
+      const source = prev.find((stack) => stack.id === interaction.selectedStackId);
+      if (!source || !isChipStack(source)) {
+        return prev;
+      }
+      if (parsed >= source.count) {
+        return prev;
+      }
+      const splitId = createStackId();
+      nextSelected = splitId;
+      const sourceBounds = getStackBounds(source, cardSize);
+      const splitStack = {
+        id: splitId,
+        kind: 'chips',
+        denom: source.denom,
+        count: parsed,
+        x: source.x + sourceBounds.width + 18,
+        y: source.y,
+        z: 0,
+        rotation: 0,
+        zone: 'table',
+        ownerSeatIndex: null
+      };
+      return prev
+        .map((stack) =>
+          stack.id === source.id ? { ...stack, count: source.count - parsed } : stack
+        )
+        .concat(splitStack);
+    });
+    if (nextSelected) {
+      setInteraction((prev) => ({
+        ...prev,
+        selectedStackId: nextSelected,
+        menu: { ...prev.menu, open: false, stackId: null }
+      }));
+      logAction(`${myName} split ${parsed} chips`);
+    }
+  }, [cardSize, createStackId, interaction.selectedStackId, logAction, myName, setStacks]);
+
   actions.handleFlipSelected = useCallback(() => {
     if (!interaction.selectedStackId) {
       return;
@@ -2747,6 +3080,27 @@ const Table = () => {
     );
     logAction(`${myName} shuffled a stack`);
   }, [interaction.selectedStackId, myName, logAction, setStacks]);
+
+
+  actions.handleRollSelectedDie = useCallback(() => {
+    if (!interaction.selectedStackId) {
+      return;
+    }
+    let rolled = null;
+    setStacks((prev) =>
+      prev.map((stack) => {
+        if (stack.id !== interaction.selectedStackId || !isDieStack(stack)) {
+          return stack;
+        }
+        const value = Math.floor(Math.random() * stack.sides) + 1;
+        rolled = { sides: stack.sides, value };
+        return { ...stack, value };
+      })
+    );
+    if (rolled) {
+      logAction(`${myName} rolled d${rolled.sides} → ${rolled.value}`);
+    }
+  }, [interaction.selectedStackId, logAction, myName, setStacks]);
 
   actions.handleKeyDown = useCallback(
     (event) => {
@@ -2795,6 +3149,11 @@ const Table = () => {
       if (lowerKey === 's') {
         event.preventDefault();
         actions.handleShuffleSelected?.();
+        return;
+      }
+      if (lowerKey === 'r') {
+        event.preventDefault();
+        actions.handleRollSelectedDie?.();
         return;
       }
       if (event.key === '1' || event.key === '5' || event.key === '0') {
@@ -3139,7 +3498,15 @@ const Table = () => {
             (now - interaction.rmbDownAt > HOLD_DELAY_MS || distanceFromStart > HOLD_MOVE_PX)
           ) {
             if (interaction.held.cardIds.length <= 1) {
-              placeOneFromHeld(pointerWorld);
+              if (interaction.held?.kind === 'chips') {
+                placeOneChipFromHeld(pointerWorld);
+              } else {
+                if (interaction.held?.kind === 'chips') {
+            placeOneChipFromHeld(pointerWorld);
+          } else {
+            placeOneFromHeld(pointerWorld);
+          }
+              }
               setInteraction((prev) => ({
                 ...prev,
                 ...defaultRmbState
@@ -3228,7 +3595,11 @@ const Table = () => {
       const isBlurEvent = event.type === 'blur' || event.type === 'pointercancel';
       if (interaction.rmbDown && (isRightButton || isBlurEvent)) {
         if (!interaction.isSliding && isRightButton) {
-          placeOneFromHeld(pointerWorld);
+          if (interaction.held?.kind === 'chips') {
+            placeOneChipFromHeld(pointerWorld);
+          } else {
+            placeOneFromHeld(pointerWorld);
+          }
         }
         setInteraction((prev) => ({
           ...prev,
@@ -3408,9 +3779,9 @@ const Table = () => {
   const filteredItemSpawnerItems = useMemo(() => {
     const query = itemSpawnerSearchQuery.trim().toLowerCase();
     if (!query) {
-      return CUSTOM_LAYOUT_ITEMS;
+      return ITEM_SPAWNER_ITEMS;
     }
-    return CUSTOM_LAYOUT_ITEMS.filter((item) => item.label.toLowerCase().includes(query));
+    return ITEM_SPAWNER_ITEMS.filter((item) => item.label.toLowerCase().includes(query));
   }, [itemSpawnerSearchQuery]);
 
   const selectedItemSpawnerCount = useMemo(
@@ -3423,69 +3794,111 @@ const Table = () => {
   );
 
   const handleSpawnItems = useCallback(() => {
-    const selectedItems = CUSTOM_LAYOUT_ITEMS.flatMap((item) => {
+    const selectedItems = ITEM_SPAWNER_ITEMS.flatMap((item) => {
       const state = itemSpawnerSelected[item.id];
       if (!state?.checked) {
         return [];
       }
       const qty = Math.max(1, Math.min(CUSTOM_LAYOUT_MAX_QTY, Math.floor(state.qty || 1)));
-      return Array.from({ length: qty }, () => item);
+      return [{ item, qty }];
     });
     if (!selectedItems.length) {
       return;
     }
-    const center = isLegacyDisabledShape ? getLegacyDisabledShapeSpawnPoint() : { x: tableRect.width / 2, y: tableRect.height / 2 };
-    const spacing = cardSize.width * 1.6;
-    const startX = center.x - (selectedItems.length - 1) * 0.5 * spacing - cardSize.width / 2;
-    const y = center.y - cardSize.height / 2;
+
+    const center = isLegacyDisabledShape
+      ? getLegacyDisabledShapeSpawnPoint()
+      : { x: tableRect.width / 2, y: tableRect.height / 2 };
+
     const timestampPrefix = Date.now().toString(36);
-    const stackEntries = [];
     let cardCounter = 0;
-    selectedItems.forEach((item, index) => {
-      const cardPrefix = `${item.id}-${timestampPrefix}-${cardCounter}`;
-      cardCounter += 1;
-      const cards = buildSpawnCardsForItem(item, cardPrefix);
-      stackEntries.push({ item, cards, x: startX + index * spacing, y });
-    });
-    setCardsById((prev) => {
-      const next = { ...prev };
-      stackEntries.forEach((entry) => {
-        entry.cards.forEach((card) => {
-          next[card.id] = card;
-        });
-      });
-      return next;
-    });
-    const defaultFaceUp = !settings.resetFaceDown;
-    setStacks((prev) =>
-      prev.concat(
-        stackEntries.map((entry) => ({
+    const spawnEntries = [];
+    const spawnedCards = [];
+
+    selectedItems.forEach(({ item, qty }) => {
+      if (item.type === 'chips') {
+        spawnEntries.push({
           id: createStackId(),
-          x: entry.x,
-          y: entry.y,
-          rotation: 0,
-          faceUp: defaultFaceUp,
-          cardIds: entry.cards.map((card) => card.id),
+          kind: 'chips',
+          denom: item.denom,
+          count: qty,
+          x: 0,
+          y: 0,
+          z: 0,
           zone: 'table',
           ownerSeatIndex: null,
-          cardStyle: entry.item.style
-        }))
-      )
-    );
-    const logSummary = CUSTOM_LAYOUT_ITEMS.map((item) => {
-      const qty = Math.max(
-        0,
-        Math.floor(itemSpawnerSelected[item.id]?.checked ? itemSpawnerSelected[item.id]?.qty || 1 : 0)
-      );
-      return qty > 0 ? `${qty}× ${item.label}` : null;
-    }).filter(Boolean);
+          rotation: 0
+        });
+        return;
+      }
+      if (item.type === 'die') {
+        for (let i = 0; i < qty; i += 1) {
+          spawnEntries.push({
+            id: createStackId(),
+            kind: 'die',
+            sides: item.sides,
+            value: Math.floor(Math.random() * item.sides) + 1,
+            x: 0,
+            y: 0,
+            zone: 'table',
+            ownerSeatIndex: null,
+            rotation: 0
+          });
+        }
+        return;
+      }
+      for (let i = 0; i < qty; i += 1) {
+        const cardPrefix = `${item.id}-${timestampPrefix}-${cardCounter}`;
+        cardCounter += 1;
+        const cards = buildSpawnCardsForItem(item, cardPrefix);
+        spawnedCards.push(...cards);
+        spawnEntries.push({
+          id: createStackId(),
+          x: 0,
+          y: 0,
+          rotation: 0,
+          faceUp: !settings.resetFaceDown,
+          cardIds: cards.map((card) => card.id),
+          zone: 'table',
+          ownerSeatIndex: null,
+          cardStyle: item.style
+        });
+      }
+    });
+
+    const spacing = cardSize.width * 1.6;
+    const startX = center.x - (spawnEntries.length - 1) * 0.5 * spacing;
+    const positionedEntries = spawnEntries.map((entry, index) => {
+      const bounds = getStackBounds(entry, cardSize);
+      return {
+        ...entry,
+        x: startX + index * spacing - bounds.width / 2,
+        y: center.y - bounds.height / 2,
+        z: index
+      };
+    });
+
+    if (spawnedCards.length) {
+      setCardsById((prev) => {
+        const next = { ...prev };
+        spawnedCards.forEach((card) => {
+          next[card.id] = card;
+        });
+        return next;
+      });
+    }
+
+    setStacks((prev) => prev.concat(positionedEntries));
+
+    const logSummary = selectedItems
+      .map(({ item, qty }) => formatSpawnSummaryItem(item, qty))
+      .filter(Boolean);
     if (logSummary.length) {
       logAction(`Spawned: ${logSummary.join(', ')}`);
     }
     setItemSpawnerOpen(false);
   }, [
-    cardSize.height,
-    cardSize.width,
+    cardSize,
     createStackId,
     getLegacyDisabledShapeSpawnPoint,
     isLegacyDisabledShape,
@@ -3816,6 +4229,7 @@ const Table = () => {
     cancelDrag: actions.cancelDrag,
     handleFlipSelected: actions.handleFlipSelected,
     handleShuffleSelected: actions.handleShuffleSelected,
+    handleRollSelectedDie: actions.handleRollSelectedDie,
     handleUndo: actions.handleUndo,
     promptRemoveSelected: actions.promptRemoveSelected,
     handleRemoveSelected: actions.handleRemoveSelected,
@@ -3881,7 +4295,12 @@ const Table = () => {
     interaction.held &&
     heldWorldPosition &&
     !hoverHandSeatId
-      ? findTableOverlapStackId(heldWorldPosition.x, heldWorldPosition.y, null)
+      ? findTableOverlapStackId(
+          heldWorldPosition.x,
+          heldWorldPosition.y,
+          null,
+          getStackBounds(interaction.held, cardSize)
+        )
       : null;
   const menuBelow = selectedStack ? selectedStack.y < 140 : false;
   const menuPosition =
@@ -3891,9 +4310,13 @@ const Table = () => {
           top: interaction.menu.screenY
         }
       : null;
-  const menuStackCount = selectedStack ? selectedStack.cardIds.length : 0;
+  const menuStackCount = selectedStack
+    ? isChipStack(selectedStack)
+      ? selectedStack.count
+      : selectedStack.cardIds?.length ?? 0
+    : 0;
   const previewTopCardId =
-    selectedStack && selectedStack.cardIds.length
+    selectedStack && isCardStack(selectedStack) && selectedStack.cardIds.length
       ? selectedStack.cardIds[selectedStack.cardIds.length - 1]
       : null;
   const previewTopCardFaceUp = previewTopCardId
@@ -4312,8 +4735,10 @@ const Table = () => {
                     />
                   ) : null}
                   {renderStacks.map((stack, index) => {
-                    const topCardId = stack.cardIds[stack.cardIds.length - 1];
-                    const topCard = cardsById[topCardId];
+                    const topCardId = isCardStack(stack)
+                      ? stack.cardIds[stack.cardIds.length - 1]
+                      : null;
+                    const topCard = topCardId ? cardsById[topCardId] : null;
                     const isSelectedStack = stack.id === highlightStackId;
                     const isHeldStack =
                       stack.id === HELD_STACK_ID ||
@@ -4336,8 +4761,10 @@ const Table = () => {
                               ? 'merge-target'
                               : '';
                     const zIndex = index + 1;
+                    const stackBounds = getStackBounds(stack, cardSize);
                     const showBadge =
                       !stack.isHeldVisual &&
+                      isCardStack(stack) &&
                       stack.cardIds.length > 1 &&
                       settings.stackCountDisplayMode !== 'off' &&
                       (settings.stackCountDisplayMode === 'always' ||
@@ -4356,6 +4783,8 @@ const Table = () => {
                         draggable={false}
                         style={{
                           transform: `translate(${stack.x}px, ${stack.y}px) rotate(${stack.rotation}deg)`,
+                          width: stackBounds.width,
+                          height: stackBounds.height,
                           zIndex
                         }}
                         onDragStart={preventNativeDrag}
@@ -4373,6 +4802,16 @@ const Table = () => {
                             <span className="table-token__label">
                               {stack.token?.label ?? 'Token'}
                             </span>
+                          </div>
+                        ) : isChipStack(stack) ? (
+                          <div className="chip-stack" style={{ '--chip-color': CHIP_COLORS[stack.denom] ?? '#f4f5f7' }}>
+                            <div className="chip-stack__disc" />
+                            <div className="chip-stack__label">{getChipStackLabel(stack)}</div>
+                          </div>
+                        ) : isDieStack(stack) ? (
+                          <div className="die-stack">
+                            <div className="die-stack__type">d{stack.sides}</div>
+                            <div className="die-stack__value">{stack.value}</div>
                           </div>
                         ) : (
                           <Card
@@ -4467,24 +4906,36 @@ const Table = () => {
                 aria-hidden="true"
                 style={{ '--card-scale': viewTransform.cardScale * combinedScale }}
               >
-                <Card
-                  id={interaction.held.stackId}
-                  x={dragCardPosition.x}
-                  y={dragCardPosition.y}
-                  rotation={0}
-                  faceUp={interaction.held.faceUp ?? true}
-                  cardStyle={settings.cardStyle}
-                  colorBlindMode={uiPrefs.colorBlindMode}
-                  zIndex={2000}
-                  rank={heldTopCard?.rank}
-                  suit={heldTopCard?.suit}
-                  color={heldTopCard?.color}
-                  isHeld
-                  isSelected={false}
-                  onPointerDown={() => {}}
-                  onContextMenu={(event) => event.preventDefault()}
-                  onNativeDrag={preventNativeDrag}
-                />
+                {interaction.held.kind === 'chips' ? (
+                  <div className="chip-stack" style={{ transform: `translate(${dragCardPosition.x}px, ${dragCardPosition.y}px)`, '--chip-color': CHIP_COLORS[interaction.held.denom] ?? '#f4f5f7' }}>
+                    <div className="chip-stack__disc" />
+                    <div className="chip-stack__label">{getChipStackLabel(interaction.held)}</div>
+                  </div>
+                ) : interaction.held.kind === 'die' ? (
+                  <div className="die-stack" style={{ transform: `translate(${dragCardPosition.x}px, ${dragCardPosition.y}px)` }}>
+                    <div className="die-stack__type">d{interaction.held.sides}</div>
+                    <div className="die-stack__value">{interaction.held.value}</div>
+                  </div>
+                ) : (
+                  <Card
+                    id={interaction.held.stackId}
+                    x={dragCardPosition.x}
+                    y={dragCardPosition.y}
+                    rotation={0}
+                    faceUp={interaction.held.faceUp ?? true}
+                    cardStyle={settings.cardStyle}
+                    colorBlindMode={uiPrefs.colorBlindMode}
+                    zIndex={2000}
+                    rank={heldTopCard?.rank}
+                    suit={heldTopCard?.suit}
+                    color={heldTopCard?.color}
+                    isHeld
+                    isSelected={false}
+                    onPointerDown={() => {}}
+                    onContextMenu={(event) => event.preventDefault()}
+                    onNativeDrag={preventNativeDrag}
+                  />
+                )}
               </div>,
               uiOverlayRoot
             )
@@ -4987,6 +5438,7 @@ const Table = () => {
                               setItemSpawnerSelected((prev) => ({ ...prev, [item.id]: { checked: prev[item.id]?.checked ?? false, qty } }));
                             }} />
                           </div>
+                          {item.usage ? <div className="table-settings__hint">Usage: {item.usage}</div> : null}
                         </div>
                       );
                     })}
@@ -5102,56 +5554,90 @@ const Table = () => {
               style={menuPosition}
               onPointerDown={(event) => event.stopPropagation()}
             >
-              <button
-                type="button"
-                className="stack-menu__button"
-                onClick={() => {
-                  actions.pickupFromStack?.(selectedStack.id, 'all');
-                  actions.closeMenu?.();
-                }}
-              >
-                Pick up full stack
-              </button>
-              <button
-                type="button"
-                className="stack-menu__button"
-                onClick={() => {
-                  if (selectedStack.cardIds.length < 2) {
-                    return;
-                  }
-                  actions.pickupFromStack?.(
-                    selectedStack.id,
-                    Math.ceil(selectedStack.cardIds.length / 2)
-                  );
-                  actions.closeMenu?.();
-                }}
-              >
-                Pick up half stack
-              </button>
-              <button
-                type="button"
-                className="stack-menu__button"
-                onClick={() => {
-                  actions.pickupFromStack?.(selectedStack.id, 1);
-                  actions.closeMenu?.();
-                }}
-              >
-                Pick up 1 card
-              </button>
-              <button
-                type="button"
-                className="stack-menu__button"
-                onClick={() => {
-                  setPickCountOpen(true);
-                  setPickCountValue('1');
-                }}
-              >
-                Pick up N cards...
-              </button>
+              {isDieStack(selectedStack) ? (
+                <button
+                  type="button"
+                  className="stack-menu__button"
+                  onClick={() => {
+                    actions.handleRollSelectedDie?.();
+                    actions.closeMenu?.();
+                  }}
+                >
+                  Roll
+                </button>
+              ) : null}
+              {isChipStack(selectedStack) ? (
+                <>
+                  <button
+                    type="button"
+                    className="stack-menu__button"
+                    onClick={() => {
+                      actions.pickupFromStack?.(selectedStack.id, 'all');
+                      actions.closeMenu?.();
+                    }}
+                  >
+                    Pick up full stack
+                  </button>
+                  <button type="button" className="stack-menu__button" onClick={() => { actions.pickupFromStack?.(selectedStack.id, 1); actions.closeMenu?.(); }}>Pick up 1</button>
+                  <button type="button" className="stack-menu__button" onClick={() => { actions.pickupFromStack?.(selectedStack.id, 5); actions.closeMenu?.(); }}>Pick up 5</button>
+                  <button type="button" className="stack-menu__button" onClick={() => { actions.pickupFromStack?.(selectedStack.id, 10); actions.closeMenu?.(); }}>Pick up 10</button>
+                  <button type="button" className="stack-menu__button" onClick={() => { setPickCountOpen(true); setPickCountValue('1'); }}>Pick up N</button>
+                  <button type="button" className="stack-menu__button" onClick={() => { setSplitCountOpen(true); setSplitCountValue('1'); }}>Split…</button>
+                </>
+              ) : isCardStack(selectedStack) ? (
+                <>
+                  <button
+                    type="button"
+                    className="stack-menu__button"
+                    onClick={() => {
+                      actions.pickupFromStack?.(selectedStack.id, 'all');
+                      actions.closeMenu?.();
+                    }}
+                  >
+                    Pick up full stack
+                  </button>
+                  <button
+                    type="button"
+                    className="stack-menu__button"
+                    onClick={() => {
+                      if (selectedStack.cardIds.length < 2) {
+                        return;
+                      }
+                      actions.pickupFromStack?.(
+                        selectedStack.id,
+                        Math.ceil(selectedStack.cardIds.length / 2)
+                      );
+                      actions.closeMenu?.();
+                    }}
+                  >
+                    Pick up half stack
+                  </button>
+                  <button
+                    type="button"
+                    className="stack-menu__button"
+                    onClick={() => {
+                      actions.pickupFromStack?.(selectedStack.id, 1);
+                      actions.closeMenu?.();
+                    }}
+                  >
+                    Pick up 1 card
+                  </button>
+                  <button
+                    type="button"
+                    className="stack-menu__button"
+                    onClick={() => {
+                      setPickCountOpen(true);
+                      setPickCountValue('1');
+                    }}
+                  >
+                    Pick up N cards...
+                  </button>
+                </>
+              ) : null}
               {pickCountOpen ? (
                 <div className="stack-menu__picker">
                   <label className="stack-menu__label" htmlFor="pick-count-input">
-                    Cards to pick up
+                    {isChipStack(selectedStack) ? 'Chips to pick up' : 'Cards to pick up'}
                   </label>
                   <input
                     id="pick-count-input"
@@ -5185,6 +5671,16 @@ const Table = () => {
                   </div>
                 </div>
               ) : null}
+              {splitCountOpen && isChipStack(selectedStack) ? (
+                <div className="stack-menu__picker">
+                  <label className="stack-menu__label" htmlFor="split-count-input">Chips to split</label>
+                  <input id="split-count-input" className="stack-menu__input" type="number" min="1" max={Math.max(1, menuStackCount - 1)} value={splitCountValue} onChange={(event) => setSplitCountValue(event.target.value)} />
+                  <div className="stack-menu__actions">
+                    <button type="button" className="stack-menu__button stack-menu__button--primary" onClick={() => { actions.splitSelectedChipStack?.(splitCountValue); actions.closeMenu?.(); }}>Split</button>
+                    <button type="button" className="stack-menu__button stack-menu__button--secondary" onClick={() => setSplitCountOpen(false)}>Cancel</button>
+                  </div>
+                </div>
+              ) : null}
               <button
                 type="button"
                 className="stack-menu__button stack-menu__button--danger"
@@ -5195,7 +5691,7 @@ const Table = () => {
               >
                 Remove Item
               </button>
-              {previewTopCardId ? (
+              {isCardStack(selectedStack) && previewTopCardId ? (
                 <button
                   type="button"
                   className="stack-menu__button"
@@ -5207,26 +5703,30 @@ const Table = () => {
                   Preview top card
                 </button>
               ) : null}
-              <button
-                type="button"
-                className="stack-menu__button"
-                onClick={() => {
-                  actions.handleFlipSelected?.();
-                  actions.closeMenu?.();
-                }}
-              >
-                Flip
-              </button>
-              <button
-                type="button"
-                className="stack-menu__button"
-                onClick={() => {
-                  actions.handleShuffleSelected?.();
-                  actions.closeMenu?.();
-                }}
-              >
-                Shuffle
-              </button>
+              {isCardStack(selectedStack) ? (
+                <>
+                  <button
+                    type="button"
+                    className="stack-menu__button"
+                    onClick={() => {
+                      actions.handleFlipSelected?.();
+                      actions.closeMenu?.();
+                    }}
+                  >
+                    Flip
+                  </button>
+                  <button
+                    type="button"
+                    className="stack-menu__button"
+                    onClick={() => {
+                      actions.handleShuffleSelected?.();
+                      actions.closeMenu?.();
+                    }}
+                  >
+                    Shuffle
+                  </button>
+                </>
+              ) : null}
             </div>,
             uiOverlayRoot
           )

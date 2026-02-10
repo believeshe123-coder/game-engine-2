@@ -289,6 +289,56 @@
 }
 
 /* Stack count badge polish */
+
+.chip-stack,
+.die-stack {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+.chip-stack__disc {
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 30% 25%, #fff, var(--chip-color, #f4f5f7) 60%);
+  border: 4px solid color-mix(in srgb, var(--chip-color, #f4f5f7) 70%, #000 30%);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.35);
+}
+
+.chip-stack__label {
+  margin-top: 4px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(14, 12, 10, 0.9);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.die-stack {
+  border-radius: 12px;
+  border: 2px solid rgba(220, 220, 220, 0.9);
+  background: linear-gradient(140deg, #f7f7f7, #d8d8d8);
+  box-shadow: 0 10px 16px rgba(0, 0, 0, 0.28);
+  color: #1f2438;
+}
+
+.die-stack__type {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.die-stack__value {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1;
+}
 .stackCountBadge {
   background: linear-gradient(180deg, rgba(27, 23, 19, 0.95), rgba(12, 10, 8, 0.92));
   border: 1px solid rgba(255, 231, 179, 0.35);
