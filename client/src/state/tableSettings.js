@@ -5,9 +5,6 @@ const BASE_DEFAULTS = {
   cardStyle: 'medieval',
   includeJokers: true,
   deckCount: 1,
-  presetLayout: 'none',
-  customPresetCodes: [],
-  customPresets: {},
   stackCountDisplayMode: 'always',
   tableZoom: 1,
   cardScale: 1,
@@ -57,18 +54,6 @@ const normalizeSettings = (settings) => {
   }
   if (!['medieval', 'classic'].includes(next.tableStyle)) {
     next.tableStyle = DEFAULT_SETTINGS.tableStyle;
-  }
-  const presetCodes = Array.isArray(next.customPresetCodes)
-    ? next.customPresetCodes.filter((code) => typeof code === 'string')
-    : [];
-  next.customPresetCodes = presetCodes;
-  next.customPresets =
-    next.customPresets && typeof next.customPresets === 'object'
-      ? next.customPresets
-      : {};
-  const allowedPresets = new Set(['none', 'solitaire', 'grid', ...presetCodes]);
-  if (!allowedPresets.has(next.presetLayout)) {
-    next.presetLayout = DEFAULT_SETTINGS.presetLayout;
   }
   if (!['always', 'hover', 'off'].includes(next.stackCountDisplayMode)) {
     next.stackCountDisplayMode = DEFAULT_SETTINGS.stackCountDisplayMode;
