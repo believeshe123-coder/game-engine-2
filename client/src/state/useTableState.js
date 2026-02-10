@@ -231,8 +231,8 @@ export const useTableState = (
       const spawnPoint = isEndless ? getEndlessSpawnPoint?.() : null;
       const spawnOffset = isEndless
         ? {
-            x: (spawnPoint?.x ?? 0) - boundsWidth / 2,
-            y: (spawnPoint?.y ?? 0) - boundsHeight / 2
+            x: (spawnPoint?.x ?? 0) - boundsWidth / 2 + cardSize.width / 2,
+            y: (spawnPoint?.y ?? 0) - boundsHeight / 2 + cardSize.height / 2
           }
         : { x: 0, y: 0 };
       const feltShape =

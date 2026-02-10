@@ -595,6 +595,13 @@ body,
   pointer-events: auto;
 }
 
+.table__world-layer {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  pointer-events: auto;
+}
+
 .table__surface--endless .table__felt {
   background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.2));
   box-shadow: none;

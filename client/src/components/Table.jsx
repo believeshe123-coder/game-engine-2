@@ -58,7 +58,7 @@ const SLIDE_MIN_SEPARATION_PX = 40;
 const SLIDE_START_DIR_THRESHOLD_PX = 10;
 const HAND_ZONE_SEAT_OFFSET_BASE = 52;
 const HELD_STACK_ID = '__HELD__';
-const CAMERA_ZOOM_MIN = 0.5;
+const CAMERA_ZOOM_MIN = 0.25;
 const UNDO_HISTORY_LIMIT = 50;
 const CAMERA_ZOOM_MAX = 2.5;
 
@@ -224,6 +224,24 @@ const getViewportFromRect = (rect) => ({
   cy: (rect?.height ?? 0) / 2
 });
 
+function worldToScreen(wx, wy, cam, viewport) {
+  const camera = cam ?? { x: 0, y: 0, zoom: 1 };
+  const view = viewport ?? { cx: 0, cy: 0 };
+  return {
+    x: (wx - camera.x) * camera.zoom + view.cx,
+    y: (wy - camera.y) * camera.zoom + view.cy
+  };
+}
+
+function screenToWorld(sx, sy, cam, viewport) {
+  const camera = cam ?? { x: 0, y: 0, zoom: 1 };
+  const view = viewport ?? { cx: 0, cy: 0 };
+  return {
+    x: (sx - view.cx) / camera.zoom + camera.x,
+    y: (sy - view.cy) / camera.zoom + camera.y
+  };
+}
+
 const ENDLESS_SEAT_PATTERN = [
   'left',
   'left',
@@ -327,27 +345,17 @@ function localToWorld(localX, localY, camera, viewport, isEndless) {
   if (!isEndless || !camera || !viewport) {
     return { x: localX, y: localY };
   }
-  const { zoom = 1, x: camX = 0, y: camY = 0 } = camera;
-  const { cx = 0, cy = 0 } = viewport;
-  return {
-    x: (localX - cx) / zoom + camX,
-    y: (localY - cy) / zoom + camY
-  };
+  return screenToWorld(localX, localY, camera, viewport);
 }
 
 function worldToLocal(worldX, worldY, camera, viewport, isEndless) {
   if (!isEndless || !camera || !viewport) {
     return { x: worldX, y: worldY };
   }
-  const { zoom = 1, x: camX = 0, y: camY = 0 } = camera;
-  const { cx = 0, cy = 0 } = viewport;
-  return {
-    x: (worldX - camX) * zoom + cx,
-    y: (worldY - camY) * zoom + cy
-  };
+  return worldToScreen(worldX, worldY, camera, viewport);
 }
 
-function screenToWorld(
+function clientToWorld(
   clientX,
   clientY,
   playfieldRect,
@@ -698,6 +706,7 @@ const Table = () => {
   const lastSnapshotRef = useRef(null);
   const restoringFromUndoRef = useRef(false);
   const suppressNextHistoryRef = useRef(false);
+  const wasEndlessRef = useRef(false);
   const isModalOpen =
     resetConfirmOpen ||
     itemSpawnerOpen ||
@@ -1041,6 +1050,15 @@ const Table = () => {
   }, [camera]);
 
   useEffect(() => {
+    if (isEndless && !wasEndlessRef.current) {
+      const resetCamera = { x: 0, y: 0, zoom: 1 };
+      setCamera(resetCamera);
+      cameraRef.current = resetCamera;
+    }
+    wasEndlessRef.current = isEndless;
+  }, [isEndless]);
+
+  useEffect(() => {
     viewportRef.current = getViewportFromRect(tableRect);
   }, [tableRect]);
 
@@ -1085,7 +1103,7 @@ const Table = () => {
       if (seatPad) {
         const padRect = seatPad.getBoundingClientRect();
         // Convert screen rect -> table-world coordinates (playfield rect + zoom).
-        const topLeft = screenToWorld(
+        const topLeft = clientToWorld(
           padRect.left,
           padRect.top,
           tableRect,
@@ -1094,7 +1112,7 @@ const Table = () => {
           viewportRef.current,
           isEndless
         );
-        const bottomRight = screenToWorld(
+        const bottomRight = clientToWorld(
           padRect.right,
           padRect.bottom,
           tableRect,
@@ -1650,7 +1668,7 @@ const Table = () => {
     if (!pointerLocal) {
       return null;
     }
-    return screenToWorld(
+    return clientToWorld(
       clientX,
       clientY,
       pointerLocal.tableRect,
@@ -4174,8 +4192,9 @@ const Table = () => {
                   ) : null}
                 </svg>
               ) : null}
-              <div className="table__stack-layer" style={cameraTransformStyle}>
-                <div className="table__playfield">
+              <div className="table__stack-layer">
+                <div className="table__world-layer" style={cameraTransformStyle}>
+                  <div className="table__playfield">
                   {handZones.map((zone) => {
                     const isOwnerZone = mySeatIndex === zone.seatIndex;
                     const isDragHover =
@@ -4380,6 +4399,7 @@ const Table = () => {
                       </div>
                     );
                   })}
+                  </div>
                 </div>
               </div>
             </div>
