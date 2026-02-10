@@ -391,9 +391,9 @@ export const useTableState = (
       const nextStacks = built.nextStacks
         .map((stack) => ({
           ...stack,
-          cardIds: stack.cardIds.filter((cardId) => !preservedCardIds.has(cardId))
+          cardIds: (stack.cardIds ?? []).filter((cardId) => !preservedCardIds.has(cardId))
         }))
-        .filter((stack) => stack.cardIds.length > 0);
+        .filter((stack) => (stack.cardIds?.length ?? 0) > 0);
       setCardsById(built.nextCardsById);
       setAllCardIds(built.allCardIds);
       setStacks(nextStacks);

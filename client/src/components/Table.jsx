@@ -24,7 +24,11 @@ import {
 import { useTableState } from '../state/useTableState.js';
 import { loadSettings, saveSettings } from '../state/tableSettings.js';
 import { loadUiPrefs, saveUiPrefs } from '../state/uiPrefs.js';
-import { arr, normalizeCustomLayout, normalizeTableState } from '../state/tableStateNormalizer.js';
+import {
+  arr,
+  normalizeCustomLayout,
+  normalizeTableState
+} from '../state/tableStateNormalizer.js';
 
 const RIGHT_PANEL_SAFE_WIDTH = 340;
 const TABLETOP_MARGIN = 24;
@@ -224,16 +228,19 @@ const CHIP_COLORS = {
   100: '#1f2438'
 };
 
-const isCardStack = (stack) => Array.isArray(stack?.cardIds);
-const isChipStack = (stack) => stack?.kind === 'chips';
-const isDieStack = (stack) => stack?.kind === 'die';
+const isCardStack = (entity) =>
+  entity?.kind === 'cardStack' || (entity?.kind == null && Array.isArray(entity?.cardIds));
+const isChipStack = (entity) => entity?.kind === 'chipStack' || entity?.kind === 'chips';
+const isDieStack = (entity) => entity?.kind === 'dice' || entity?.kind === 'die';
 
 const getStackBounds = (stack, cardSize) => {
   if (isChipStack(stack)) {
-    return { width: 88, height: 88 };
+    const size = cardSize.width * 0.38;
+    return { width: size, height: size };
   }
   if (isDieStack(stack)) {
-    return { width: 68, height: 68 };
+    const size = cardSize.width * 0.55;
+    return { width: size, height: size };
   }
   return { width: cardSize.width, height: cardSize.height };
 };
@@ -1575,7 +1582,7 @@ const Table = () => {
 
   useEffect(() => {
     updatePresence({
-      holdingCount: interaction.held ? interaction.held.cardIds.length : 0
+      holdingCount: interaction.held ? (interaction.held.cardIds?.length ?? 0) : 0
     });
   }, [interaction.held, updatePresence]);
 
@@ -2105,7 +2112,7 @@ const Table = () => {
       if (interaction.held || interaction.mode === 'holdStack') {
         if (interaction.held) {
           moveCardIdsToHand(seatIndex, interaction.held.cardIds);
-          logDealt(seatIndex, interaction.held.cardIds.length);
+          logDealt(seatIndex, interaction.held.cardIds?.length ?? 0);
           actions.clearInteraction({ preserveSelection: false });
         }
         return;
@@ -2129,10 +2136,10 @@ const Table = () => {
             if (stack.id !== origin.stackId) {
               return stack;
             }
-            if (held.kind === 'chips' || origin.kind === 'chips') {
+            if (isChipStack(held) || isChipStack(origin)) {
               return {
                 ...stack,
-                kind: 'chips',
+                kind: 'chipStack',
                 denom: origin.denom ?? held.denom ?? stack.denom,
                 count: origin.countBefore ?? ((stack.count ?? 0) + (held.count ?? 0))
               };
@@ -2144,10 +2151,10 @@ const Table = () => {
           });
         }
       }
-      if (held.kind === 'chips') {
+      if (isChipStack(held)) {
         return prev.concat({
           id: origin.stackId ?? held.stackId,
-          kind: 'chips',
+          kind: 'chipStack',
           denom: held.denom,
           count: origin.countBefore ?? held.count,
           x: origin.x ?? 0,
@@ -2185,7 +2192,7 @@ const Table = () => {
         if (!isChips && !isCards) {
           return prev;
         }
-        const total = isChips ? source.count : source.cardIds.length;
+        const total = isChips ? (source.count ?? 0) : (source.cardIds?.length ?? 0);
         if (!total) {
           return prev;
         }
@@ -2221,7 +2228,7 @@ const Table = () => {
             source: { stackId },
             held: {
               stackId: heldStackId,
-              kind: 'chips',
+              kind: 'chipStack',
               denom: source.denom,
               count: clamped,
               origin
@@ -2432,7 +2439,7 @@ const Table = () => {
           : null;
       if (seatDropIndex !== null && seatDropIndex !== undefined) {
         moveCardIdsToHand(seatDropIndex, held.cardIds);
-        logDealt(seatDropIndex, held.cardIds.length);
+        logDealt(seatDropIndex, held.cardIds?.length ?? 0);
         actions.clearInteraction({ preserveSelection: false });
         return;
       }
@@ -2452,7 +2459,7 @@ const Table = () => {
       );
       if (handSeatIndex !== null && handSeatIndex !== undefined) {
         moveCardIdsToHand(handSeatIndex, held.cardIds);
-        logDealt(handSeatIndex, held.cardIds.length);
+        logDealt(handSeatIndex, held.cardIds?.length ?? 0);
         actions.clearInteraction({ preserveSelection: false });
         return;
       }
@@ -2527,7 +2534,7 @@ const Table = () => {
             : null;
         if (seatDropIndex !== null && seatDropIndex !== undefined) {
           moveCardIdsToHand(seatDropIndex, draggedStack.cardIds);
-          logDealt(seatDropIndex, draggedStack.cardIds.length);
+          logDealt(seatDropIndex, draggedStack.cardIds?.length ?? 0);
           setStacks((prev) => prev.filter((stack) => stack.id !== draggedId));
           actions.clearInteraction();
           return;
@@ -2539,7 +2546,7 @@ const Table = () => {
         );
         if (handSeatIndex !== null && handSeatIndex !== undefined) {
           moveCardIdsToHand(handSeatIndex, draggedStack.cardIds);
-          logDealt(handSeatIndex, draggedStack.cardIds.length);
+          logDealt(handSeatIndex, draggedStack.cardIds?.length ?? 0);
           setStacks((prev) => prev.filter((stack) => stack.id !== draggedId));
           actions.clearInteraction();
           return;
@@ -2678,7 +2685,7 @@ const Table = () => {
 
   const placeOneChipFromHeld = useCallback(
     (pointerWorld) => {
-      if (!interaction.held || !interaction.drag || interaction.held.kind !== 'chips') {
+      if (!interaction.held || !interaction.drag || !isChipStack(interaction.held)) {
         return;
       }
       const pointerPosition = pointerWorld ?? lastPointerWorldRef.current;
@@ -2692,7 +2699,7 @@ const Table = () => {
       setStacks((prev) => {
         const next = prev.concat({
           id: placedStackId,
-          kind: 'chips',
+          kind: 'chipStack',
           denom: interaction.held.denom,
           count: 1,
           x: placement.x,
@@ -2785,7 +2792,7 @@ const Table = () => {
         return;
       }
 
-      drops = Math.min(drops, interaction.held.cardIds.length, SLIDE_MAX_DROPS_PER_TICK);
+      drops = Math.min(drops, interaction.held.cardIds?.length ?? 0, SLIDE_MAX_DROPS_PER_TICK);
       const remaining = [...interaction.held.cardIds];
       const placements = [];
       let trail = interaction.slideTrail;
@@ -3019,7 +3026,7 @@ const Table = () => {
       const sourceBounds = getStackBounds(source, cardSize);
       const splitStack = {
         id: splitId,
-        kind: 'chips',
+        kind: 'chipStack',
         denom: source.denom,
         count: parsed,
         x: source.x + sourceBounds.width + 18,
@@ -3110,6 +3117,17 @@ const Table = () => {
       logAction(`${myName} rolled d${rolled.sides} → ${rolled.value}`);
     }
   }, [interaction.selectedStackId, logAction, myName, setStacks]);
+
+  actions.updateSelectedEntity = useCallback((updates) => {
+    if (!interaction.selectedStackId || !updates || typeof updates !== 'object') {
+      return;
+    }
+    setStacks((prev) =>
+      prev.map((stack) =>
+        stack.id === interaction.selectedStackId ? { ...stack, ...updates } : stack
+      )
+    );
+  }, [interaction.selectedStackId, setStacks]);
 
   actions.handleKeyDown = useCallback(
     (event) => {
@@ -3506,15 +3524,11 @@ const Table = () => {
             !interaction.isSliding &&
             (now - interaction.rmbDownAt > HOLD_DELAY_MS || distanceFromStart > HOLD_MOVE_PX)
           ) {
-            if (interaction.held.cardIds.length <= 1) {
-              if (interaction.held?.kind === 'chips') {
+            if ((interaction.held.cardIds?.length ?? 0) <= 1) {
+              if (isChipStack(interaction.held)) {
                 placeOneChipFromHeld(pointerWorld);
               } else {
-                if (interaction.held?.kind === 'chips') {
-            placeOneChipFromHeld(pointerWorld);
-          } else {
-            placeOneFromHeld(pointerWorld);
-          }
+                placeOneFromHeld(pointerWorld);
               }
               setInteraction((prev) => ({
                 ...prev,
@@ -3538,7 +3552,12 @@ const Table = () => {
         if (distance >= DRAG_THRESHOLD) {
           pending.dragStarted = true;
           if (pending.button === 0 && pending.stackId) {
-            actions.pickupFromStack?.(pending.stackId, 1, event.pointerId);
+            const pendingStack = stacksById[pending.stackId];
+            if (isDieStack(pendingStack) || isChipStack(pendingStack)) {
+              startDragStack(pending.stackId, pointerWorld, event.pointerId);
+            } else {
+              actions.pickupFromStack?.(pending.stackId, 1, event.pointerId);
+            }
           }
           if (pending.button === 2 && pending.stackId) {
             actions.pickupFromStack?.(pending.stackId, 'all', event.pointerId);
@@ -3551,6 +3570,8 @@ const Table = () => {
     [
       DRAG_THRESHOLD,
       actions,
+      stacksById,
+      startDragStack,
       beginRmbSlide,
       isPanning,
       defaultRmbState,
@@ -3604,7 +3625,7 @@ const Table = () => {
       const isBlurEvent = event.type === 'blur' || event.type === 'pointercancel';
       if (interaction.rmbDown && (isRightButton || isBlurEvent)) {
         if (!interaction.isSliding && isRightButton) {
-          if (interaction.held?.kind === 'chips') {
+          if (isChipStack(interaction.held)) {
             placeOneChipFromHeld(pointerWorld);
           } else {
             placeOneFromHeld(pointerWorld);
@@ -3828,7 +3849,7 @@ const Table = () => {
       if (item.type === 'chips') {
         spawnEntries.push({
           id: createStackId(),
-          kind: 'chips',
+          kind: 'chipStack',
           denom: item.denom,
           count: qty,
           x: 0,
@@ -3844,7 +3865,7 @@ const Table = () => {
         for (let i = 0; i < qty; i += 1) {
           spawnEntries.push({
             id: createStackId(),
-            kind: 'die',
+            kind: 'dice',
             sides: item.sides,
             value: Math.floor(Math.random() * item.sides) + 1,
             x: 0,
@@ -4242,6 +4263,7 @@ const Table = () => {
     handleFlipSelected: actions.handleFlipSelected,
     handleShuffleSelected: actions.handleShuffleSelected,
     handleRollSelectedDie: actions.handleRollSelectedDie,
+    updateSelectedEntity: actions.updateSelectedEntity,
     handleUndo: actions.handleUndo,
     promptRemoveSelected: actions.promptRemoveSelected,
     handleRemoveSelected: actions.handleRemoveSelected,
@@ -4296,6 +4318,15 @@ const Table = () => {
         }
       : null;
   const renderStacks = heldStackVisual ? [...tableStacks, heldStackVisual] : tableStacks;
+  const entities = useMemo(() => {
+    return (renderStacks ?? []).reduce((acc, entity) => {
+      if (entity?.id) {
+        acc[entity.id] = entity;
+      }
+      return acc;
+    }, {});
+  }, [renderStacks]);
+  const order = useMemo(() => (renderStacks ?? []).map((entity) => entity?.id).filter(Boolean), [renderStacks]);
   const hoverHandSeatId =
     interaction.held && heldWorldPosition
       ? getHandZoneAtPoint(
@@ -4328,8 +4359,8 @@ const Table = () => {
       : selectedStack.cardIds?.length ?? 0
     : 0;
   const previewTopCardId =
-    selectedStack && isCardStack(selectedStack) && selectedStack.cardIds.length
-      ? selectedStack.cardIds[selectedStack.cardIds.length - 1]
+    selectedStack && isCardStack(selectedStack) && (selectedStack.cardIds?.length ?? 0)
+      ? selectedStack.cardIds?.[(selectedStack.cardIds?.length ?? 1) - 1]
       : null;
   const previewTopCardFaceUp = previewTopCardId
     ? getCardFace(selectedStack, previewTopCardId)
@@ -4746,9 +4777,13 @@ const Table = () => {
                       }}
                     />
                   ) : null}
-                  {renderStacks.map((stack, index) => {
+                  {(order ?? []).map((entityId, index) => {
+                    const stack = entities[entityId];
+                    if (!stack) {
+                      return null;
+                    }
                     const topCardId = isCardStack(stack)
-                      ? stack.cardIds[stack.cardIds.length - 1]
+                      ? stack.cardIds?.[(stack.cardIds?.length ?? 1) - 1]
                       : null;
                     const topCard = topCardId ? cardsById[topCardId] : null;
                     const isSelectedStack = stack.id === highlightStackId;
@@ -4777,7 +4812,7 @@ const Table = () => {
                     const showBadge =
                       !stack.isHeldVisual &&
                       isCardStack(stack) &&
-                      stack.cardIds.length > 1 &&
+                      (stack.cardIds?.length ?? 0) > 1 &&
                       settings.stackCountDisplayMode !== 'off' &&
                       (settings.stackCountDisplayMode === 'always' ||
                         (settings.stackCountDisplayMode === 'hover' &&
@@ -4785,7 +4820,7 @@ const Table = () => {
                     return (
                       <div
                         key={stack.id}
-                        className={`stack-entity ${highlightState}`}
+                        className={`stack-entity entity ${highlightState}`}
                         data-stack-id={stack.id}
                         data-selected={isSelectedStack}
                         data-held={isHeldStack}
@@ -4816,12 +4851,12 @@ const Table = () => {
                             </span>
                           </div>
                         ) : isChipStack(stack) ? (
-                          <div className="chip-stack" style={{ '--chip-color': CHIP_COLORS[stack.denom] ?? '#f4f5f7' }}>
-                            <div className="chip-stack__disc" />
-                            <div className="chip-stack__label">{getChipStackLabel(stack)}</div>
+                          <div className="chipStack entityPhysical" style={{ '--chip-color': CHIP_COLORS[stack.denom] ?? '#f4f5f7' }}>
+                            <div className="chipStack__denom">${stack?.denom ?? 0}</div>
+                            <div className="chipStack__count">×{stack?.count ?? 0}</div>
                           </div>
                         ) : isDieStack(stack) ? (
-                          <div className="die-stack">
+                          <div className="dice entityPhysical">
                             <div className="die-stack__type">d{stack.sides}</div>
                             <div className="die-stack__value">{stack.value}</div>
                           </div>
@@ -4849,7 +4884,7 @@ const Table = () => {
                           />
                         )}
                         {showBadge ? (
-                          <div className="stackCountBadge">Stack: {stack.cardIds.length}</div>
+                          <div className="stackCountBadge">Stack: {stack?.cardIds?.length ?? 0}</div>
                         ) : null}
                       </div>
                     );
@@ -4918,12 +4953,12 @@ const Table = () => {
                 aria-hidden="true"
                 style={{ '--card-scale': viewTransform.cardScale * combinedScale }}
               >
-                {interaction.held.kind === 'chips' ? (
+                {interaction.isChipStack(held) ? (
                   <div className="chip-stack" style={{ transform: `translate(${dragCardPosition.x}px, ${dragCardPosition.y}px)`, '--chip-color': CHIP_COLORS[interaction.held.denom] ?? '#f4f5f7' }}>
                     <div className="chip-stack__disc" />
                     <div className="chip-stack__label">{getChipStackLabel(interaction.held)}</div>
                   </div>
-                ) : interaction.held.kind === 'die' ? (
+                ) : isDieStack(interaction.held) ? (
                   <div className="die-stack" style={{ transform: `translate(${dragCardPosition.x}px, ${dragCardPosition.y}px)` }}>
                     <div className="die-stack__type">d{interaction.held.sides}</div>
                     <div className="die-stack__value">{interaction.held.value}</div>
@@ -5567,16 +5602,20 @@ const Table = () => {
               onPointerDown={(event) => event.stopPropagation()}
             >
               {isDieStack(selectedStack) ? (
-                <button
-                  type="button"
-                  className="stack-menu__button"
-                  onClick={() => {
-                    actions.handleRollSelectedDie?.();
-                    actions.closeMenu?.();
-                  }}
-                >
-                  Roll
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="stack-menu__button"
+                    onClick={() => {
+                      actions.handleRollSelectedDie?.();
+                      actions.closeMenu?.();
+                    }}
+                  >
+                    Roll
+                  </button>
+                  <button type="button" className="stack-menu__button" onClick={() => actionsRef.current.updateSelectedEntity?.({ sides: 6 })}>Set d6</button>
+                  <button type="button" className="stack-menu__button" onClick={() => actionsRef.current.updateSelectedEntity?.({ sides: 20 })}>Set d20</button>
+                </>
               ) : null}
               {isChipStack(selectedStack) ? (
                 <>
@@ -5612,12 +5651,12 @@ const Table = () => {
                     type="button"
                     className="stack-menu__button"
                     onClick={() => {
-                      if (selectedStack.cardIds.length < 2) {
+                      if ((selectedStack.cardIds?.length ?? 0) < 2) {
                         return;
                       }
                       actions.pickupFromStack?.(
                         selectedStack.id,
-                        Math.ceil(selectedStack.cardIds.length / 2)
+                        Math.ceil((selectedStack.cardIds?.length ?? 0) / 2)
                       );
                       actions.closeMenu?.();
                     }}
@@ -5692,6 +5731,21 @@ const Table = () => {
                     <button type="button" className="stack-menu__button stack-menu__button--secondary" onClick={() => setSplitCountOpen(false)}>Cancel</button>
                   </div>
                 </div>
+              ) : null}
+              {isChipStack(selectedStack) ? (
+                <button
+                  type="button"
+                  className="stack-menu__button"
+                  onClick={() => {
+                    const nextDenom = window.prompt('Chip denomination', String(selectedStack.denom ?? 1));
+                    const denom = Number.parseInt(nextDenom ?? '', 10);
+                    if (Number.isFinite(denom) && denom > 0) {
+                      actionsRef.current.updateSelectedEntity?.({ denom });
+                    }
+                  }}
+                >
+                  Change denomination
+                </button>
               ) : null}
               <button
                 type="button"

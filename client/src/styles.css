@@ -30,6 +30,10 @@
   background-color: #1f1f1f;
   --card-base-width: 72px;
   --card-base-height: 104px;
+  --cardW: 90px;
+  --cardH: 126px;
+  --dice: calc(var(--cardW) * 0.55);
+  --chip: calc(var(--cardW) * 0.38);
   --card-scale: 1;
 }
 
@@ -291,7 +295,8 @@
 /* Stack count badge polish */
 
 .chip-stack,
-.die-stack {
+.die-stack,
+.entity {
   width: 100%;
   height: 100%;
   display: flex;
@@ -299,6 +304,22 @@
   align-items: center;
   justify-content: center;
   user-select: none;
+}
+
+.entity {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.entity:active {
+  cursor: grabbing;
+}
+
+.entityPhysical {
+  filter: drop-shadow(0 10px 14px rgba(0,0,0,.35));
 }
 
 .chip-stack__disc {
@@ -327,6 +348,38 @@
   background: linear-gradient(140deg, #f7f7f7, #d8d8d8);
   box-shadow: 0 10px 16px rgba(0, 0, 0, 0.28);
   color: #1f2438;
+}
+
+.dice {
+  width: var(--dice);
+  height: var(--dice);
+  border-radius: 10px;
+  background: linear-gradient(145deg,#fff,#ddd);
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: calc(var(--dice)*.4);
+  color: #1f2438;
+}
+
+.chipStack {
+  width: var(--chip);
+  height: var(--chip);
+  border-radius: 999px;
+  background: linear-gradient(145deg,#c62828,#8e0000);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 800;
+  position: relative;
+}
+
+.chipStack__denom { font-size: 12px; }
+.chipStack__count {
+  position: absolute;
+  top: calc(100% + 4px);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .die-stack__type {
