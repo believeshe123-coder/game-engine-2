@@ -12,16 +12,13 @@ const BASE_DEFAULTS = {
   colorBlindMode: false,
   inventoryDragEnabled: true,
   roomSettings: {
-    tableShape: 'rectangle',
+    tableShape: 'oval',
     seatCount: 8,
     seatLock: false,
     seatParams: {
       rectangle: [],
       oval: [],
       circle: []
-    },
-    seatPositions: {
-      endless: []
     }
   }
 };
@@ -70,7 +67,7 @@ const normalizeSettings = (settings) => {
     ...DEFAULT_SETTINGS.roomSettings,
     ...(next.roomSettings ?? {})
   };
-  if (!['rectangle', 'oval', 'circle', 'endless'].includes(roomSettings.tableShape)) {
+  if (!['rectangle', 'oval', 'circle'].includes(roomSettings.tableShape)) {
     roomSettings.tableShape = DEFAULT_SETTINGS.roomSettings.tableShape;
   }
   roomSettings.seatLock =
@@ -90,23 +87,10 @@ const normalizeSettings = (settings) => {
           .filter((value) => Number.isFinite(value))
       : [];
   const seatParams = roomSettings.seatParams ?? {};
-  const seatPositions = roomSettings.seatPositions ?? {};
-  const normalizeSeatPositions = (positions) =>
-    Array.isArray(positions)
-      ? positions
-          .map((entry) => ({
-            x: Number(entry?.x ?? entry?.[0]),
-            y: Number(entry?.y ?? entry?.[1])
-          }))
-          .filter((entry) => Number.isFinite(entry.x) && Number.isFinite(entry.y))
-      : [];
   roomSettings.seatParams = {
     rectangle: normalizeSeatParamList(seatParams.rectangle),
     oval: normalizeSeatParamList(seatParams.oval),
     circle: normalizeSeatParamList(seatParams.circle)
-  };
-  roomSettings.seatPositions = {
-    endless: normalizeSeatPositions(seatPositions.endless)
   };
   next.roomSettings = roomSettings;
   next.resetFaceDown = Boolean(next.resetFaceDown);
