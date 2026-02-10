@@ -62,7 +62,6 @@ const CAMERA_ZOOM_MIN = 0.5;
 const CAMERA_ZOOM_MAX = 2.5;
 
 const CUSTOM_PRESET_STORAGE_PREFIX = 'tablePreset:';
-const PRESET_CODE_LENGTHS = [6, 7, 8];
 
 const SIDE_ORDER = ['top', 'right', 'bottom', 'left'];
 const SIDE_NORMALS = {
@@ -80,63 +79,93 @@ const normalizeParam = (value, max) => {
   return wrapped < 0 ? wrapped + max : wrapped;
 };
 
-const DEFAULT_CUSTOM_PRESET = {
-  cardStyle: 'medieval',
-  includeJokers: true,
-  deckCount: 1,
-  spawnItems: [
-    {
-      id: 'standardDeck',
-      type: 'standardDeck',
-      label: 'Standard Deck Stack',
-      enabled: true,
-      quantity: 1,
-      positionRule: 'center'
-    },
-    {
-      id: 'discardPile',
-      type: 'discardPile',
-      label: 'Discard Pile',
-      enabled: true,
-      quantity: 1,
-      positionRule: 'topRight'
-    },
-    {
-      id: 'drawPile',
-      type: 'drawPile',
-      label: 'Draw Pile',
-      enabled: true,
-      quantity: 1,
-      positionRule: 'topLeft'
-    },
-    {
-      id: 'dealerButton',
-      type: 'dealerButton',
-      label: 'Dealer Button',
-      enabled: true,
-      quantity: 1,
-      positionRule: 'nearSeat1'
-    },
-    {
-      id: 'handTokens',
-      type: 'handTokens',
-      label: 'Hand Tokens',
-      enabled: false,
-      quantity: 1,
-      positionRule: 'perSeat'
-    }
-  ]
+const CUSTOM_LAYOUT_ITEMS = [
+  {
+    id: 'classicDeckWithJokers',
+    label: 'Basic Poker Deck (with jokers)',
+    style: 'classic',
+    type: 'deckWithJokers'
+  },
+  {
+    id: 'classicDeckNoJokers',
+    label: 'Basic Poker Deck (no jokers)',
+    style: 'classic',
+    type: 'deckNoJokers'
+  },
+  {
+    id: 'classicJokersOnly',
+    label: 'Set of Basic Jokers',
+    style: 'classic',
+    type: 'jokersOnly'
+  },
+  {
+    id: 'medievalDeckWithJokers',
+    label: 'Medieval Poker Deck (with jokers)',
+    style: 'medieval',
+    type: 'deckWithJokers'
+  },
+  {
+    id: 'medievalDeckNoJokers',
+    label: 'Medieval Poker Deck (no jokers)',
+    style: 'medieval',
+    type: 'deckNoJokers'
+  },
+  {
+    id: 'medievalJokersOnly',
+    label: 'Set of Medieval Jokers',
+    style: 'medieval',
+    type: 'jokersOnly'
+  }
+];
+
+const CUSTOM_LAYOUT_SECTION_LABELS = {
+  classicDeckWithJokers: 'Classic',
+  medievalDeckWithJokers: 'Medieval'
 };
 
-const SPAWN_RULE_OPTIONS = [
-  { value: 'center', label: 'Center' },
-  { value: 'nearSeat1', label: 'Near Seat 1' },
-  { value: 'topLeft', label: 'Top Left' },
-  { value: 'topRight', label: 'Top Right' },
-  { value: 'bottomLeft', label: 'Bottom Left' },
-  { value: 'bottomRight', label: 'Bottom Right' },
-  { value: 'perSeat', label: 'Per Seat' }
+const CUSTOM_LAYOUT_MAX_QTY = 20;
+
+const SPAWN_CARD_SUITS = [
+  { id: 'S', name: 'Spades' },
+  { id: 'C', name: 'Clubs' },
+  { id: 'H', name: 'Hearts' },
+  { id: 'D', name: 'Diamonds' }
 ];
+const SPAWN_CARD_RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+
+const buildSpawnCardsForItem = (item, prefix) => {
+  const cards = [];
+  const includeStandard = item.type === 'deckWithJokers' || item.type === 'deckNoJokers';
+  if (includeStandard) {
+    SPAWN_CARD_SUITS.forEach((suit) => {
+      SPAWN_CARD_RANKS.forEach((rank) => {
+        cards.push({
+          id: `${prefix}-${rank}${suit.id}`,
+          rank,
+          suit: suit.name
+        });
+      });
+    });
+  }
+  const includeJokers = item.type === 'deckWithJokers' || item.type === 'jokersOnly';
+  if (includeJokers) {
+    cards.push(
+      {
+        id: `${prefix}-JOKER_BLACK`,
+        rank: 'JOKER',
+        suit: 'Joker',
+        color: 'black'
+      },
+      {
+        id: `${prefix}-JOKER_RED`,
+        rank: 'JOKER',
+        suit: 'Joker',
+        color: 'red'
+      }
+    );
+  }
+  return cards;
+};
 
 const getSeatSideFromAngle = (angle) => {
   const normalized = normalizeParam(angle, TAU);
@@ -152,16 +181,6 @@ const getSeatSideFromAngle = (angle) => {
   return 'top';
 };
 
-const generatePresetCode = () => {
-  const length =
-    PRESET_CODE_LENGTHS[Math.floor(Math.random() * PRESET_CODE_LENGTHS.length)];
-  let code = '';
-  for (let i = 0; i < length; i += 1) {
-    code += Math.floor(Math.random() * 10).toString();
-  }
-  return code;
-};
-
 const loadCustomPreset = (code) => {
   if (typeof window === 'undefined') {
     return null;
@@ -171,21 +190,6 @@ const loadCustomPreset = (code) => {
     return raw ? JSON.parse(raw) : null;
   } catch (error) {
     return null;
-  }
-};
-
-const saveCustomPreset = (code, preset) => {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-  try {
-    window.localStorage.setItem(
-      `${CUSTOM_PRESET_STORAGE_PREFIX}${code}`,
-      JSON.stringify(preset)
-    );
-    return true;
-  } catch (error) {
-    return false;
   }
 };
 
@@ -422,22 +426,6 @@ const preventNativeDrag = (event) => {
   event.stopPropagation();
 };
 
-const normalizeCustomPresetDraft = (draft) => {
-  const deckCount = Math.min(8, Math.max(1, Number(draft.deckCount) || 1));
-  const spawnItems = Array.isArray(draft.spawnItems)
-    ? draft.spawnItems.map((item) => ({
-        ...item,
-        quantity: Math.min(8, Math.max(1, Number(item.quantity) || 1))
-      }))
-    : [];
-  return {
-    ...draft,
-    cardStyle: draft.cardStyle === 'classic' ? 'classic' : 'medieval',
-    includeJokers: Boolean(draft.includeJokers),
-    deckCount,
-    spawnItems
-  };
-};
 
 const Table = () => {
   const sceneRootRef = useRef(null);
@@ -507,6 +495,7 @@ const Table = () => {
   }, []);
   const {
     cardsById,
+    setCardsById,
     allCardIds,
     stacks,
     setStacks,
@@ -571,11 +560,13 @@ const Table = () => {
   const [customLayoutOpen, setCustomLayoutOpen] = useState(false);
   const [presetCodeInput, setPresetCodeInput] = useState('');
   const [presetImportStatus, setPresetImportStatus] = useState(null);
-  const [savedPresetCode, setSavedPresetCode] = useState(null);
-  const [customPresetDraft, setCustomPresetDraft] = useState(() => ({
-    ...DEFAULT_CUSTOM_PRESET,
-    spawnItems: DEFAULT_CUSTOM_PRESET.spawnItems.map((item) => ({ ...item }))
-  }));
+  const [customLayoutSearchQuery, setCustomLayoutSearchQuery] = useState('');
+  const [customLayoutSelected, setCustomLayoutSelected] = useState(() =>
+    CUSTOM_LAYOUT_ITEMS.reduce((acc, item) => {
+      acc[item.id] = { checked: false, qty: 1 };
+      return acc;
+    }, {})
+  );
   const [dragSeatIndex, setDragSeatIndex] = useState(null);
   const inventoryPanelRef = useRef(null);
   const [inventoryPos, setInventoryPos] = useState(() => {
@@ -3174,14 +3165,116 @@ const Table = () => {
     setPresetImportStatus('added');
   }, [presetCodeInput]);
 
-  const handleSaveCustomPreset = useCallback(() => {
-    const code = generatePresetCode();
-    const normalized = normalizeCustomPresetDraft(customPresetDraft);
-    const saved = saveCustomPreset(code, normalized);
-    if (saved) {
-      setSavedPresetCode(code);
+  const filteredCustomLayoutItems = useMemo(() => {
+    const query = customLayoutSearchQuery.trim().toLowerCase();
+    if (!query) {
+      return CUSTOM_LAYOUT_ITEMS;
     }
-  }, [customPresetDraft]);
+    return CUSTOM_LAYOUT_ITEMS.filter((item) =>
+      item.label.toLowerCase().includes(query)
+    );
+  }, [customLayoutSearchQuery]);
+
+  const selectedCustomLayoutCount = useMemo(
+    () =>
+      Object.values(customLayoutSelected).reduce(
+        (count, entry) => count + (entry?.checked ? 1 : 0),
+        0
+      ),
+    [customLayoutSelected]
+  );
+
+  const handleSpawnCustomLayout = useCallback(() => {
+    const selectedItems = CUSTOM_LAYOUT_ITEMS.flatMap((item) => {
+      const state = customLayoutSelected[item.id];
+      if (!state?.checked) {
+        return [];
+      }
+      const qty = Math.max(1, Math.min(CUSTOM_LAYOUT_MAX_QTY, Math.floor(state.qty || 1)));
+      return Array.from({ length: qty }, () => item);
+    });
+    if (!selectedItems.length) {
+      return;
+    }
+
+    const center = isEndless
+      ? getEndlessSpawnPoint()
+      : {
+          x: tableRect.width / 2,
+          y: tableRect.height / 2
+        };
+    const spacing = cardSize.width * 1.6;
+    const startX = center.x - (selectedItems.length - 1) * 0.5 * spacing - cardSize.width / 2;
+    const y = center.y - cardSize.height / 2;
+
+    const timestampPrefix = Date.now().toString(36);
+    const stackEntries = [];
+    let cardCounter = 0;
+    selectedItems.forEach((item, index) => {
+      const cardPrefix = `${item.id}-${timestampPrefix}-${cardCounter}`;
+      cardCounter += 1;
+      const cards = buildSpawnCardsForItem(item, cardPrefix);
+      stackEntries.push({
+        item,
+        cards,
+        x: startX + index * spacing,
+        y
+      });
+    });
+
+    setCardsById((prev) => {
+      const next = { ...prev };
+      stackEntries.forEach((entry) => {
+        entry.cards.forEach((card) => {
+          next[card.id] = card;
+        });
+      });
+      return next;
+    });
+
+    const defaultFaceUp = !(settings.spawnFaceDown ?? false);
+    setStacks((prev) =>
+      prev.concat(
+        stackEntries.map((entry) => ({
+          id: createStackId(),
+          x: entry.x,
+          y: entry.y,
+          rotation: 0,
+          faceUp: defaultFaceUp,
+          cardIds: entry.cards.map((card) => card.id),
+          zone: 'table',
+          ownerSeatIndex: null,
+          cardStyle: entry.item.style
+        }))
+      )
+    );
+
+    const logSummary = CUSTOM_LAYOUT_ITEMS.map((item) => {
+      const qty = Math.max(
+        0,
+        Math.floor(customLayoutSelected[item.id]?.checked ? customLayoutSelected[item.id]?.qty || 1 : 0)
+      );
+      return qty > 0 ? `${qty}× ${item.label}` : null;
+    }).filter(Boolean);
+    if (logSummary.length > 0) {
+      logAction(`Spawned: ${logSummary.join(', ')}`);
+    }
+
+    setCustomLayoutOpen(false);
+  }, [
+    cardSize.height,
+    cardSize.width,
+    createStackId,
+    customLayoutSelected,
+    getEndlessSpawnPoint,
+    isEndless,
+    logAction,
+    setCardsById,
+    setStacks,
+    settings.spawnFaceDown,
+    tableRect.height,
+    tableRect.width
+  ]);
 
   const visibleBadgeStackId =
     settings.stackCountDisplayMode === 'hover' ? hoveredStackId : null;
@@ -3637,7 +3730,7 @@ const Table = () => {
                                 y={0}
                                 rotation={0}
                                 faceUp={isRevealed}
-                                cardStyle={settings.cardStyle}
+                                cardStyle={stack.cardStyle ?? settings.cardStyle}
                                 colorBlindMode={uiPrefs.colorBlindMode}
                                 zIndex={index + 1}
                                 rank={card?.rank}
@@ -4268,17 +4361,14 @@ const Table = () => {
                       <button
                         className="table-settings__button table-settings__button--secondary"
                         type="button"
-                      onClick={() => {
-                        setCustomPresetDraft({
-                          ...DEFAULT_CUSTOM_PRESET,
-                          cardStyle: settings.cardStyle,
-                          includeJokers: settings.includeJokers,
-                          deckCount: settings.deckCount,
-                          spawnItems: DEFAULT_CUSTOM_PRESET.spawnItems.map((item) => ({
-                            ...item
-                          }))
-                        });
-                          setSavedPresetCode(null);
+                        onClick={() => {
+                          setCustomLayoutSearchQuery('');
+                          setCustomLayoutSelected(
+                            CUSTOM_LAYOUT_ITEMS.reduce((acc, item) => {
+                              acc[item.id] = { checked: false, qty: 1 };
+                              return acc;
+                            }, {})
+                          );
                           setCustomLayoutOpen(true);
                         }}
                       >
@@ -4504,166 +4594,108 @@ const Table = () => {
                 onMouseDown={(event) => event.stopPropagation()}
                 onClick={(event) => event.stopPropagation()}
               >
-                <h3 id="custom-layout-title" className="modal__title">
-                  Custom Layout Builder
-                </h3>
+                <div className="modal__title-row">
+                  <h3 id="custom-layout-title" className="modal__title">
+                    Create a Custom Layout
+                  </h3>
+                  <button
+                    className="modal__close"
+                    type="button"
+                    aria-label="Close"
+                    onClick={() => setCustomLayoutOpen(false)}
+                  >
+                    ×
+                  </button>
+                </div>
                 <div className="modal__section">
-                  <div className="modal__section-title">Deck/Card Rules</div>
-                  <label className="table-settings__row">
-                    <span className="table-settings__label">Card Type/Style</span>
-                    <select
-                      className="table-settings__select"
-                      value={customPresetDraft.cardStyle}
-                      onChange={(event) =>
-                        setCustomPresetDraft((prev) => ({
-                          ...prev,
-                          cardStyle: event.target.value
-                        }))
-                      }
-                    >
-                      <option value="classic">Classic</option>
-                      <option value="medieval">Medieval</option>
-                    </select>
-                  </label>
-                  <div className="table-settings__row">
-                    <span className="table-settings__label">Include Jokers</span>
-                    <label className="table-settings__switch">
-                      <input
-                        type="checkbox"
-                        checked={customPresetDraft.includeJokers}
-                        onChange={(event) =>
-                          setCustomPresetDraft((prev) => ({
-                            ...prev,
-                            includeJokers: event.target.checked
-                          }))
-                        }
-                      />
-                      <span>Include</span>
-                    </label>
-                  </div>
-                  <label className="table-settings__row">
-                    <span className="table-settings__label"># of Decks</span>
+                  <label className="table-settings__row table-settings__row--stacked">
+                    <span className="table-settings__label">Search</span>
                     <input
-                      className="table-settings__input"
-                      type="number"
-                      min="1"
-                      max="8"
-                      value={customPresetDraft.deckCount}
-                      onChange={(event) =>
-                        setCustomPresetDraft((prev) => ({
-                          ...prev,
-                          deckCount: event.target.value
-                        }))
-                      }
+                      className="table-settings__input table-settings__input--full"
+                      type="text"
+                      placeholder="Search items…"
+                      value={customLayoutSearchQuery}
+                      onChange={(event) => setCustomLayoutSearchQuery(event.target.value)}
                     />
                   </label>
                 </div>
                 <div className="modal__section">
-                  <div className="modal__section-title">Spawn Objects</div>
-                  <div className="table-settings__spawn-list">
-                    {customPresetDraft.spawnItems.map((item) => (
-                      <div key={item.id} className="table-settings__spawn-item">
-                        <label className="table-settings__switch table-settings__switch--dense">
-                          <input
-                            type="checkbox"
-                            checked={item.enabled}
-                            onChange={(event) =>
-                              setCustomPresetDraft((prev) => ({
-                                ...prev,
-                                spawnItems: prev.spawnItems.map((entry) =>
-                                  entry.id === item.id
-                                    ? { ...entry, enabled: event.target.checked }
-                                    : entry
-                                )
-                              }))
-                            }
-                          />
-                          <span>{item.label}</span>
-                        </label>
-                        <div className="table-settings__spawn-controls">
-                          <label className="table-settings__row">
-                            <span className="table-settings__label">Quantity</span>
-                            <input
-                              className="table-settings__input"
-                              type="number"
-                              min="1"
-                              max="8"
-                              disabled={!item.enabled || item.type === 'handTokens'}
-                              value={item.quantity}
-                              onChange={(event) =>
-                                setCustomPresetDraft((prev) => ({
-                                  ...prev,
-                                  spawnItems: prev.spawnItems.map((entry) =>
-                                    entry.id === item.id
-                                      ? { ...entry, quantity: event.target.value }
-                                      : entry
-                                  )
-                                }))
-                              }
-                            />
-                          </label>
-                          <label className="table-settings__row">
-                            <span className="table-settings__label">Position</span>
-                            <select
-                              className="table-settings__select"
-                              value={item.positionRule}
-                              onChange={(event) =>
-                                setCustomPresetDraft((prev) => ({
-                                  ...prev,
-                                  spawnItems: prev.spawnItems.map((entry) =>
-                                    entry.id === item.id
-                                      ? { ...entry, positionRule: event.target.value }
-                                      : entry
-                                  )
-                                }))
-                              }
-                            >
-                              {SPAWN_RULE_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="modal__section">
-                  <div className="modal__section-title">Save Preset Locally with Code</div>
-                  <button
-                    className="table-settings__button table-settings__button--secondary"
-                    type="button"
-                    onClick={handleSaveCustomPreset}
+                  <div
+                    className="table-settings__spawn-list"
+                    style={{ maxHeight: '320px', overflowY: 'auto' }}
                   >
-                    Save Preset
-                  </button>
-                  {savedPresetCode ? (
-                    <div className="table-settings__code">
-                      <span>Code:</span>
-                      <strong>{savedPresetCode}</strong>
-                      <button
-                        className="table-settings__button table-settings__button--secondary"
-                        type="button"
-                        onClick={() => {
-                          if (navigator.clipboard) {
-                            navigator.clipboard.writeText(savedPresetCode);
-                          }
-                        }}
-                      >
-                        Copy
-                      </button>
-                    </div>
-                  ) : null}
+                    {filteredCustomLayoutItems.map((item) => {
+                      const itemState = customLayoutSelected[item.id] ?? {
+                        checked: false,
+                        qty: 1
+                      };
+                      return (
+                        <div key={item.id} className="table-settings__spawn-item">
+                          {CUSTOM_LAYOUT_SECTION_LABELS[item.id] ? (
+                            <div className="modal__section-title">
+                              {CUSTOM_LAYOUT_SECTION_LABELS[item.id]}
+                            </div>
+                          ) : null}
+                          <div className="table-settings__spawn-item-row">
+                            <label className="table-settings__switch table-settings__switch--inline">
+                              <input
+                                type="checkbox"
+                                checked={itemState.checked}
+                                onChange={(event) => {
+                                  const checked = event.target.checked;
+                                  setCustomLayoutSelected((prev) => ({
+                                    ...prev,
+                                    [item.id]: {
+                                      checked,
+                                      qty: checked
+                                        ? Math.max(1, Math.min(CUSTOM_LAYOUT_MAX_QTY, prev[item.id]?.qty ?? 1))
+                                        : prev[item.id]?.qty ?? 1
+                                    }
+                                  }));
+                                }}
+                              />
+                              <span>{item.label}</span>
+                            </label>
+                            <label className="table-settings__row">
+                              <span className="table-settings__label">Qty</span>
+                              <input
+                                className="table-settings__input"
+                                type="number"
+                                inputMode="numeric"
+                                min="1"
+                                max={CUSTOM_LAYOUT_MAX_QTY}
+                                step="1"
+                                disabled={!itemState.checked}
+                                value={itemState.qty}
+                                onChange={(event) => {
+                                  const parsed = Number.parseInt(event.target.value, 10);
+                                  const qty = Number.isFinite(parsed)
+                                    ? Math.max(1, Math.min(CUSTOM_LAYOUT_MAX_QTY, parsed))
+                                    : 1;
+                                  setCustomLayoutSelected((prev) => ({
+                                    ...prev,
+                                    [item.id]: {
+                                      checked: prev[item.id]?.checked ?? false,
+                                      qty
+                                    }
+                                  }));
+                                }}
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
                 <div className="modal__actions">
                   <button
-                    className="modal__button modal__button--secondary"
+                    className="modal__button modal__button--primary"
                     type="button"
-                    onClick={() => setCustomLayoutOpen(false)}
+                    onClick={handleSpawnCustomLayout}
+                    disabled={selectedCustomLayoutCount === 0}
                   >
-                    Close
+                    Spawn
                   </button>
                 </div>
               </div>

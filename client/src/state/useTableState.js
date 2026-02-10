@@ -936,6 +936,7 @@ export const useTableState = (
 
   return {
     cardsById,
+    setCardsById,
     allCardIds,
     stacks,
     setStacks,
