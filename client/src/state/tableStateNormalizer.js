@@ -16,11 +16,26 @@ const normalizeSeat = (seat) => {
 
 const normalizeStack = (stack) => {
   const nextStack = obj(stack);
+  const normalizedKind =
+    nextStack.kind === 'chips'
+      ? 'chipStack'
+      : nextStack.kind === 'die'
+        ? 'dice'
+        : nextStack.kind ?? 'cardStack';
   return {
     ...nextStack,
-    cardIds: arr(nextStack.cardIds)
+    kind: normalizedKind,
+    cardIds: arr(nextStack.cardIds),
+    cards: arr(nextStack.cards)
   };
 };
+
+const normalizeSnapshot = (s) => ({
+  entities: obj(s?.entities),
+  order: arr(s?.order),
+  hands: obj(s?.hands),
+  selections: arr(s?.selections)
+});
 
 const normalizeHands = (handsInput) => {
   const handsObj = obj(handsInput);
@@ -57,9 +72,14 @@ const normalizeLayoutMeta = (layout, index) => {
 
 const normalizeTableState = (rawInput) => {
   const raw = obj(rawInput);
+  const snapshot = normalizeSnapshot(raw.snapshot);
   const hasUnifiedObjects = Array.isArray(raw.objects);
   const normalized = {
     ...raw,
+    snapshot,
+    entities: snapshot.entities,
+    order: snapshot.order,
+    selections: snapshot.selections,
     stacks: arr(raw.stacks).map(normalizeStack),
     seats: arr(raw.seats).map(normalizeSeat),
     actionLog: arr(raw.actionLog),
@@ -104,4 +124,4 @@ const normalizeCustomLayout = (rawLayout, codeHint = '') => {
   };
 };
 
-export { arr, obj, normalizeCustomLayout, normalizeTableState };
+export { arr, obj, normalizeCustomLayout, normalizeSnapshot, normalizeTableState };
