@@ -2,6 +2,17 @@ const arr = (value) => (Array.isArray(value) ? value : []);
 const obj = (value) => (value && typeof value === 'object' ? value : {});
 
 const DEFAULT_SEAT_COLOR = '#6b7280';
+const DEFAULT_INTERACTION_STATE = {
+  selectedId: null,
+  held: null,
+  dragId: null,
+  dragging: false,
+  dragOffset: { x: 0, y: 0 }
+};
+const DEFAULT_UI_STATE = {
+  logChatOpen: true,
+  logChatTab: 'log'
+};
 
 const normalizeSeat = (seat) => {
   const nextSeat = obj(seat);
@@ -74,8 +85,30 @@ const normalizeTableState = (rawInput) => {
   const raw = obj(rawInput);
   const snapshot = normalizeSnapshot(raw.snapshot);
   const hasUnifiedObjects = Array.isArray(raw.objects);
+  const interactionInput = obj(raw.interaction);
+  const dragOffset = obj(interactionInput.dragOffset);
+  const normalizedInteraction = {
+    ...DEFAULT_INTERACTION_STATE,
+    ...interactionInput,
+    selectedId:
+      interactionInput.selectedId ??
+      raw.selectedStackId ??
+      DEFAULT_INTERACTION_STATE.selectedId,
+    held: interactionInput.held ?? raw.held ?? DEFAULT_INTERACTION_STATE.held,
+    dragId: interactionInput.dragId ?? interactionInput.drag?.stackId ?? DEFAULT_INTERACTION_STATE.dragId,
+    dragging: Boolean(interactionInput.dragging ?? interactionInput.drag),
+    dragOffset: {
+      x: Number.isFinite(dragOffset.x) ? dragOffset.x : DEFAULT_INTERACTION_STATE.dragOffset.x,
+      y: Number.isFinite(dragOffset.y) ? dragOffset.y : DEFAULT_INTERACTION_STATE.dragOffset.y
+    }
+  };
+  const uiInput = obj(raw.ui);
   const normalized = {
     ...raw,
+    entitiesById: obj(raw.entitiesById),
+    entityOrder: arr(raw.entityOrder),
+    stacksById: obj(raw.stacksById),
+    stackOrder: arr(raw.stackOrder),
     snapshot,
     entities: snapshot.entities,
     order: snapshot.order,
@@ -93,15 +126,19 @@ const normalizeTableState = (rawInput) => {
     selectedSeatId: raw.selectedSeatId ?? null,
     tokens: arr(raw.tokens),
     interaction: {
-      held: raw.held ?? null,
+      ...normalizedInteraction,
       selected:
-        raw.interaction?.selected && typeof raw.interaction.selected === 'object'
-          ? raw.interaction.selected
-          : raw.selectedStackId
-            ? { kind: 'stack', id: raw.selectedStackId }
-            : null,
-      dragging: raw.interaction?.dragging ?? null,
-      ...obj(raw.interaction)
+        interactionInput.selected && typeof interactionInput.selected === 'object'
+          ? interactionInput.selected
+          : normalizedInteraction.selectedId
+            ? { kind: 'stack', id: normalizedInteraction.selectedId }
+            : null
+    },
+    ui: {
+      ...DEFAULT_UI_STATE,
+      ...uiInput,
+      logChatOpen: uiInput.logChatOpen ?? DEFAULT_UI_STATE.logChatOpen,
+      logChatTab: uiInput.logChatTab === 'chat' ? 'chat' : 'log'
     },
     savedLayouts: arr(raw.savedLayouts).map(normalizeLayoutMeta),
     objects: hasUnifiedObjects ? arr(raw.objects) : undefined,
@@ -109,6 +146,40 @@ const normalizeTableState = (rawInput) => {
     dice: hasUnifiedObjects ? undefined : arr(raw.dice).map(normalizeStack)
   };
   return normalized;
+};
+
+const normalizeRuntimeState = (rawInput) => {
+  const normalized = normalizeTableState(rawInput);
+  return {
+    entitiesById: normalized.entitiesById,
+    entityOrder: normalized.entityOrder,
+    stacksById: normalized.stacksById,
+    stackOrder: normalized.stackOrder,
+    seats: normalized.seats,
+    handsBySeat: normalized.handsBySeat ?? normalized.hands ?? {},
+    interaction: {
+      ...DEFAULT_INTERACTION_STATE,
+      ...normalized.interaction,
+      selectedId: normalized.interaction?.selectedId ?? null,
+      held: normalized.interaction?.held ?? null,
+      dragId: normalized.interaction?.dragId ?? null,
+      dragging: Boolean(normalized.interaction?.dragging),
+      dragOffset: {
+        x: Number.isFinite(normalized.interaction?.dragOffset?.x)
+          ? normalized.interaction.dragOffset.x
+          : 0,
+        y: Number.isFinite(normalized.interaction?.dragOffset?.y)
+          ? normalized.interaction.dragOffset.y
+          : 0
+      }
+    },
+    ui: {
+      ...DEFAULT_UI_STATE,
+      ...(normalized.ui ?? {}),
+      logChatOpen: normalized.ui?.logChatOpen ?? true,
+      logChatTab: normalized.ui?.logChatTab === 'chat' ? 'chat' : 'log'
+    }
+  };
 };
 
 const normalizeCustomLayout = (rawLayout, codeHint = '') => {
@@ -136,4 +207,11 @@ const normalizeCustomLayout = (rawLayout, codeHint = '') => {
   };
 };
 
-export { arr, obj, normalizeCustomLayout, normalizeSnapshot, normalizeTableState };
+export {
+  arr,
+  obj,
+  normalizeCustomLayout,
+  normalizeRuntimeState,
+  normalizeSnapshot,
+  normalizeTableState
+};

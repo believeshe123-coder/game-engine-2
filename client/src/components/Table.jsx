@@ -27,6 +27,7 @@ import { loadUiPrefs, saveUiPrefs } from '../state/uiPrefs.js';
 import {
   arr,
   normalizeCustomLayout,
+  normalizeRuntimeState,
   normalizeTableState
 } from '../state/tableStateNormalizer.js';
 
@@ -66,6 +67,17 @@ const HELD_STACK_ID = '__HELD__';
 const CAMERA_ZOOM_MIN = 0.25;
 const UNDO_HISTORY_LIMIT = 50;
 const CAMERA_ZOOM_MAX = 2.5;
+const INTERACTION_SAFE_DEFAULTS = {
+  selectedId: null,
+  held: null,
+  dragId: null,
+  dragging: false,
+  dragOffset: { x: 0, y: 0 }
+};
+const UI_SAFE_DEFAULTS = {
+  logChatOpen: true,
+  logChatTab: 'log'
+};
 
 const CUSTOM_LAYOUT_STORAGE_PREFIX = 'tt_layout_';
 const CUSTOM_LAYOUT_INDEX_KEY = 'tt_layouts_index';
@@ -725,6 +737,7 @@ const Table = () => {
   const hands = handsBySeat;
   const [cardFaceOverrides, setCardFaceOverrides] = useState({});
   const [interaction, setInteraction] = useState({
+    ...INTERACTION_SAFE_DEFAULTS,
     mode: 'idle',
     pointerId: null,
     source: null,
@@ -747,6 +760,7 @@ const Table = () => {
     menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
   });
   const [hoveredStackId, setHoveredStackId] = useState(null);
+  const [uiState, setUiState] = useState(UI_SAFE_DEFAULTS);
   const pointerDownRef = useRef(null);
   const rmbHoldTimerRef = useRef(null);
   const lastPointerWorldRef = useRef(null);
@@ -882,6 +896,12 @@ const Table = () => {
       pointerId: null,
       source: null,
       held: null,
+      selectedId: preserveSelection
+        ? nextSelectedStackId ?? prev.selectedId ?? prev.selectedStackId
+        : nextSelectedStackId,
+      dragId: null,
+      dragging: false,
+      dragOffset: { x: 0, y: 0 },
       drag: null,
       ...defaultRmbState,
       selectedStackId: preserveSelection
@@ -911,10 +931,15 @@ const Table = () => {
 
   actions.resetInteractionToDefaults = useCallback(() => {
     setInteraction({
+      ...INTERACTION_SAFE_DEFAULTS,
       mode: 'idle',
       pointerId: null,
       source: null,
       held: null,
+      selectedId: null,
+      dragId: null,
+      dragging: false,
+      dragOffset: { x: 0, y: 0 },
       drag: null,
       rmbDown: false,
       rmbDownAt: 0,
@@ -1050,8 +1075,6 @@ const Table = () => {
   const [seatRailBounds, setSeatRailBounds] = useState(null);
   const [feltEllipse, setFeltEllipse] = useState(null);
   const [feltScreenRect, setFeltScreenRect] = useState(null);
-  const [debugClampPoint, setDebugClampPoint] = useState(null);
-  const [showFeltDebug, setShowFeltDebug] = useState(false);
   const safeFeltEllipse = useMemo(() => {
     if (!feltEllipse || !['oval', 'circle'].includes(tableShape)) {
       return null;
@@ -1067,12 +1090,6 @@ const Table = () => {
       ry: rySafe
     };
   }, [cardSize.height, cardSize.width, feltEllipse, tableShape]);
-
-  useEffect(() => {
-    if (!showFeltDebug) {
-      setDebugClampPoint(null);
-    }
-  }, [showFeltDebug]);
 
   const seatsDerived = useMemo(() => {
     const count = Math.max(2, seatCount);
@@ -2966,6 +2983,7 @@ const Table = () => {
     historyRef.current = historyRef.current.slice(0, -1);
     setCanUndo(historyRef.current.length > 0);
     const normalizedSnapshot = normalizeTableState(previousSnapshot);
+    const normalizedRuntime = normalizeRuntimeState(previousSnapshot);
     restoringFromUndoRef.current = true;
     setStacks(cloneState(normalizedSnapshot.stacks));
     setHands(cloneState(normalizedSnapshot.hands ?? {}));
@@ -2976,9 +2994,10 @@ const Table = () => {
       pointerId: null,
       source: null,
       drag: null,
-      held: cloneState(previousSnapshot.held ?? null),
-      selectedStackId: previousSnapshot.selectedStackId ?? null,
-      selected: previousSnapshot.selectedStackId ? { kind: 'stack', id: previousSnapshot.selectedStackId } : null,
+      ...normalizedRuntime.interaction,
+      held: cloneState(normalizedRuntime.interaction.held ?? null),
+      selectedStackId: normalizedSnapshot.selectedStackId ?? null,
+      selected: normalizedSnapshot.selectedStackId ? { kind: 'stack', id: normalizedSnapshot.selectedStackId } : null,
       menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
     }));
     setTimeout(() => {
@@ -4210,6 +4229,12 @@ const Table = () => {
     actions.resetInteractionToDefaults?.();
     setCardFaceOverrides({});
     setSettingsOpen(false);
+    setItemSpawnerOpen(false);
+    setSaveLayoutOpen(false);
+    setResetConfirmOpen(false);
+    setRemoveConfirmOpen(false);
+    setCardPreview(null);
+    setUiState(UI_SAFE_DEFAULTS);
     actions.updateTabletopScale?.();
     if (isLegacyDisabledShape) {
       const nextLayout = buildLegacyDisabledShapeSeatLayout();
@@ -4226,7 +4251,6 @@ const Table = () => {
       }));
     }
     logAction('Reset table using current settings');
-    setResetConfirmOpen(false);
   }, [
     actions,
     buildLegacyDisabledShapeSeatLayout,
@@ -4299,10 +4323,9 @@ const Table = () => {
   const selectedStack = interaction.selectedStackId
     ? stacksById[interaction.selectedStackId]
     : null;
-  const highlightStackId = interaction.held ? HELD_STACK_ID : interaction.selectedStackId;
-  const heldTopCardId = interaction.held?.cardIds?.[
-    (interaction.held?.cardIds?.length ?? 1) - 1
-  ];
+  const held = interaction?.held ?? null;
+  const highlightStackId = held ? HELD_STACK_ID : interaction.selectedStackId;
+  const heldTopCardId = held?.cardIds?.[(held?.cardIds?.length ?? 1) - 1];
   const heldTopCard = heldTopCardId ? cardsById[heldTopCardId] : null;
   const heldWorldPosition = (() => {
     if (!interaction.held || !interaction.drag) {
@@ -4635,55 +4658,11 @@ const Table = () => {
               onDragEnter={preventNativeDrag}
               onDrop={preventNativeDrag}
             >
-              <div
-                ref={feltRef}
-                className={`table__felt ${showFeltDebug ? 'table__felt--debug' : ''}`}
-                aria-hidden="true"
-              />
-              {showFeltDebug && feltEllipse && tableRect.width && tableRect.height ? (
-                <svg
-                  className="table__felt-debug"
-                  viewBox={`0 0 ${tableRect.width} ${tableRect.height}`}
+                <div
+                  ref={feltRef}
+                  className="table__felt"
                   aria-hidden="true"
-                >
-                  {tableShape === 'rectangle' || tableShape === 'legacyDisabledShape' ? (
-                    <rect
-                      className="table__felt-debug-rect"
-                      x={feltEllipse.bounds?.left ?? 0}
-                      y={feltEllipse.bounds?.top ?? 0}
-                      width={feltEllipse.w}
-                      height={feltEllipse.h}
-                    />
-                  ) : (
-                    <>
-                      <ellipse
-                        className="table__felt-debug-ellipse"
-                        cx={feltEllipse.cx}
-                        cy={feltEllipse.cy}
-                        rx={feltEllipse.rx}
-                        ry={feltEllipse.ry}
-                      />
-                      {safeFeltEllipse ? (
-                        <ellipse
-                          className="table__felt-debug-safe-ellipse"
-                          cx={safeFeltEllipse.cx}
-                          cy={safeFeltEllipse.cy}
-                          rx={safeFeltEllipse.rx}
-                          ry={safeFeltEllipse.ry}
-                        />
-                      ) : null}
-                    </>
-                  )}
-                  {debugClampPoint ? (
-                    <circle
-                      className="table__felt-debug-clamp"
-                      cx={debugClampPoint.x}
-                      cy={debugClampPoint.y}
-                      r="8"
-                    />
-                  ) : null}
-                </svg>
-              ) : null}
+                />
               <div className="table__stack-layer">
                 <div className="table__playfield">
                   {handZones.map((zone) => {
@@ -4968,30 +4947,30 @@ const Table = () => {
             uiOverlayRoot
           )
         : null}
-      {interaction.held && uiOverlayRoot && dragCardPosition
+      {held && uiOverlayRoot && dragCardPosition
         ? createPortal(
             <div
                 className="drag-layer"
                 aria-hidden="true"
                 style={{ '--card-scale': viewTransform.cardScale * combinedScale }}
               >
-                {interaction.isChipStack(held) ? (
-                  <div className="chip-stack" style={{ transform: `translate(${dragCardPosition.x}px, ${dragCardPosition.y}px)`, '--chip-color': CHIP_COLORS[interaction.held.denom] ?? '#f4f5f7' }}>
+                {isChipStack(held) ? (
+                  <div className="chip-stack" style={{ transform: `translate(${dragCardPosition.x}px, ${dragCardPosition.y}px)`, '--chip-color': CHIP_COLORS[held.denom] ?? '#f4f5f7' }}>
                     <div className="chip-stack__disc" />
-                    <div className="chip-stack__label">{getChipStackLabel(interaction.held)}</div>
+                    <div className="chip-stack__label">{getChipStackLabel(held)}</div>
                   </div>
-                ) : isDieStack(interaction.held) ? (
+                ) : isDieStack(held) ? (
                   <div className="die-stack" style={{ transform: `translate(${dragCardPosition.x}px, ${dragCardPosition.y}px)` }}>
-                    <div className="die-stack__type">d{interaction.held.sides}</div>
-                    <div className="die-stack__value">{interaction.held.value}</div>
+                    <div className="die-stack__type">d{held.sides}</div>
+                    <div className="die-stack__value">{held.value}</div>
                   </div>
                 ) : (
                   <Card
-                    id={interaction.held.stackId}
+                    id={held.stackId}
                     x={dragCardPosition.x}
                     y={dragCardPosition.y}
                     rotation={0}
-                    faceUp={interaction.held.faceUp ?? true}
+                    faceUp={held.faceUp ?? true}
                     cardStyle={settings.cardStyle}
                     colorBlindMode={uiPrefs.colorBlindMode}
                     zIndex={2000}
@@ -5845,10 +5824,32 @@ const Table = () => {
         : null}
       {uiOverlayRoot
         ? createPortal(
-            <ActionLog entries={actionLog} playerName={myName} />,
+            <ActionLog
+              entries={actionLog}
+              playerName={myName}
+              isOpen={uiState.logChatOpen}
+              activeTab={uiState.logChatTab}
+              onOpenChange={(open) =>
+                setUiState((prev) => ({ ...prev, logChatOpen: Boolean(open) }))
+              }
+              onTabChange={(tab) =>
+                setUiState((prev) => ({ ...prev, logChatTab: tab === 'chat' ? 'chat' : 'log' }))
+              }
+            />,
             uiOverlayRoot
           )
-        : <ActionLog entries={actionLog} playerName={myName} />}
+        : <ActionLog
+            entries={actionLog}
+            playerName={myName}
+            isOpen={uiState.logChatOpen}
+            activeTab={uiState.logChatTab}
+            onOpenChange={(open) =>
+              setUiState((prev) => ({ ...prev, logChatOpen: Boolean(open) }))
+            }
+            onTabChange={(tab) =>
+              setUiState((prev) => ({ ...prev, logChatTab: tab === 'chat' ? 'chat' : 'log' }))
+            }
+          />}
     </div>
   );
 };
