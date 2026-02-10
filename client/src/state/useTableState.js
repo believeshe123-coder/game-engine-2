@@ -128,7 +128,7 @@ const applyOvalLayout = ({
 };
 
 const applyPresetLayout = (tableShape, feltBounds, layout) => {
-  if (tableShape === 'rectangle' || tableShape === 'endless') {
+  if (tableShape === 'rectangle') {
     applyRectangleLayout({
       feltBounds,
       ...layout
@@ -148,8 +148,7 @@ export const useTableState = (
   tableRect,
   cardSize,
   initialSettings,
-  seatCount,
-  getEndlessSpawnPoint
+  seatCount
 ) => {
   const [cardsById, setCardsById] = useState({});
   const [allCardIds, setAllCardIds] = useState([]);
@@ -216,9 +215,7 @@ export const useTableState = (
       const settings = normalizeSettings(settingsInput ?? DEFAULT_SETTINGS);
       const tableShape = settings.roomSettings?.tableShape ?? 'rectangle';
       if (!tableRect?.width || !tableRect?.height) {
-        if (tableShape !== 'endless') {
-          return null;
-        }
+        return null;
       }
       const {
         cardsById: nextCardsById,
@@ -227,22 +224,12 @@ export const useTableState = (
       } = buildDecks(settings);
       const boundsWidth = tableRect.width ?? 0;
       const boundsHeight = tableRect.height ?? 0;
-      const isEndless = tableShape === 'endless';
-      const spawnPoint = isEndless ? getEndlessSpawnPoint?.() : null;
-      const spawnOffset = isEndless
-        ? {
-            x: (spawnPoint?.x ?? 0) - boundsWidth / 2 + cardSize.width / 2,
-            y: (spawnPoint?.y ?? 0) - boundsHeight / 2 + cardSize.height / 2
-          }
-        : { x: 0, y: 0 };
-      const feltShape =
-        isEndless
-          ? null
-          : getFeltShape({
-              width: boundsWidth,
-              height: boundsHeight,
-              shape: tableShape
-            });
+      const spawnOffset = { x: 0, y: 0 };
+      const feltShape = getFeltShape({
+        width: boundsWidth,
+        height: boundsHeight,
+        shape: tableShape
+      });
       const nextStacks = [];
       nextStackIdRef.current = 1;
 
@@ -305,7 +292,6 @@ export const useTableState = (
       cardSize.height,
       cardSize.width,
       createStackId,
-      getEndlessSpawnPoint,
       tableRect?.height,
       tableRect?.width
     ]

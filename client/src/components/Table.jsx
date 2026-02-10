@@ -73,6 +73,9 @@ const SIDE_NORMALS = {
   left: { angle: Math.PI }
 };
 
+const normalizeTableShape = (shape) =>
+  ['rectangle', 'oval', 'circle'].includes(shape) ? shape : 'oval';
+
 const normalizeParam = (value, max) => {
   if (!Number.isFinite(value) || !Number.isFinite(max) || max <= 0) {
     return 0;
@@ -255,7 +258,7 @@ const ENDLESS_SEAT_PATTERN = [
   'bottom'
 ];
 
-const getEndlessDefaultSeatPositions = (seatCount, viewportW, viewportH) => {
+const getLegacyDisabledShapeDefaultSeatPositions = (seatCount, viewportW, viewportH) => {
   const count = Math.max(1, seatCount);
   const width = Math.max(1, viewportW);
   const height = Math.max(1, viewportH);
@@ -307,10 +310,10 @@ const getEndlessDefaultSeatPositions = (seatCount, viewportW, viewportH) => {
   });
 };
 
-const getEndlessSeatAngleFromLocal = (x, y, viewportW, viewportH) =>
+const getLegacyDisabledShapeSeatAngleFromLocal = (x, y, viewportW, viewportH) =>
   Math.atan2(y - viewportH / 2, x - viewportW / 2);
 
-const getEndlessSeatAngleFromWorld = (x, y, camera, viewport, viewportW, viewportH) => {
+const getLegacyDisabledShapeSeatAngleFromWorld = (x, y, camera, viewport, viewportW, viewportH) => {
   if (!viewportW || !viewportH) {
     return Math.atan2(y, x);
   }
@@ -341,15 +344,15 @@ const formatCardName = (card) => {
   return rankName ?? card.suit ?? 'Card';
 };
 
-function localToWorld(localX, localY, camera, viewport, isEndless) {
-  if (!isEndless || !camera || !viewport) {
+function localToWorld(localX, localY, camera, viewport, isLegacyDisabledShape) {
+  if (!isLegacyDisabledShape || !camera || !viewport) {
     return { x: localX, y: localY };
   }
   return screenToWorld(localX, localY, camera, viewport);
 }
 
-function worldToLocal(worldX, worldY, camera, viewport, isEndless) {
-  if (!isEndless || !camera || !viewport) {
+function worldToLocal(worldX, worldY, camera, viewport, isLegacyDisabledShape) {
+  if (!isLegacyDisabledShape || !camera || !viewport) {
     return { x: worldX, y: worldY };
   }
   return worldToScreen(worldX, worldY, camera, viewport);
@@ -362,14 +365,14 @@ function clientToWorld(
   zoom,
   camera,
   viewport,
-  isEndless
+  isLegacyDisabledShape
 ) {
   if (!playfieldRect || !zoom) {
     return null;
   }
   const localX = (clientX - playfieldRect.left) / zoom;
   const localY = (clientY - playfieldRect.top) / zoom;
-  return localToWorld(localX, localY, camera, viewport, isEndless);
+  return localToWorld(localX, localY, camera, viewport, isLegacyDisabledShape);
 }
 
 const computeSeatAnchorsFromParams = ({ seatParams, tableShape, seatRailBounds }) => {
@@ -420,13 +423,13 @@ const buildSeatLayout = ({
   viewport
 }) => {
   const count = Math.max(2, Number(seatCount) || 2);
-  if (shape === 'endless') {
+  if (shape === 'legacyDisabledShape') {
     const width = Math.max(1, viewportW || tableRect?.width || 1);
     const height = Math.max(1, viewportH || tableRect?.height || 1);
-    const localPositions = getEndlessDefaultSeatPositions(count, width, height);
+    const localPositions = getLegacyDisabledShapeDefaultSeatPositions(count, width, height);
     return localPositions.map((entry) => {
       const world = localToWorld(entry.x, entry.y, camera, viewport, true);
-      const angle = getEndlessSeatAngleFromLocal(entry.x, entry.y, width, height);
+      const angle = getLegacyDisabledShapeSeatAngleFromLocal(entry.x, entry.y, width, height);
       return {
         x: world.x,
         y: world.y,
@@ -563,7 +566,7 @@ const Table = () => {
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
   const cameraRef = useRef(camera);
   const viewportRef = useRef(getViewportFromRect(tableRect));
-  const getEndlessSpawnPoint = useCallback(() => {
+  const getLegacyDisabledShapeSpawnPoint = useCallback(() => {
     const viewport = viewportRef.current;
     if (!viewport?.cx && !viewport?.cy) {
       return { x: 0, y: 0 };
@@ -606,7 +609,7 @@ const Table = () => {
     cardSize,
     settings,
     seatCount,
-    getEndlessSpawnPoint
+    getLegacyDisabledShapeSpawnPoint
   );
   const hands = handsBySeat;
   const [cardFaceOverrides, setCardFaceOverrides] = useState({});
@@ -697,7 +700,7 @@ const Table = () => {
   const myName = player?.name ?? 'Player';
   const tableStyle = settings.tableStyle;
   const tableShape = settings.roomSettings.tableShape;
-  const isEndless = tableShape === 'endless';
+  const isLegacyDisabledShape = tableShape === 'legacyDisabledShape';
   const [uiPrefs, setUiPrefs] = useState(loadUiPrefs);
   const [cardPreview, setCardPreview] = useState(null);
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
@@ -706,7 +709,7 @@ const Table = () => {
   const lastSnapshotRef = useRef(null);
   const restoringFromUndoRef = useRef(false);
   const suppressNextHistoryRef = useRef(false);
-  const wasEndlessRef = useRef(false);
+  const wasLegacyDisabledShapeRef = useRef(false);
   const isModalOpen =
     resetConfirmOpen ||
     itemSpawnerOpen ||
@@ -956,9 +959,9 @@ const Table = () => {
     });
   }, [seatCount]);
 
-  const buildEndlessSeatLayout = useCallback(() => {
+  const buildLegacyDisabledShapeSeatLayout = useCallback(() => {
     const layout = buildSeatLayout({
-      shape: 'endless',
+      shape: 'legacyDisabledShape',
       seatCount: seatsDerived.length,
       viewportW: tableRect?.width ?? 0,
       viewportH: tableRect?.height ?? 0,
@@ -980,19 +983,19 @@ const Table = () => {
 
   const seatParams = useMemo(() => {
     const paramsByShape = settings.roomSettings.seatParams ?? {};
-    if (isEndless) {
+    if (isLegacyDisabledShape) {
       return [];
     }
     return normalizeSeatParams(paramsByShape[tableShape], seatCount, tableShape);
   }, [
-    isEndless,
+    isLegacyDisabledShape,
     seatCount,
     settings.roomSettings.seatParams,
     tableShape
   ]);
 
   useEffect(() => {
-    if (isEndless) {
+    if (isLegacyDisabledShape) {
       return;
     }
     setSettings((prev) => {
@@ -1017,7 +1020,7 @@ const Table = () => {
         }
       };
     });
-  }, [isEndless, seatCount, tableShape]);
+  }, [isLegacyDisabledShape, seatCount, tableShape]);
 
   const [seatPositions, setSeatPositions] = useState(() =>
     seatsDerived.map((seat) => ({ ...seat, x: 0, y: 0 }))
@@ -1050,13 +1053,13 @@ const Table = () => {
   }, [camera]);
 
   useEffect(() => {
-    if (isEndless && !wasEndlessRef.current) {
+    if (isLegacyDisabledShape && !wasLegacyDisabledShapeRef.current) {
       const resetCamera = { x: 0, y: 0, zoom: 1 };
       setCamera(resetCamera);
       cameraRef.current = resetCamera;
     }
-    wasEndlessRef.current = isEndless;
-  }, [isEndless]);
+    wasLegacyDisabledShapeRef.current = isLegacyDisabledShape;
+  }, [isLegacyDisabledShape]);
 
   useEffect(() => {
     viewportRef.current = getViewportFromRect(tableRect);
@@ -1110,7 +1113,7 @@ const Table = () => {
           zoom,
           cameraRef.current,
           viewportRef.current,
-          isEndless
+          isLegacyDisabledShape
         );
         const bottomRight = clientToWorld(
           padRect.right,
@@ -1119,7 +1122,7 @@ const Table = () => {
           zoom,
           cameraRef.current,
           viewportRef.current,
-          isEndless
+          isLegacyDisabledShape
         );
         if (topLeft && bottomRight) {
           const width = Math.max(0, bottomRight.x - topLeft.x);
@@ -1150,19 +1153,19 @@ const Table = () => {
     handZoneSeatOffset,
     handZoneSize.height,
     handZoneSize.width,
-    isEndless,
+    isLegacyDisabledShape,
     seatPositions
   ]);
 
   const cameraTransformStyle = useMemo(() => {
-    if (!isEndless || !tableRect?.width || !tableRect?.height) {
+    if (!isLegacyDisabledShape || !tableRect?.width || !tableRect?.height) {
       return undefined;
     }
     return {
       transform: `translate(${tableRect.width / 2}px, ${tableRect.height / 2}px) scale(${camera.zoom}) translate(${-camera.x}px, ${-camera.y}px)`,
       transformOrigin: '0 0'
     };
-  }, [camera.x, camera.y, camera.zoom, isEndless, tableRect?.height, tableRect?.width]);
+  }, [camera.x, camera.y, camera.zoom, isLegacyDisabledShape, tableRect?.height, tableRect?.width]);
 
   const getHandZoneAtPoint = useCallback(
     (x, y) => {
@@ -1213,7 +1216,7 @@ const Table = () => {
   }, [seatsDerived]);
 
   const layoutSeats = useCallback(() => {
-    if (isEndless) {
+    if (isLegacyDisabledShape) {
       setFeltBounds(null);
       setSeatRailBounds(null);
       return;
@@ -1290,13 +1293,13 @@ const Table = () => {
         };
       })
     );
-  }, [isEndless, seatParams, seatsDerived, tableRect, tableShape]);
+  }, [isLegacyDisabledShape, seatParams, seatsDerived, tableRect, tableShape]);
 
   useEffect(() => {
-    if (!isEndless) {
+    if (!isLegacyDisabledShape) {
       return;
     }
-    const stored = settings.roomSettings.seatPositions?.endless ?? [];
+    const stored = settings.roomSettings.seatPositions?.legacyDisabledShape ?? [];
     const hasValid =
       Array.isArray(stored) &&
       stored.length === seatsDerived.length &&
@@ -1304,7 +1307,7 @@ const Table = () => {
     const layout = hasValid
       ? seatsDerived.map((seat, index) => {
           const entry = stored[index];
-          const angle = getEndlessSeatAngleFromWorld(
+          const angle = getLegacyDisabledShapeSeatAngleFromWorld(
             entry.x,
             entry.y,
             cameraRef.current,
@@ -1320,7 +1323,7 @@ const Table = () => {
             side: getSeatSideFromAngle(angle)
           };
         })
-      : buildEndlessSeatLayout();
+      : buildLegacyDisabledShapeSeatLayout();
     setSeatPositions(layout);
     if (!hasValid) {
       const nextPositions = layout.map((seat) => ({ x: seat.x, y: seat.y }));
@@ -1330,14 +1333,14 @@ const Table = () => {
           ...prev.roomSettings,
           seatPositions: {
             ...(prev.roomSettings.seatPositions ?? {}),
-            endless: nextPositions
+            legacyDisabledShape: nextPositions
           }
         }
       }));
     }
   }, [
-    buildEndlessSeatLayout,
-    isEndless,
+    buildLegacyDisabledShapeSeatLayout,
+    isLegacyDisabledShape,
     seatsDerived,
     setSettings,
     settings.roomSettings.seatPositions
@@ -1595,7 +1598,7 @@ const Table = () => {
 
   const clampTopLeftToFelt = useCallback(
     (topLeft) => {
-      if (isEndless) {
+      if (isLegacyDisabledShape) {
         return { position: topLeft, inside: true, clampedCenter: null };
       }
       if (!feltScreenRect || !tableScreenRect) {
@@ -1642,7 +1645,7 @@ const Table = () => {
       cardSize.height,
       cardSize.width,
       feltScreenRect,
-      isEndless,
+      isLegacyDisabledShape,
       tableScreenRect,
       tableShape
     ]
@@ -1675,9 +1678,9 @@ const Table = () => {
       pointerLocal.scale,
       cameraRef.current,
       viewportRef.current,
-      isEndless
+      isLegacyDisabledShape
     );
-  }, [getPointerLocalFromClient, isEndless]);
+  }, [getPointerLocalFromClient, isLegacyDisabledShape]);
 
   const getTablePointerPosition = useCallback(
     (event) =>
@@ -1741,7 +1744,7 @@ const Table = () => {
             ...prevSettings.roomSettings,
             seatPositions: {
               ...(prevSettings.roomSettings.seatPositions ?? {}),
-              endless: nextPositions
+              legacyDisabledShape: nextPositions
             }
           }
         }));
@@ -1753,7 +1756,7 @@ const Table = () => {
 
   const updateSeatParamFromPointer = useCallback(
     (event, seatIndex) => {
-      if (isEndless) {
+      if (isLegacyDisabledShape) {
         const position = getTablePointerPosition(event);
         if (!position) {
           return;
@@ -1782,7 +1785,7 @@ const Table = () => {
     },
     [
       getTablePointerPosition,
-      isEndless,
+      isLegacyDisabledShape,
       seatParams,
       seatRailBounds,
       tableShape,
@@ -2895,7 +2898,7 @@ const Table = () => {
 
   actions.handleSurfaceWheel = useCallback(
     (event) => {
-      if (!isEndless) {
+      if (!isLegacyDisabledShape) {
         return;
       }
       event.preventDefault();
@@ -2906,7 +2909,7 @@ const Table = () => {
         zoom: clamp(prev.zoom * zoomFactor, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
       }));
     },
-    [isEndless]
+    [isLegacyDisabledShape]
   );
 
   actions.handleSurfacePointerDown = useCallback(
@@ -2929,7 +2932,7 @@ const Table = () => {
       const stackIdFromTarget = getStackIdFromEventTarget(event);
       const stackId = stackIdFromTarget ?? hitTestStack(pointerWorld.x, pointerWorld.y);
       const shouldPan =
-        isEndless &&
+        isLegacyDisabledShape &&
         !interaction.held &&
         ((event.button === 2 && !stackId) || (event.button === 0 && isSpaceDown));
       if (shouldPan) {
@@ -3068,7 +3071,7 @@ const Table = () => {
     [
       actions,
       getStackIdFromEventTarget,
-      isEndless,
+      isLegacyDisabledShape,
       isSpaceDown,
       getTablePointerPosition,
       hitTestStack,
@@ -3431,7 +3434,7 @@ const Table = () => {
     if (!selectedItems.length) {
       return;
     }
-    const center = isEndless ? getEndlessSpawnPoint() : { x: tableRect.width / 2, y: tableRect.height / 2 };
+    const center = isLegacyDisabledShape ? getLegacyDisabledShapeSpawnPoint() : { x: tableRect.width / 2, y: tableRect.height / 2 };
     const spacing = cardSize.width * 1.6;
     const startX = center.x - (selectedItems.length - 1) * 0.5 * spacing - cardSize.width / 2;
     const y = center.y - cardSize.height / 2;
@@ -3484,8 +3487,8 @@ const Table = () => {
     cardSize.height,
     cardSize.width,
     createStackId,
-    getEndlessSpawnPoint,
-    isEndless,
+    getLegacyDisabledShapeSpawnPoint,
+    isLegacyDisabledShape,
     itemSpawnerSelected,
     logAction,
     setCardsById,
@@ -3568,7 +3571,9 @@ const Table = () => {
       return;
     }
     const include = layout.include ?? {};
-    const shapeToUse = include.shape && layout.shape ? layout.shape : settings.roomSettings.tableShape;
+    const shapeToUse = normalizeTableShape(
+      include.shape && layout.shape ? layout.shape : settings.roomSettings.tableShape
+    );
     setSettings((prev) => ({
       ...prev,
       tableStyle: include.tableStyle && layout.tableStyle ? layout.tableStyle : prev.tableStyle,
@@ -3619,8 +3624,8 @@ const Table = () => {
           const x = Number(entry.x) || 0;
           const y = Number(entry.y) || 0;
           const angle =
-            shapeToUse === 'endless'
-              ? getEndlessSeatAngleFromWorld(
+            shapeToUse === 'legacyDisabledShape'
+              ? getLegacyDisabledShapeSeatAngleFromWorld(
                   x,
                   y,
                   cameraRef.current,
@@ -3693,7 +3698,7 @@ const Table = () => {
 
   const clampStacksToFeltShape = useCallback(
     (shape) => {
-      if (shape === 'endless') {
+      if (shape === 'legacyDisabledShape') {
         return;
       }
       if (!tableRect?.width || !tableRect?.height) {
@@ -3740,8 +3745,8 @@ const Table = () => {
     setCardFaceOverrides({});
     setSettingsOpen(false);
     actions.updateTabletopScale?.();
-    if (isEndless) {
-      const nextLayout = buildEndlessSeatLayout();
+    if (isLegacyDisabledShape) {
+      const nextLayout = buildLegacyDisabledShapeSeatLayout();
       setSeatPositions(nextLayout);
       setSettings((prev) => ({
         ...prev,
@@ -3749,7 +3754,7 @@ const Table = () => {
           ...prev.roomSettings,
           seatPositions: {
             ...(prev.roomSettings.seatPositions ?? {}),
-            endless: nextLayout.map((seat) => ({ x: seat.x, y: seat.y }))
+            legacyDisabledShape: nextLayout.map((seat) => ({ x: seat.x, y: seat.y }))
           }
         }
       }));
@@ -3758,8 +3763,8 @@ const Table = () => {
     setResetConfirmOpen(false);
   }, [
     actions,
-    buildEndlessSeatLayout,
-    isEndless,
+    buildLegacyDisabledShapeSeatLayout,
+    isLegacyDisabledShape,
     logAction,
     resetTableSurface,
     settings
@@ -3910,7 +3915,7 @@ const Table = () => {
           seatMenuSeat.y,
           cameraRef.current,
           viewportRef.current,
-          isEndless
+          isLegacyDisabledShape
         );
           return {
             left: tableScreenRect.left + local.x * combinedScale,
@@ -3964,7 +3969,7 @@ const Table = () => {
     : undefined;
   return (
     <div className="tabletop">
-      {isEndless ? <div className="felt--endless" aria-hidden="true" /> : null}
+      {isLegacyDisabledShape ? <div className="felt--legacyDisabledShape" aria-hidden="true" /> : null}
       <div
         id="sceneRoot"
         ref={sceneRootRef}
@@ -3978,7 +3983,7 @@ const Table = () => {
           className={`table-frame table-frame--${tableStyle} table-frame--${tableShape}`}
           style={{
             '--card-scale': viewTransform.cardScale,
-            '--table-width': isEndless
+            '--table-width': isLegacyDisabledShape
               ? '100%'
               : `${(() => {
                   const footprint =
@@ -3988,10 +3993,10 @@ const Table = () => {
                   }
                   return footprint * (TABLE_BASE_WIDTH / TABLE_BASE_HEIGHT);
                 })()}px`,
-            '--table-height': isEndless
+            '--table-height': isLegacyDisabledShape
               ? '100%'
               : `${tableFootprintPx ?? Math.min(TABLE_BASE_WIDTH, TABLE_BASE_HEIGHT)}px`,
-            '--frame-size': isEndless ? '0px' : undefined
+            '--frame-size': isLegacyDisabledShape ? '0px' : undefined
           }}
         >
           <div
@@ -4154,7 +4159,7 @@ const Table = () => {
                   viewBox={`0 0 ${tableRect.width} ${tableRect.height}`}
                   aria-hidden="true"
                 >
-                  {tableShape === 'rectangle' || tableShape === 'endless' ? (
+                  {tableShape === 'rectangle' || tableShape === 'legacyDisabledShape' ? (
                     <rect
                       className="table__felt-debug-rect"
                       x={feltEllipse.bounds?.left ?? 0}
@@ -4193,8 +4198,7 @@ const Table = () => {
                 </svg>
               ) : null}
               <div className="table__stack-layer">
-                <div className="table__world-layer" style={cameraTransformStyle}>
-                  <div className="table__playfield">
+                <div className="table__playfield">
                   {handZones.map((zone) => {
                     const isOwnerZone = mySeatIndex === zone.seatIndex;
                     const isDragHover =
@@ -4399,7 +4403,6 @@ const Table = () => {
                       </div>
                     );
                   })}
-                  </div>
                 </div>
               </div>
             </div>
@@ -4783,7 +4786,7 @@ const Table = () => {
                               ...prev,
                               roomSettings: {
                                 ...prev.roomSettings,
-                                tableShape: event.target.value
+                                tableShape: normalizeTableShape(event.target.value)
                               }
                             }))
                           }
@@ -4791,7 +4794,6 @@ const Table = () => {
                           <option value="rectangle">Rectangle</option>
                           <option value="oval">Oval</option>
                           <option value="circle">Circle</option>
-                          <option value="endless">Endless</option>
                         </select>
                       </label>
                       <label className="table-settings__row">
@@ -4842,9 +4844,9 @@ const Table = () => {
                         className="table-settings__button table-settings__button--secondary"
                         type="button"
                         onClick={() => {
-                          if (tableShape === 'endless') {
+                          if (tableShape === 'legacyDisabledShape') {
                             const nextLayout = buildSeatLayout({
-                              shape: 'endless',
+                              shape: 'legacyDisabledShape',
                               seatCount,
                               viewportW: tableRect?.width ?? 0,
                               viewportH: tableRect?.height ?? 0,
@@ -4875,7 +4877,7 @@ const Table = () => {
                                 ...prev.roomSettings,
                                 seatPositions: {
                                   ...(prev.roomSettings.seatPositions ?? {}),
-                                  endless: nextLayout.map((seat) => ({ x: seat.x, y: seat.y }))
+                                  legacyDisabledShape: nextLayout.map((seat) => ({ x: seat.x, y: seat.y }))
                                 }
                               }
                             }));
