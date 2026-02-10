@@ -233,11 +233,22 @@ const buildSpawnCardsForItem = (item, prefix) => {
   return cards;
 };
 
-const CHIP_COLORS = {
-  1: '#f4f5f7',
-  5: '#d94444',
-  25: '#2f9c57',
-  100: '#1f2438'
+const CHIP_COLOR_CLASS_BY_DENOM = {
+  1: 'chip--white',
+  5: 'chip--red',
+  25: 'chip--green',
+  100: 'chip--black',
+  500: 'chip--purple',
+  1000: 'chip--gold'
+};
+
+const D6_PIP_MAP = {
+  1: [5],
+  2: [1, 9],
+  3: [1, 5, 9],
+  4: [1, 3, 7, 9],
+  5: [1, 3, 5, 7, 9],
+  6: [1, 3, 4, 6, 7, 9]
 };
 
 const isCardStack = (entity) =>
@@ -247,7 +258,7 @@ const isDieStack = (entity) => entity?.kind === 'dice' || entity?.kind === 'die'
 
 const getStackBounds = (stack, cardSize) => {
   if (isChipStack(stack)) {
-    const size = cardSize.width * 0.38;
+    const size = cardSize.width * 0.48;
     return { width: size, height: size };
   }
   if (isDieStack(stack)) {
@@ -257,10 +268,51 @@ const getStackBounds = (stack, cardSize) => {
   return { width: cardSize.width, height: cardSize.height };
 };
 
-const getChipStackLabel = (stack) => {
+const getChipColorClass = (denom) =>
+  CHIP_COLOR_CLASS_BY_DENOM[Number(denom)] ?? 'chip--red';
+
+
+const renderChipStack = (stack) => {
   const count = Math.max(0, Number(stack?.count) || 0);
   const denom = Number(stack?.denom) || 0;
-  return `${count} × $${denom} = $${count * denom}`;
+  const chipColorClass = getChipColorClass(denom);
+  return (
+    <div className={`chip entityPhysical ${chipColorClass}`}>
+      <div className="chipInner">
+        <div className="chipDenom">${denom}</div>
+      </div>
+      {count > 1 ? <div className="chipCountBadge">x{count}</div> : null}
+    </div>
+  );
+};
+
+const renderDieStack = (stack) => {
+  const sides = Math.max(2, Number(stack?.sides) || 6);
+  const value = Math.max(1, Number(stack?.value) || 1);
+  if (sides === 6) {
+    const pips = D6_PIP_MAP[value] ?? D6_PIP_MAP[1];
+    return (
+      <div className="dice entityPhysical">
+        <div className="dicePips" aria-hidden="true">
+          {Array.from({ length: 9 }, (_, index) => {
+            const slot = index + 1;
+            return (
+              <span
+                key={`pip-${slot}`}
+                className={`dicePip ${pips.includes(slot) ? 'is-visible' : ''}`}
+              />
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="dice entityPhysical">
+      <div className="diceValue">{value}</div>
+      <div className="stackCountBadge diceStackTypeBadge">d{sides}</div>
+    </div>
+  );
 };
 
 const formatSpawnSummaryItem = (item, qty) => {
@@ -4484,7 +4536,9 @@ const Table = () => {
         ref={sceneRootRef}
         style={{
           '--tableScale': combinedScale,
-          '--player-accent': players[myPlayerId]?.seatColor ?? '#efd8a0'
+          '--player-accent': players[myPlayerId]?.seatColor ?? '#efd8a0',
+          '--cardW': `${cardSize.width}px`,
+          '--cardH': `${cardSize.height}px`
         }}
       >
         <div
@@ -4808,7 +4862,7 @@ const Table = () => {
                             : isMergeTarget
                               ? 'merge-target'
                               : '';
-                    const zIndex = index + 1;
+                    const zIndex = isHeldStack ? 9999 : index + 1;
                     const stackBounds = getStackBounds(stack, cardSize);
                     const showBadge =
                       !stack.isHeldVisual &&
@@ -4821,7 +4875,7 @@ const Table = () => {
                     return (
                       <div
                         key={stack.id}
-                        className={`stack-entity entity ${highlightState}`}
+                        className={`stack-entity entity ${highlightState} ${isSelectedStack ? 'isSelected' : ''} ${isHeldStack ? 'isDragging' : ''}`}
                         data-stack-id={stack.id}
                         data-selected={isSelectedStack}
                         data-held={isHeldStack}
@@ -4830,7 +4884,7 @@ const Table = () => {
                         data-merge-target={isMergeTarget}
                         draggable={false}
                         style={{
-                          transform: `translate(${stack.x}px, ${stack.y}px) rotate(${stack.rotation}deg)`,
+                          transform: `translate(${stack.x}px, ${stack.y}px) rotate(${stack.rotation}deg)${isHeldStack ? ' scale(1.02)' : ''}`,
                           width: stackBounds.width,
                           height: stackBounds.height,
                           zIndex
@@ -4852,15 +4906,9 @@ const Table = () => {
                             </span>
                           </div>
                         ) : isChipStack(stack) ? (
-                          <div className="chipStack entityPhysical" style={{ '--chip-color': CHIP_COLORS[stack.denom] ?? '#f4f5f7' }}>
-                            <div className="chipStack__denom">${stack?.denom ?? 0}</div>
-                            <div className="chipStack__count">×{stack?.count ?? 0}</div>
-                          </div>
+                          renderChipStack(stack)
                         ) : isDieStack(stack) ? (
-                          <div className="dice entityPhysical">
-                            <div className="die-stack__type">d{stack.sides}</div>
-                            <div className="die-stack__value">{stack.value}</div>
-                          </div>
+                          renderDieStack(stack)
                         ) : (
                           <Card
                             id={stack.id}
@@ -4955,14 +5003,12 @@ const Table = () => {
                 style={{ '--card-scale': viewTransform.cardScale * combinedScale }}
               >
                 {isChipStack(held) ? (
-                  <div className="chip-stack" style={{ transform: `translate(${dragCardPosition.x}px, ${dragCardPosition.y}px)`, '--chip-color': CHIP_COLORS[held.denom] ?? '#f4f5f7' }}>
-                    <div className="chip-stack__disc" />
-                    <div className="chip-stack__label">{getChipStackLabel(held)}</div>
+                  <div className="entity isDragging" style={{ transform: `translate(${dragCardPosition.x}px, ${dragCardPosition.y}px)`, zIndex: 9999 }}>
+                    {renderChipStack(held)}
                   </div>
                 ) : isDieStack(held) ? (
-                  <div className="die-stack" style={{ transform: `translate(${dragCardPosition.x}px, ${dragCardPosition.y}px)` }}>
-                    <div className="die-stack__type">d{held.sides}</div>
-                    <div className="die-stack__value">{held.value}</div>
+                  <div className="entity isDragging" style={{ transform: `translate(${dragCardPosition.x}px, ${dragCardPosition.y}px)`, zIndex: 9999 }}>
+                    {renderDieStack(held)}
                   </div>
                 ) : (
                   <Card
@@ -5012,12 +5058,12 @@ const Table = () => {
                 </button>
                 <button
                   className={`table-settings__tab ${
-                    settingsTab === 'table' ? 'is-active' : ''
+                    settingsTab === 'presets' ? 'is-active' : ''
                   }`}
                   type="button"
-                  onClick={() => setSettingsTab('table')}
+                  onClick={() => setSettingsTab('presets')}
                 >
-                  Table Presets
+                  Presets
                 </button>
                 <button
                   className={`table-settings__tab ${
@@ -5157,7 +5203,7 @@ const Table = () => {
                     </div>
                   </div>
                 ) : null}
-                {settingsTab === 'table' ? (
+                {settingsTab === 'presets' ? (
                   <div className="table-settings__section">
                     <div className="table-settings__group">
                       <div className="table-settings__group-title">Spawn Defaults</div>
@@ -5204,7 +5250,7 @@ const Table = () => {
                     <div className="table-settings__group">
                       <div className="table-settings__group-title">Item Spawner</div>
                       <button
-                        className="table-settings__button table-settings__button--secondary"
+                        className="table-settings__button table-settings__button--primary"
                         type="button"
                         onClick={() => setItemSpawnerOpen(true)}
                       >
@@ -5620,6 +5666,7 @@ const Table = () => {
               ) : null}
               {isChipStack(selectedStack) ? (
                 <>
+                  <div className="stack-menu__meta">Total: ${menuStackCount * (selectedStack.denom ?? 0)}</div>
                   <button
                     type="button"
                     className="stack-menu__button"
