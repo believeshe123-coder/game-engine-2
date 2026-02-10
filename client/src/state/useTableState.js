@@ -84,61 +84,14 @@ const buildDecks = (settings) => {
 };
 
 const applyRectangleLayout = ({
-  preset,
   feltBounds,
   cardSize,
   deckCardIds,
-  allCardIds,
   settings,
   pushStack
 }) => {
   const boundsWidth = feltBounds.width;
   const boundsHeight = feltBounds.height;
-  if (preset === 'solitaire') {
-    const columnCount = 7;
-    const columnGap = 22;
-    const totalWidth =
-      columnCount * cardSize.width + (columnCount - 1) * columnGap;
-    const startX = (boundsWidth - totalWidth) / 2;
-    const startY = Math.max(140, boundsHeight * 0.32);
-    let remaining = [...allCardIds];
-
-    for (let col = 0; col < columnCount; col += 1) {
-      const cardCount = col + 1;
-      const columnCards = remaining.slice(0, cardCount);
-      remaining = remaining.slice(cardCount);
-      const x = startX + col * (cardSize.width + columnGap);
-      const y = startY;
-      pushStack(x, y, columnCards, true);
-    }
-
-    const stockX = Math.max(24, boundsWidth * 0.12);
-    const stockY = Math.max(24, boundsHeight * 0.12);
-    if (remaining.length > 0) {
-      pushStack(stockX, stockY, remaining, false);
-    }
-    return;
-  }
-
-  if (preset === 'grid') {
-    const padding = 24;
-    const gap = 12;
-    const cols = Math.max(
-      1,
-      Math.floor((boundsWidth - padding * 2 + gap) / (cardSize.width + gap))
-    );
-    const startX = padding;
-    const startY = padding;
-    allCardIds.forEach((cardId, index) => {
-      const col = index % cols;
-      const row = Math.floor(index / cols);
-      const x = startX + col * (cardSize.width + gap);
-      const y = startY + row * (cardSize.height + gap);
-      pushStack(x, y, [cardId], true);
-    });
-    return;
-  }
-
   const deckGap = 18;
   const totalWidth =
     settings.deckCount * cardSize.width + (settings.deckCount - 1) * deckGap;
@@ -153,61 +106,14 @@ const applyRectangleLayout = ({
 };
 
 const applyOvalLayout = ({
-  preset,
   feltBounds,
   cardSize,
   deckCardIds,
-  allCardIds,
   settings,
   pushStack
 }) => {
   const boundsWidth = feltBounds.width;
   const boundsHeight = feltBounds.height;
-  if (preset === 'solitaire') {
-    const columnCount = 7;
-    const columnGap = 22;
-    const totalWidth =
-      columnCount * cardSize.width + (columnCount - 1) * columnGap;
-    const startX = (boundsWidth - totalWidth) / 2;
-    const startY = Math.max(140, boundsHeight * 0.32);
-    let remaining = [...allCardIds];
-
-    for (let col = 0; col < columnCount; col += 1) {
-      const cardCount = col + 1;
-      const columnCards = remaining.slice(0, cardCount);
-      remaining = remaining.slice(cardCount);
-      const x = startX + col * (cardSize.width + columnGap);
-      const y = startY;
-      pushStack(x, y, columnCards, true);
-    }
-
-    const stockX = Math.max(24, boundsWidth * 0.12);
-    const stockY = Math.max(24, boundsHeight * 0.12);
-    if (remaining.length > 0) {
-      pushStack(stockX, stockY, remaining, false);
-    }
-    return;
-  }
-
-  if (preset === 'grid') {
-    const padding = 24;
-    const gap = 12;
-    const cols = Math.max(
-      1,
-      Math.floor((boundsWidth - padding * 2 + gap) / (cardSize.width + gap))
-    );
-    const startX = padding;
-    const startY = padding;
-    allCardIds.forEach((cardId, index) => {
-      const col = index % cols;
-      const row = Math.floor(index / cols);
-      const x = startX + col * (cardSize.width + gap);
-      const y = startY + row * (cardSize.height + gap);
-      pushStack(x, y, [cardId], true);
-    });
-    return;
-  }
-
   const deckGap = 18;
   const totalWidth =
     settings.deckCount * cardSize.width + (settings.deckCount - 1) * deckGap;
@@ -221,67 +127,20 @@ const applyOvalLayout = ({
   });
 };
 
-const applyPresetLayout = (preset, tableShape, feltBounds, layout) => {
+const applyPresetLayout = (tableShape, feltBounds, layout) => {
   if (tableShape === 'rectangle' || tableShape === 'endless') {
     applyRectangleLayout({
-      preset,
       feltBounds,
       ...layout
     });
     return;
   }
   applyOvalLayout({
-    preset,
     feltBounds,
     ...layout
   });
 };
 
-const DEFAULT_SPAWN_PADDING = 32;
-
-const getSpawnAnchor = (rule, bounds, cardSize, index, total) => {
-  const padding = Math.max(DEFAULT_SPAWN_PADDING, cardSize.width * 0.35);
-  const centerX = bounds.width / 2 - cardSize.width / 2;
-  const centerY = bounds.height / 2 - cardSize.height / 2;
-  const cornerX = bounds.width - cardSize.width - padding;
-  const cornerY = bounds.height - cardSize.height - padding;
-  switch (rule) {
-    case 'center':
-      return { x: centerX, y: centerY };
-    case 'nearSeat1':
-      return { x: centerX, y: padding };
-    case 'topLeft':
-      return { x: padding, y: padding };
-    case 'topRight':
-      return { x: cornerX, y: padding };
-    case 'bottomLeft':
-      return { x: padding, y: cornerY };
-    case 'bottomRight':
-      return { x: cornerX, y: cornerY };
-    case 'perSeat': {
-      const count = Math.max(1, total);
-      const radius = Math.max(0, Math.min(bounds.width, bounds.height) / 2 - padding * 2);
-      const angle = (TAU / count) * index - Math.PI / 2;
-      return {
-        x: bounds.width / 2 + Math.cos(angle) * radius - cardSize.width / 2,
-        y: bounds.height / 2 + Math.sin(angle) * radius - cardSize.height / 2
-      };
-    }
-    default:
-      return { x: centerX, y: centerY };
-  }
-};
-
-const buildDeckStacks = (allCardIds, quantity) => {
-  if (!allCardIds.length || quantity <= 0) {
-    return [];
-  }
-  const count = Math.max(1, quantity);
-  const chunkSize = Math.ceil(allCardIds.length / count);
-  return Array.from({ length: count }, (_, index) =>
-    allCardIds.slice(index * chunkSize, (index + 1) * chunkSize)
-  ).filter((chunk) => chunk.length > 0);
-};
 
 const createEmptyHand = () => ({ cardIds: [], revealed: {} });
 
@@ -361,19 +220,11 @@ export const useTableState = (
           return null;
         }
       }
-      const customPreset = settings.customPresets?.[settings.presetLayout];
-      const spawnSettings = customPreset
-        ? {
-            ...settings,
-            includeJokers: customPreset.includeJokers ?? settings.includeJokers,
-            deckCount: customPreset.deckCount ?? settings.deckCount
-          }
-        : settings;
       const {
         cardsById: nextCardsById,
         deckCardIds,
         allCardIds
-      } = buildDecks(spawnSettings);
+      } = buildDecks(settings);
       const boundsWidth = tableRect.width ?? 0;
       const boundsHeight = tableRect.height ?? 0;
       const isEndless = tableShape === 'endless';
@@ -429,95 +280,20 @@ export const useTableState = (
         });
       };
 
-      if (customPreset) {
-        const spawnItems = Array.isArray(customPreset.spawnItems)
-          ? customPreset.spawnItems
-          : [];
-        const deckStacks = buildDeckStacks(
+      applyPresetLayout(
+        tableShape,
+        {
+          width: boundsWidth,
+          height: boundsHeight
+        },
+        {
+          cardSize,
+          deckCardIds,
           allCardIds,
-          spawnItems.find((item) => item.type === 'standardDeck')?.quantity ?? 1
-        );
-        let deckIndex = 0;
-        const seatCount = settings.roomSettings?.seatCount ?? DEFAULT_SETTINGS.roomSettings.seatCount;
-        spawnItems.forEach((item) => {
-          if (item?.enabled === false) {
-            return;
-          }
-          const quantity = Math.max(1, Number.parseInt(item.quantity, 10) || 1);
-          const positionRule = item.positionRule ?? 'center';
-          if (item.type === 'standardDeck') {
-            for (let index = 0; index < quantity; index += 1) {
-              const nextDeck = deckStacks[deckIndex];
-              if (!nextDeck) {
-                continue;
-              }
-              const anchor = getSpawnAnchor(positionRule, {
-                width: boundsWidth,
-                height: boundsHeight
-              }, cardSize, index, quantity);
-              pushStack(anchor.x, anchor.y, nextDeck, !settings.resetFaceDown);
-              deckIndex += 1;
-            }
-            return;
-          }
-          if (item.type === 'handTokens') {
-            const perSeat = Math.max(1, seatCount);
-            for (let index = 0; index < perSeat; index += 1) {
-              const anchor = getSpawnAnchor(
-                positionRule,
-                { width: boundsWidth, height: boundsHeight },
-                cardSize,
-                index,
-                perSeat
-              );
-              pushStack(anchor.x, anchor.y, [], true, {
-                token: { type: 'handToken', label: `Seat ${index + 1}` }
-              });
-            }
-            return;
-          }
-          for (let index = 0; index < quantity; index += 1) {
-            const anchor = getSpawnAnchor(
-              positionRule,
-              { width: boundsWidth, height: boundsHeight },
-              cardSize,
-              index,
-              quantity
-            );
-            const tokenLabel = (() => {
-              if (item.type === 'discardPile') {
-                return 'Discard';
-              }
-              if (item.type === 'drawPile') {
-                return 'Draw';
-              }
-              if (item.type === 'dealerButton') {
-                return 'Dealer';
-              }
-              return 'Token';
-            })();
-            pushStack(anchor.x, anchor.y, [], true, {
-              token: { type: item.type, label: tokenLabel }
-            });
-          }
-        });
-      } else {
-        applyPresetLayout(
-          settings.presetLayout,
-          tableShape,
-          {
-            width: boundsWidth,
-            height: boundsHeight
-          },
-          {
-            cardSize,
-            deckCardIds,
-            allCardIds,
-            settings,
-            pushStack
-          }
-        );
-      }
+          settings,
+          pushStack
+        }
+      );
 
       return {
         nextCardsById,
@@ -947,6 +723,7 @@ export const useTableState = (
     mySeatIndex,
     seatAssignments,
     handsBySeat: hands,
+    setHands,
     myPlayerId: playerIdRef.current,
     actionLog,
     presence,

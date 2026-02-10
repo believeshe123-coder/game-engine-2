@@ -59,9 +59,23 @@ const SLIDE_START_DIR_THRESHOLD_PX = 10;
 const HAND_ZONE_SEAT_OFFSET_BASE = 52;
 const HELD_STACK_ID = '__HELD__';
 const CAMERA_ZOOM_MIN = 0.5;
+const IS_DEV = Boolean(import.meta.env.DEV);
+const DEV_INTERACTION_EVENTS = [
+  'selectStack',
+  'pickupFull',
+  'pickupN',
+  'flip',
+  'shuffle',
+  'placeStack',
+  'slideDealTick',
+  'mergeStacks',
+  'dropToSeat',
+  'dropToTable'
+];
 const CAMERA_ZOOM_MAX = 2.5;
 
-const CUSTOM_PRESET_STORAGE_PREFIX = 'tablePreset:';
+const CUSTOM_LAYOUT_STORAGE_PREFIX = 'tt_layout_';
+const CUSTOM_LAYOUT_INDEX_KEY = 'tt_layouts_index';
 
 const SIDE_ORDER = ['top', 'right', 'bottom', 'left'];
 const SIDE_NORMALS = {
@@ -82,19 +96,19 @@ const normalizeParam = (value, max) => {
 const CUSTOM_LAYOUT_ITEMS = [
   {
     id: 'classicDeckWithJokers',
-    label: 'Basic Poker Deck (with jokers)',
+    label: 'Classic Poker Deck (with jokers)',
     style: 'classic',
     type: 'deckWithJokers'
   },
   {
     id: 'classicDeckNoJokers',
-    label: 'Basic Poker Deck (no jokers)',
+    label: 'Classic Poker Deck (no jokers)',
     style: 'classic',
     type: 'deckNoJokers'
   },
   {
     id: 'classicJokersOnly',
-    label: 'Set of Basic Jokers',
+    label: 'Classic Jokers Only',
     style: 'classic',
     type: 'jokersOnly'
   },
@@ -112,16 +126,12 @@ const CUSTOM_LAYOUT_ITEMS = [
   },
   {
     id: 'medievalJokersOnly',
-    label: 'Set of Medieval Jokers',
+    label: 'Medieval Jokers Only',
     style: 'medieval',
     type: 'jokersOnly'
   }
 ];
 
-const CUSTOM_LAYOUT_SECTION_LABELS = {
-  classicDeckWithJokers: 'Classic',
-  medievalDeckWithJokers: 'Medieval'
-};
 
 const CUSTOM_LAYOUT_MAX_QTY = 20;
 
@@ -181,17 +191,45 @@ const getSeatSideFromAngle = (angle) => {
   return 'top';
 };
 
-const loadCustomPreset = (code) => {
+const loadCustomLayoutByCode = (code) => {
   if (typeof window === 'undefined') {
     return null;
   }
   try {
-    const raw = window.localStorage.getItem(`${CUSTOM_PRESET_STORAGE_PREFIX}${code}`);
+    const raw = window.localStorage.getItem(`${CUSTOM_LAYOUT_STORAGE_PREFIX}${code}`);
     return raw ? JSON.parse(raw) : null;
   } catch (error) {
     return null;
   }
 };
+
+const loadCustomLayoutsIndex = () => {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(CUSTOM_LAYOUT_INDEX_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter((entry) => typeof entry?.code === 'string' && typeof entry?.name === 'string');
+  } catch (error) {
+    return [];
+  }
+};
+
+const saveCustomLayoutsIndex = (list) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  window.localStorage.setItem(CUSTOM_LAYOUT_INDEX_KEY, JSON.stringify(list));
+};
+
+const generateLayoutCode = () => `${Math.floor(100000 + Math.random() * 90000000)}`.slice(0, 8);
 
 const getViewportFromRect = (rect) => ({
   cx: (rect?.width ?? 0) / 2,
@@ -373,6 +411,55 @@ const normalizeSeatParams = (params, count, shape) => {
   });
 };
 
+
+const buildSeatLayout = ({
+  shape,
+  seatCount,
+  viewportW,
+  viewportH,
+  tableRect,
+  seatRailBounds,
+  seatParams,
+  camera,
+  viewport
+}) => {
+  const count = Math.max(2, Number(seatCount) || 2);
+  if (shape === 'endless') {
+    const width = Math.max(1, viewportW || tableRect?.width || 1);
+    const height = Math.max(1, viewportH || tableRect?.height || 1);
+    const localPositions = getEndlessDefaultSeatPositions(count, width, height);
+    return localPositions.map((entry) => {
+      const world = localToWorld(entry.x, entry.y, camera, viewport, true);
+      const angle = getEndlessSeatAngleFromLocal(entry.x, entry.y, width, height);
+      return {
+        x: world.x,
+        y: world.y,
+        side: entry.side,
+        angle
+      };
+    });
+  }
+
+  const fallbackBounds = seatRailBounds
+    ? { ...seatRailBounds }
+    : {
+        left: 0,
+        top: 0,
+        width: Math.max(1, tableRect?.width || viewportW || 1),
+        height: Math.max(1, tableRect?.height || viewportH || 1)
+      };
+  fallbackBounds.right = fallbackBounds.left + fallbackBounds.width;
+  fallbackBounds.bottom = fallbackBounds.top + fallbackBounds.height;
+
+  const params = normalizeSeatParams(seatParams, count, shape);
+  const anchors = computeSeatAnchorsFromParams({
+    seatParams: params,
+    tableShape: shape,
+    seatRailBounds: fallbackBounds
+  });
+  return anchors;
+};
+
 const adjustSlideSeparation = (position, direction, trail) => {
   if (!direction || trail.length === 0) {
     return position;
@@ -505,6 +592,7 @@ const Table = () => {
     mySeatIndex,
     seatAssignments,
     handsBySeat,
+    setHands,
     myPlayerId,
     actionLog,
     presence,
@@ -557,13 +645,34 @@ const Table = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState('player');
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
-  const [customLayoutOpen, setCustomLayoutOpen] = useState(false);
-  const [presetCodeInput, setPresetCodeInput] = useState('');
-  const [presetImportStatus, setPresetImportStatus] = useState(null);
-  const [customLayoutSearchQuery, setCustomLayoutSearchQuery] = useState('');
-  const [customLayoutSelected, setCustomLayoutSelected] = useState(() =>
+  const [itemSpawnerOpen, setItemSpawnerOpen] = useState(false);
+  const [itemSpawnerSearchQuery, setItemSpawnerSearchQuery] = useState('');
+  const [itemSpawnerSelected, setItemSpawnerSelected] = useState(() =>
     CUSTOM_LAYOUT_ITEMS.reduce((acc, item) => {
       acc[item.id] = { checked: false, qty: 1 };
+      return acc;
+    }, {})
+  );
+  const [customLayoutsIndex, setCustomLayoutsIndex] = useState(() => loadCustomLayoutsIndex());
+  const [selectedLayoutCode, setSelectedLayoutCode] = useState('');
+  const [layoutImportCode, setLayoutImportCode] = useState('');
+  const [layoutImportStatus, setLayoutImportStatus] = useState(null);
+  const [saveLayoutOpen, setSaveLayoutOpen] = useState(false);
+  const [saveLayoutName, setSaveLayoutName] = useState('');
+  const [saveLayoutNotes, setSaveLayoutNotes] = useState('');
+  const [saveLayoutCode, setSaveLayoutCode] = useState('');
+  const [saveLayoutInclude, setSaveLayoutInclude] = useState({
+    shape: false,
+    seatCount: false,
+    seatPositions: false,
+    tableStyle: false,
+    spawnFaceDown: false,
+    deckDefaults: false
+  });
+  const [interactionSelfTestEnabled, setInteractionSelfTestEnabled] = useState(false);
+  const [interactionSelfTestState, setInteractionSelfTestState] = useState(() =>
+    DEV_INTERACTION_EVENTS.reduce((acc, key) => {
+      acc[key] = false;
       return acc;
     }, {})
   );
@@ -602,7 +711,7 @@ const Table = () => {
   const isEndless = tableShape === 'endless';
   const [uiPrefs, setUiPrefs] = useState(loadUiPrefs);
   const [cardPreview, setCardPreview] = useState(null);
-  const isModalOpen = resetConfirmOpen || customLayoutOpen || Boolean(cardPreview);
+  const isModalOpen = resetConfirmOpen || itemSpawnerOpen || saveLayoutOpen || Boolean(cardPreview);
   const closeCardPreview = useCallback((event) => {
     if (event?.preventDefault) {
       event.preventDefault();
@@ -612,6 +721,18 @@ const Table = () => {
     }
     setCardPreview(null);
   }, []);
+
+  const markInteractionSelfTest = useCallback((eventName, details = null) => {
+    if (!IS_DEV || !interactionSelfTestEnabled) {
+      return;
+    }
+    if (!DEV_INTERACTION_EVENTS.includes(eventName)) {
+      return;
+    }
+    setInteractionSelfTestState((prev) => ({ ...prev, [eventName]: true }));
+    // eslint-disable-next-line no-console
+    console.info(`[interaction-self-test] ${eventName}`, details ?? {});
+  }, [interactionSelfTestEnabled]);
 
   const actions = useMemo(() => ({}), []);
   const interactionRef = useRef(interaction);
@@ -718,6 +839,7 @@ const Table = () => {
   }, []);
 
   actions.selectStack = useCallback((stackId, screenXY) => {
+    markInteractionSelfTest('selectStack', { stackId });
     setPickCountOpen(false);
     setInteraction((prev) => ({
       ...prev,
@@ -730,7 +852,7 @@ const Table = () => {
         screenY: screenXY?.y ?? 0
       }
     }));
-  }, [defaultRmbState]);
+  }, [defaultRmbState, markInteractionSelfTest]);
 
   useEffect(() => {
     if (process.env.NODE_ENV === 'production') {
@@ -847,39 +969,23 @@ const Table = () => {
   }, [seatCount]);
 
   const buildEndlessSeatLayout = useCallback(() => {
-    if (!tableRect?.width || !tableRect?.height) {
-      return seatsDerived.map((seat) => ({ ...seat, x: 0, y: 0 }));
-    }
-    const positions = getEndlessDefaultSeatPositions(
-      seatsDerived.length,
-      tableRect.width,
-      tableRect.height
-    );
+    const layout = buildSeatLayout({
+      shape: 'endless',
+      seatCount: seatsDerived.length,
+      viewportW: tableRect?.width ?? 0,
+      viewportH: tableRect?.height ?? 0,
+      tableRect,
+      camera: cameraRef.current,
+      viewport: viewportRef.current
+    });
     return seatsDerived.map((seat, index) => {
-      const entry = positions[index] ?? {
-        x: tableRect.width / 2,
-        y: tableRect.height / 2,
-        side: 'top'
-      };
-      const world = localToWorld(
-        entry.x,
-        entry.y,
-        cameraRef.current,
-        viewportRef.current,
-        true
-      );
-      const angle = getEndlessSeatAngleFromLocal(
-        entry.x,
-        entry.y,
-        tableRect.width,
-        tableRect.height
-      );
+      const anchor = layout[index] ?? { x: 0, y: 0, angle: -Math.PI / 2, side: 'top' };
       return {
         ...seat,
-        x: world.x,
-        y: world.y,
-        side: entry.side,
-        angle
+        x: anchor.x,
+        y: anchor.y,
+        side: anchor.side ?? 'top',
+        angle: anchor.angle ?? -Math.PI / 2
       };
     });
   }, [seatsDerived, tableRect]);
@@ -1127,10 +1233,12 @@ const Table = () => {
       height: seatRailHeight
     };
     setSeatRailBounds(nextSeatRailBounds);
-    const anchors = computeSeatAnchorsFromParams({
-      seatParams,
-      tableShape,
-      seatRailBounds: nextSeatRailBounds
+    const anchors = buildSeatLayout({
+      shape: tableShape,
+      seatCount: seatsDerived.length,
+      tableRect,
+      seatRailBounds: nextSeatRailBounds,
+      seatParams
     });
 
     setSeatPositions(
@@ -1145,7 +1253,7 @@ const Table = () => {
         };
       })
     );
-  }, [isEndless, seatParams, seatsDerived, tableShape]);
+  }, [isEndless, seatParams, seatsDerived, tableRect, tableShape]);
 
   useEffect(() => {
     if (!isEndless) {
@@ -1835,6 +1943,7 @@ const Table = () => {
       seatDragRef.current = { seatIndex: null, moved: false, start: null };
       if (interaction.held || interaction.mode === 'holdStack') {
         if (interaction.held) {
+          markInteractionSelfTest('dropToSeat', { seatIndex, count: interaction.held.cardIds.length });
           moveCardIdsToHand(seatIndex, interaction.held.cardIds);
           logDealt(seatIndex, interaction.held.cardIds.length);
           actions.clearInteraction({ preserveSelection: false });
@@ -1843,7 +1952,7 @@ const Table = () => {
       }
       actions.openSeatMenu?.(seatIndex);
     },
-    [actions, interaction.held, interaction.mode, logDealt, moveCardIdsToHand]
+    [actions, interaction.held, interaction.mode, logDealt, markInteractionSelfTest, moveCardIdsToHand]
   );
 
   const restoreHeldToOrigin = useCallback(() => {
@@ -1910,9 +2019,8 @@ const Table = () => {
         };
         const originX = origin.x ?? 0;
         const originY = origin.y ?? 0;
-        const offset = pointerPosition
-          ? { x: pointerPosition.x - originX, y: pointerPosition.y - originY }
-          : { x: cardSize.width / 2, y: cardSize.height / 2 };
+        markInteractionSelfTest(clamped === total ? 'pickupFull' : 'pickupN', { stackId, count: clamped });
+        const offset = { x: cardSize.width / 2, y: cardSize.height / 2 };
         setInteraction((prevInteraction) => ({
           ...prevInteraction,
           mode: 'holdStack',
@@ -1944,7 +2052,7 @@ const Table = () => {
           .filter((stack) => stack.id !== stackId || remaining.length > 0);
       });
     },
-    [cardSize.height, cardSize.width, createStackId, defaultRmbState, setStacks]
+    [cardSize.height, cardSize.width, createStackId, defaultRmbState, markInteractionSelfTest, setStacks]
   );
 
   const startDragStack = useCallback(
@@ -2010,6 +2118,7 @@ const Table = () => {
 
   const mergeStacks = useCallback(
     (sourceId, targetId) => {
+      markInteractionSelfTest('mergeStacks', { sourceId, targetId });
       setStacks((prev) => {
         const source = prev.find((stack) => stack.id === sourceId);
         const target = prev.find((stack) => stack.id === targetId);
@@ -2023,7 +2132,7 @@ const Table = () => {
         return prev.filter((stack) => stack.id !== sourceId && stack.id !== targetId).concat(merged);
       });
     },
-    [setStacks]
+    [markInteractionSelfTest, setStacks]
   );
 
   const dropHeld = useCallback(
@@ -2037,6 +2146,7 @@ const Table = () => {
           ? getSeatIndexAtScreenPoint(clientX, clientY)
           : null;
       if (seatDropIndex !== null && seatDropIndex !== undefined) {
+        markInteractionSelfTest('dropToSeat', { seatIndex: seatDropIndex, count: held.cardIds.length });
         moveCardIdsToHand(seatDropIndex, held.cardIds);
         logDealt(seatDropIndex, held.cardIds.length);
         actions.clearInteraction({ preserveSelection: false });
@@ -2057,6 +2167,7 @@ const Table = () => {
         placement.y + cardSize.height / 2
       );
       if (handSeatIndex !== null && handSeatIndex !== undefined) {
+        markInteractionSelfTest('dropToSeat', { seatIndex: handSeatIndex, count: held.cardIds.length });
         moveCardIdsToHand(handSeatIndex, held.cardIds);
         logDealt(handSeatIndex, held.cardIds.length);
         actions.clearInteraction({ preserveSelection: false });
@@ -2075,12 +2186,14 @@ const Table = () => {
           };
           return prev.filter((stack) => stack.id !== overlapId).concat(merged);
         });
+        markInteractionSelfTest('dropToTable', { mergedInto: overlapId, count: held.cardIds.length });
         actions.clearInteraction({
           preserveSelection: true,
           nextSelectedStackId: overlapId
         });
         return;
       } else {
+        markInteractionSelfTest('dropToTable', { count: held.cardIds.length });
         setStacks((prev) =>
           prev.concat({
             id: held.stackId,
@@ -2111,6 +2224,7 @@ const Table = () => {
       interaction.held,
       interaction.selectedStackId,
       logDealt,
+      markInteractionSelfTest,
       moveCardIdsToHand,
       setStacks
     ]
@@ -2176,6 +2290,7 @@ const Table = () => {
       interaction.selectedStackId,
       logDealt,
       mergeStacks,
+      markInteractionSelfTest,
       moveCardIdsToHand,
       setStacks,
       stacksById
@@ -2251,6 +2366,7 @@ const Table = () => {
         }
         return next;
       });
+      markInteractionSelfTest('placeStack', { count: 1 });
       logAction(`${myName} placed 1 card`);
       if (remaining.length === 0) {
         actions.clearInteraction({ preserveSelection: true });
@@ -2268,6 +2384,7 @@ const Table = () => {
       findTableOverlapStackId,
       interaction.drag,
       interaction.held,
+      markInteractionSelfTest,
       myName,
       logAction,
       setStacks
@@ -2367,6 +2484,7 @@ const Table = () => {
         return;
       }
 
+      markInteractionSelfTest('slideDealTick', { count: placements.length });
       setStacks((prev) => prev.concat(placements));
       logAction(`${myName} placed ${placements.length} card${placements.length === 1 ? '' : 's'}`);
 
@@ -2401,6 +2519,7 @@ const Table = () => {
       interaction.slideLastPos,
       interaction.slideTrail,
       interaction.isSliding,
+      markInteractionSelfTest,
       myName,
       logAction,
       setStacks
@@ -2494,8 +2613,9 @@ const Table = () => {
         return next;
       });
     }
+    markInteractionSelfTest('flip', { stackId: interaction.selectedStackId });
     logAction(`${myName} flipped a stack`);
-  }, [interaction.selectedStackId, myName, logAction, setStacks, stacksById]);
+  }, [interaction.selectedStackId, markInteractionSelfTest, myName, logAction, setStacks, stacksById]);
 
   actions.handleShuffleSelected = useCallback(() => {
     if (!interaction.selectedStackId) {
@@ -2514,8 +2634,9 @@ const Table = () => {
         return { ...stack, cardIds: nextCardIds };
       })
     );
+    markInteractionSelfTest('shuffle', { stackId: interaction.selectedStackId });
     logAction(`${myName} shuffled a stack`);
-  }, [interaction.selectedStackId, myName, logAction, setStacks]);
+  }, [interaction.selectedStackId, markInteractionSelfTest, myName, logAction, setStacks]);
 
   actions.handleKeyDown = useCallback(
     (event) => {
@@ -2526,7 +2647,8 @@ const Table = () => {
         event.preventDefault();
         if (isModalOpen) {
           setResetConfirmOpen(false);
-          setCustomLayoutOpen(false);
+          setItemSpawnerOpen(false);
+          setSaveLayoutOpen(false);
           setCardPreview(null);
         }
         actions.cancelDrag?.();
@@ -2575,7 +2697,8 @@ const Table = () => {
     const handleEscape = (event) => {
       if (event.key === 'Escape') {
         setResetConfirmOpen(false);
-        setCustomLayoutOpen(false);
+        setItemSpawnerOpen(false);
+        setSaveLayoutOpen(false);
         setCardPreview(null);
       }
     };
@@ -3126,67 +3249,36 @@ const Table = () => {
     [hands, myName, mySeatIndex, logRevealChange, toggleReveal]
   );
 
-  const presetOptions = useMemo(() => {
-    const customCodes = settings.customPresetCodes ?? [];
-    return [
-      { value: 'none', label: 'None' },
-      { value: 'solitaire', label: 'Solitaire' },
-      { value: 'grid', label: 'Grid' },
-      ...customCodes.map((code) => ({
-        value: code,
-        label: `Custom ${code}`
-      }))
-    ];
-  }, [settings.customPresetCodes]);
-
-  const handleAddPresetCode = useCallback(() => {
-    const code = presetCodeInput.trim();
-    if (!code) {
+  useEffect(() => {
+    if (!customLayoutsIndex.length) {
+      setSelectedLayoutCode('');
       return;
     }
-    const preset = loadCustomPreset(code);
-    if (!preset) {
-      setPresetImportStatus('missing');
-      return;
+    if (!selectedLayoutCode || !customLayoutsIndex.some((entry) => entry.code === selectedLayoutCode)) {
+      setSelectedLayoutCode(customLayoutsIndex[0].code);
     }
-    setSettings((prev) => {
-      const nextCodes = Array.from(
-        new Set([...(prev.customPresetCodes ?? []), code])
-      );
-      return {
-        ...prev,
-        customPresetCodes: nextCodes,
-        customPresets: {
-          ...(prev.customPresets ?? {}),
-          [code]: preset
-        }
-      };
-    });
-    setPresetImportStatus('added');
-  }, [presetCodeInput]);
+  }, [customLayoutsIndex, selectedLayoutCode]);
 
-  const filteredCustomLayoutItems = useMemo(() => {
-    const query = customLayoutSearchQuery.trim().toLowerCase();
+  const filteredItemSpawnerItems = useMemo(() => {
+    const query = itemSpawnerSearchQuery.trim().toLowerCase();
     if (!query) {
       return CUSTOM_LAYOUT_ITEMS;
     }
-    return CUSTOM_LAYOUT_ITEMS.filter((item) =>
-      item.label.toLowerCase().includes(query)
-    );
-  }, [customLayoutSearchQuery]);
+    return CUSTOM_LAYOUT_ITEMS.filter((item) => item.label.toLowerCase().includes(query));
+  }, [itemSpawnerSearchQuery]);
 
-  const selectedCustomLayoutCount = useMemo(
+  const selectedItemSpawnerCount = useMemo(
     () =>
-      Object.values(customLayoutSelected).reduce(
+      Object.values(itemSpawnerSelected).reduce(
         (count, entry) => count + (entry?.checked ? 1 : 0),
         0
       ),
-    [customLayoutSelected]
+    [itemSpawnerSelected]
   );
 
-  const handleSpawnCustomLayout = useCallback(() => {
+  const handleSpawnItems = useCallback(() => {
     const selectedItems = CUSTOM_LAYOUT_ITEMS.flatMap((item) => {
-      const state = customLayoutSelected[item.id];
+      const state = itemSpawnerSelected[item.id];
       if (!state?.checked) {
         return [];
       }
@@ -3196,17 +3288,10 @@ const Table = () => {
     if (!selectedItems.length) {
       return;
     }
-
-    const center = isEndless
-      ? getEndlessSpawnPoint()
-      : {
-          x: tableRect.width / 2,
-          y: tableRect.height / 2
-        };
+    const center = isEndless ? getEndlessSpawnPoint() : { x: tableRect.width / 2, y: tableRect.height / 2 };
     const spacing = cardSize.width * 1.6;
     const startX = center.x - (selectedItems.length - 1) * 0.5 * spacing - cardSize.width / 2;
     const y = center.y - cardSize.height / 2;
-
     const timestampPrefix = Date.now().toString(36);
     const stackEntries = [];
     let cardCounter = 0;
@@ -3214,14 +3299,8 @@ const Table = () => {
       const cardPrefix = `${item.id}-${timestampPrefix}-${cardCounter}`;
       cardCounter += 1;
       const cards = buildSpawnCardsForItem(item, cardPrefix);
-      stackEntries.push({
-        item,
-        cards,
-        x: startX + index * spacing,
-        y
-      });
+      stackEntries.push({ item, cards, x: startX + index * spacing, y });
     });
-
     setCardsById((prev) => {
       const next = { ...prev };
       stackEntries.forEach((entry) => {
@@ -3231,8 +3310,7 @@ const Table = () => {
       });
       return next;
     });
-
-    const defaultFaceUp = !(settings.spawnFaceDown ?? false);
+    const defaultFaceUp = !settings.resetFaceDown;
     setStacks((prev) =>
       prev.concat(
         stackEntries.map((entry) => ({
@@ -3248,33 +3326,224 @@ const Table = () => {
         }))
       )
     );
-
     const logSummary = CUSTOM_LAYOUT_ITEMS.map((item) => {
       const qty = Math.max(
         0,
-        Math.floor(customLayoutSelected[item.id]?.checked ? customLayoutSelected[item.id]?.qty || 1 : 0)
+        Math.floor(itemSpawnerSelected[item.id]?.checked ? itemSpawnerSelected[item.id]?.qty || 1 : 0)
       );
       return qty > 0 ? `${qty}× ${item.label}` : null;
     }).filter(Boolean);
-    if (logSummary.length > 0) {
+    if (logSummary.length) {
       logAction(`Spawned: ${logSummary.join(', ')}`);
     }
-
-    setCustomLayoutOpen(false);
+    setItemSpawnerOpen(false);
   }, [
     cardSize.height,
     cardSize.width,
     createStackId,
-    customLayoutSelected,
     getEndlessSpawnPoint,
     isEndless,
+    itemSpawnerSelected,
     logAction,
     setCardsById,
     setStacks,
-    settings.spawnFaceDown,
+    settings.resetFaceDown,
     tableRect.height,
     tableRect.width
   ]);
+
+  const handleAddLayoutByCode = useCallback(() => {
+    const code = layoutImportCode.trim();
+    if (!code) {
+      return;
+    }
+    const layout = loadCustomLayoutByCode(code);
+    if (!layout) {
+      setLayoutImportStatus('missing');
+      return;
+    }
+    setCustomLayoutsIndex((prev) => {
+      const next = prev.some((entry) => entry.code === code)
+        ? prev
+        : [...prev, { code, name: layout.name ?? `Layout ${code}` }];
+      saveCustomLayoutsIndex(next);
+      return next;
+    });
+    setSelectedLayoutCode(code);
+    setLayoutImportStatus('added');
+  }, [layoutImportCode]);
+
+  const handleSaveCurrentLayout = useCallback(() => {
+    const trimmedName = saveLayoutName.trim();
+    if (!trimmedName) {
+      return;
+    }
+    const include = { ...saveLayoutInclude };
+    const code = generateLayoutCode();
+    const layout = {
+      version: 1,
+      code,
+      name: trimmedName,
+      notes: saveLayoutNotes.trim(),
+      createdAt: Date.now(),
+      include,
+      stacks: stacks.map((stack) => ({
+        x: stack.x,
+        y: stack.y,
+        faceUp: stack.faceUp,
+        cardIds: [...stack.cardIds]
+      })),
+      shape: include.shape ? settings.roomSettings.tableShape : undefined,
+      seatCount: include.seatCount ? settings.roomSettings.seatCount : undefined,
+      seatPositions: include.seatPositions ? seatPositions.map((seat) => ({ x: seat.x, y: seat.y })) : undefined,
+      tableStyle: include.tableStyle ? settings.tableStyle : undefined,
+      spawnFaceDown: include.spawnFaceDown ? settings.resetFaceDown : undefined,
+      deckDefaults: include.deckDefaults
+        ? {
+            deckCount: settings.deckCount,
+            includeJokers: settings.includeJokers,
+            cardStyle: settings.cardStyle
+          }
+        : undefined
+    };
+    window.localStorage.setItem(`${CUSTOM_LAYOUT_STORAGE_PREFIX}${code}`, JSON.stringify(layout));
+    setCustomLayoutsIndex((prev) => {
+      const next = [...prev, { code, name: trimmedName }];
+      saveCustomLayoutsIndex(next);
+      return next;
+    });
+    setSelectedLayoutCode(code);
+    setSaveLayoutCode(code);
+  }, [saveLayoutInclude, saveLayoutName, saveLayoutNotes, seatPositions, settings, stacks]);
+
+  const handleLoadLayout = useCallback(() => {
+    if (!selectedLayoutCode) {
+      return;
+    }
+    const layout = loadCustomLayoutByCode(selectedLayoutCode);
+    if (!layout) {
+      return;
+    }
+    const include = layout.include ?? {};
+    const shapeToUse = include.shape && layout.shape ? layout.shape : settings.roomSettings.tableShape;
+    setSettings((prev) => ({
+      ...prev,
+      tableStyle: include.tableStyle && layout.tableStyle ? layout.tableStyle : prev.tableStyle,
+      resetFaceDown:
+        include.spawnFaceDown && typeof layout.spawnFaceDown === 'boolean'
+          ? layout.spawnFaceDown
+          : prev.resetFaceDown,
+      includeJokers:
+        include.deckDefaults && typeof layout.deckDefaults?.includeJokers === 'boolean'
+          ? layout.deckDefaults.includeJokers
+          : prev.includeJokers,
+      deckCount:
+        include.deckDefaults && Number.isFinite(layout.deckDefaults?.deckCount)
+          ? layout.deckDefaults.deckCount
+          : prev.deckCount,
+      cardStyle:
+        include.deckDefaults && ['medieval', 'classic'].includes(layout.deckDefaults?.cardStyle)
+          ? layout.deckDefaults.cardStyle
+          : prev.cardStyle,
+      roomSettings: {
+        ...prev.roomSettings,
+        tableShape: shapeToUse,
+        seatCount: include.seatCount && Number.isFinite(layout.seatCount)
+          ? layout.seatCount
+          : prev.roomSettings.seatCount
+      }
+    }));
+    setHands((prev) => Object.keys(prev).reduce((acc, seatIndex) => {
+      acc[seatIndex] = { cardIds: [], revealed: {} };
+      return acc;
+    }, {}));
+    setStacks(() =>
+      (Array.isArray(layout.stacks) ? layout.stacks : []).map((stack) => ({
+        id: createStackId(),
+        x: Number(stack.x) || 0,
+        y: Number(stack.y) || 0,
+        rotation: 0,
+        faceUp: Boolean(stack.faceUp),
+        cardIds: Array.isArray(stack.cardIds) ? stack.cardIds : [],
+        zone: 'table',
+        ownerSeatIndex: null
+      }))
+    );
+    if (include.seatPositions && Array.isArray(layout.seatPositions) && layout.seatPositions.length) {
+      setSeatPositions(
+        seatsDerived.map((seat, index) => {
+          const entry = layout.seatPositions[index] ?? { x: 0, y: 0 };
+          const x = Number(entry.x) || 0;
+          const y = Number(entry.y) || 0;
+          const angle =
+            shapeToUse === 'endless'
+              ? getEndlessSeatAngleFromWorld(
+                  x,
+                  y,
+                  cameraRef.current,
+                  viewportRef.current,
+                  tableRect?.width ?? 0,
+                  tableRect?.height ?? 0
+                )
+              : seat.angle;
+          return {
+            ...seat,
+            x,
+            y,
+            angle,
+            side: getSeatSideFromAngle(angle)
+          };
+        })
+      );
+    } else {
+      const nextLayout = buildSeatLayout({
+        shape: shapeToUse,
+        seatCount: seatsDerived.length,
+        viewportW: tableRect?.width ?? 0,
+        viewportH: tableRect?.height ?? 0,
+        tableRect,
+        seatRailBounds,
+        seatParams,
+        camera: cameraRef.current,
+        viewport: viewportRef.current
+      });
+      setSeatPositions(
+        seatsDerived.map((seat, index) => {
+          const anchor = nextLayout[index] ?? { x: 0, y: 0, angle: -Math.PI / 2, side: 'top' };
+          return {
+            ...seat,
+            x: anchor.x,
+            y: anchor.y,
+            angle: anchor.angle ?? -Math.PI / 2,
+            side: anchor.side ?? 'top'
+          };
+        })
+      );
+    }
+    logAction(`Loaded custom layout ${layout.name ?? selectedLayoutCode}`);
+    setResetConfirmOpen(false);
+  }, [
+    createStackId,
+    logAction,
+    seatParams,
+    seatRailBounds,
+    seatsDerived,
+    selectedLayoutCode,
+    settings.roomSettings.tableShape,
+    tableRect
+  ]);
+
+  const handleDeleteLayout = useCallback(() => {
+    if (!selectedLayoutCode) {
+      return;
+    }
+    window.localStorage.removeItem(`${CUSTOM_LAYOUT_STORAGE_PREFIX}${selectedLayoutCode}`);
+    setCustomLayoutsIndex((prev) => {
+      const next = prev.filter((entry) => entry.code !== selectedLayoutCode);
+      saveCustomLayoutsIndex(next);
+      return next;
+    });
+  }, [selectedLayoutCode]);
 
   const visibleBadgeStackId =
     settings.stackCountDisplayMode === 'hover' ? hoveredStackId : null;
@@ -3319,12 +3588,7 @@ const Table = () => {
   }, [clampStacksToFeltShape, tableShape]);
 
   const handleResetTable = useCallback(() => {
-    const customPreset = settings.customPresets?.[settings.presetLayout];
-    const nextCardStyle = customPreset?.cardStyle ?? settings.cardStyle;
-    if (customPreset?.cardStyle && customPreset.cardStyle !== settings.cardStyle) {
-      setSettings((prev) => ({ ...prev, cardStyle: customPreset.cardStyle }));
-    }
-    resetTableSurface({ ...settings, cardStyle: nextCardStyle });
+    resetTableSurface(settings);
     actions.resetInteractionStates?.();
     actions.resetInteractionToDefaults?.();
     setCardFaceOverrides({});
@@ -3344,7 +3608,7 @@ const Table = () => {
         }
       }));
     }
-    logAction('Reset table using preset settings');
+    logAction('Reset table using current settings');
     setResetConfirmOpen(false);
   }, [
     actions,
@@ -3363,6 +3627,7 @@ const Table = () => {
         stack.id === stackId ? { ...stack, faceUp: !stack.faceUp } : stack
       )
     );
+    markInteractionSelfTest('flip', { stackId: interaction.selectedStackId });
     logAction(`${myName} flipped a stack`);
     setCardFaceOverrides((prev) => {
       const stack = stacksById[stackId];
@@ -3376,7 +3641,7 @@ const Table = () => {
       });
       return next;
     });
-  }, [myName, logAction, setStacks, stacksById]);
+  }, [markInteractionSelfTest, myName, logAction, setStacks, stacksById]);
 
   actions.handleMoveSelectedToHand = useCallback(() => {
     if (
@@ -4264,6 +4529,40 @@ const Table = () => {
                 ) : null}
                 {settingsTab === 'table' ? (
                   <div className="table-settings__section">
+                    {IS_DEV ? (
+                      <div className="table-settings__group">
+                        <div className="table-settings__group-title">Card Interaction Self-Test (Dev)</div>
+                        <div className="table-settings__row">
+                          <span className="table-settings__label">Enable interaction event logging</span>
+                          <label className="table-settings__switch">
+                            <input
+                              type="checkbox"
+                              checked={interactionSelfTestEnabled}
+                              onChange={(event) => {
+                                const enabled = event.target.checked;
+                                setInteractionSelfTestEnabled(enabled);
+                                if (!enabled) {
+                                  setInteractionSelfTestState(
+                                    DEV_INTERACTION_EVENTS.reduce((acc, key) => {
+                                      acc[key] = false;
+                                      return acc;
+                                    }, {})
+                                  );
+                                }
+                              }}
+                            />
+                            <span>{interactionSelfTestEnabled ? 'On' : 'Off'}</span>
+                          </label>
+                        </div>
+                        {interactionSelfTestEnabled ? (
+                          <div className="table-settings__hint">
+                            {DEV_INTERACTION_EVENTS.map((eventName) =>
+                              `${interactionSelfTestState[eventName] ? '✅' : '⬜'} ${eventName}`
+                            ).join(' · ')}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <div className="table-settings__group">
                       <div className="table-settings__group-title">Spawn Defaults</div>
                       <div className="table-settings__row">
@@ -4305,82 +4604,71 @@ const Table = () => {
                           </span>
                         </div>
                       </label>
+                    </div>
+                    <div className="table-settings__group">
+                      <div className="table-settings__group-title">Item Spawner</div>
+                      <button
+                        className="table-settings__button table-settings__button--secondary"
+                        type="button"
+                        onClick={() => setItemSpawnerOpen(true)}
+                      >
+                        Item Spawner...
+                      </button>
+                    </div>
+                    <div className="table-settings__group">
+                      <div className="table-settings__group-title">Custom Layouts</div>
                       <label className="table-settings__row">
-                        <span className="table-settings__label">Preset Layout</span>
+                        <span className="table-settings__label">Saved Layouts</span>
                         <select
                           className="table-settings__select"
-                          value={settings.presetLayout}
-                          onChange={(event) =>
-                            setSettings((prev) => ({
-                              ...prev,
-                              presetLayout: event.target.value
-                            }))
-                          }
+                          value={selectedLayoutCode}
+                          onChange={(event) => setSelectedLayoutCode(event.target.value)}
                         >
-                          {presetOptions.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
+                          {customLayoutsIndex.length === 0 ? <option value="">No layouts saved</option> : null}
+                          {customLayoutsIndex.map((entry) => (
+                            <option key={entry.code} value={entry.code}>
+                              {entry.name} ({entry.code})
                             </option>
                           ))}
                         </select>
                       </label>
-                    </div>
-                    <div className="table-settings__group">
-                      <div className="table-settings__group-title">Preset Layout</div>
+                      <div className="table-settings__spawn-controls">
+                        <button className="table-settings__button table-settings__button--secondary" type="button" onClick={() => { setSaveLayoutCode(''); setSaveLayoutName(''); setSaveLayoutNotes(''); setSaveLayoutOpen(true); }}>
+                          Save Current Setup...
+                        </button>
+                        <button className="table-settings__button table-settings__button--secondary" type="button" onClick={() => setResetConfirmOpen(true)} disabled={!selectedLayoutCode}>
+                          Load
+                        </button>
+                        <button className="table-settings__button table-settings__button--danger" type="button" onClick={handleDeleteLayout} disabled={!selectedLayoutCode}>
+                          Delete
+                        </button>
+                      </div>
                       <label className="table-settings__row table-settings__row--stacked">
-                        <span className="table-settings__label">Enter preset code</span>
+                        <span className="table-settings__label">Import by Code</span>
                         <input
                           className="table-settings__input table-settings__input--full"
                           type="text"
-                          value={presetCodeInput}
+                          value={layoutImportCode}
                           onChange={(event) => {
-                            setPresetCodeInput(event.target.value);
-                            setPresetImportStatus(null);
+                            setLayoutImportCode(event.target.value);
+                            setLayoutImportStatus(null);
                           }}
                         />
                       </label>
                       <div className="table-settings__row table-settings__row--stacked">
-                        <button
-                          className="table-settings__button table-settings__button--secondary"
-                          type="button"
-                          onClick={handleAddPresetCode}
-                        >
-                          Add Preset
+                        <button className="table-settings__button table-settings__button--secondary" type="button" onClick={handleAddLayoutByCode}>
+                          Add
                         </button>
-                        {presetImportStatus === 'missing' ? (
-                          <span className="table-settings__hint">
-                            Preset not found on this device
-                          </span>
-                        ) : null}
-                        {presetImportStatus === 'added' ? (
-                          <span className="table-settings__hint">
-                            Preset added to the list
-                          </span>
-                        ) : null}
+                        {layoutImportStatus === 'missing' ? <span className="table-settings__hint">Layout not found on this device</span> : null}
+                        {layoutImportStatus === 'added' ? <span className="table-settings__hint">Layout added to saved list</span> : null}
                       </div>
-                      <button
-                        className="table-settings__button table-settings__button--secondary"
-                        type="button"
-                        onClick={() => {
-                          setCustomLayoutSearchQuery('');
-                          setCustomLayoutSelected(
-                            CUSTOM_LAYOUT_ITEMS.reduce((acc, item) => {
-                              acc[item.id] = { checked: false, qty: 1 };
-                              return acc;
-                            }, {})
-                          );
-                          setCustomLayoutOpen(true);
-                        }}
-                      >
-                        Custom Layout...
-                      </button>
                     </div>
                     <div className="table-settings__danger">
                       <div className="table-settings__danger-title">Danger Zone</div>
                       <button
                         className="table-settings__button table-settings__button--danger"
                         type="button"
-                        onClick={() => setResetConfirmOpen(true)}
+                        onClick={handleResetTable}
                       >
                         Reset Table
                       </button>
@@ -4459,40 +4747,82 @@ const Table = () => {
                       <button
                         className="table-settings__button table-settings__button--secondary"
                         type="button"
-                        onClick={() =>
-                          setSettings((prev) => {
-                            if (tableShape === 'endless') {
-                              const nextLayout = buildEndlessSeatLayout();
-                              return {
-                                ...prev,
-                                roomSettings: {
-                                  ...prev.roomSettings,
-                                  seatPositions: {
-                                    ...(prev.roomSettings.seatPositions ?? {}),
-                                    endless: nextLayout.map((seat) => ({
-                                      x: seat.x,
-                                      y: seat.y
-                                    }))
-                                  }
-                                }
-                              };
-                            }
-                            const paramsByShape = prev.roomSettings.seatParams ?? {};
-                            const nextParams = buildDefaultSeatParams(
-                              prev.roomSettings.seatCount
+                        onClick={() => {
+                          if (tableShape === 'endless') {
+                            const nextLayout = buildSeatLayout({
+                              shape: 'endless',
+                              seatCount,
+                              viewportW: tableRect?.width ?? 0,
+                              viewportH: tableRect?.height ?? 0,
+                              tableRect,
+                              camera: cameraRef.current,
+                              viewport: viewportRef.current
+                            });
+                            setSeatPositions(
+                              seatsDerived.map((seat, index) => {
+                                const anchor = nextLayout[index] ?? {
+                                  x: 0,
+                                  y: 0,
+                                  angle: -Math.PI / 2,
+                                  side: 'top'
+                                };
+                                return {
+                                  ...seat,
+                                  x: anchor.x,
+                                  y: anchor.y,
+                                  angle: anchor.angle ?? -Math.PI / 2,
+                                  side: anchor.side ?? 'top'
+                                };
+                              })
                             );
-                            return {
+                            setSettings((prev) => ({
                               ...prev,
                               roomSettings: {
                                 ...prev.roomSettings,
-                                seatParams: {
-                                  ...paramsByShape,
-                                  [tableShape]: nextParams
+                                seatPositions: {
+                                  ...(prev.roomSettings.seatPositions ?? {}),
+                                  endless: nextLayout.map((seat) => ({ x: seat.x, y: seat.y }))
                                 }
                               }
-                            };
-                          })
-                        }
+                            }));
+                            return;
+                          }
+                          const nextParams = buildDefaultSeatParams(seatCount);
+                          const nextLayout = buildSeatLayout({
+                            shape: tableShape,
+                            seatCount,
+                            tableRect,
+                            seatRailBounds,
+                            seatParams: nextParams
+                          });
+                          setSeatPositions(
+                            seatsDerived.map((seat, index) => {
+                              const anchor = nextLayout[index] ?? {
+                                x: 0,
+                                y: 0,
+                                angle: -Math.PI / 2,
+                                side: 'top'
+                              };
+                              return {
+                                ...seat,
+                                x: anchor.x,
+                                y: anchor.y,
+                                angle: anchor.angle ?? -Math.PI / 2,
+                                side: anchor.side ?? 'top'
+                              };
+                            })
+                          );
+                          setSettings((prev) => ({
+                            ...prev,
+                            roomSettings: {
+                              ...prev.roomSettings,
+                              seatParams: {
+                                ...(prev.roomSettings.seatParams ?? {}),
+                                [tableShape]: nextParams
+                              }
+                            }
+                          }));
+                        }}
                       >
                         Reset Seat Locations
                       </button>
@@ -4506,182 +4836,46 @@ const Table = () => {
       </div>
       {resetConfirmOpen && uiOverlayRoot
         ? createPortal(
-            <div
-              className="modal-backdrop"
-              role="presentation"
-              onPointerDown={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                setResetConfirmOpen(false);
-              }}
-              onMouseDown={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-              }}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-              }}
-            >
-              <div
-                className="modal"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="reset-table-title"
-                onPointerDown={(event) => event.stopPropagation()}
-                onMouseDown={(event) => event.stopPropagation()}
-                onClick={(event) => event.stopPropagation()}
-              >
-                <h3 id="reset-table-title" className="modal__title">
-                  Reset table?
-                </h3>
-                <p className="modal__body">
-                  This will clear the table and hands, then rebuild using the current
-                  preset settings.
-                </p>
+            <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setResetConfirmOpen(false); }}>
+              <div className="modal" role="dialog" aria-modal="true" aria-labelledby="load-layout-title" onPointerDown={(event) => event.stopPropagation()}>
+                <h3 id="load-layout-title" className="modal__title">Load layout?</h3>
+                <p className="modal__body">This will clear the current table (and optionally reset seats).</p>
                 <div className="modal__actions">
-                  <button
-                    className="modal__button modal__button--primary"
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      handleResetTable();
-                    }}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    className="modal__button modal__button--secondary"
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setResetConfirmOpen(false);
-                    }}
-                  >
-                    No
-                  </button>
+                  <button className="modal__button modal__button--primary" type="button" onClick={handleLoadLayout}>Yes</button>
+                  <button className="modal__button modal__button--secondary" type="button" onClick={() => setResetConfirmOpen(false)}>No</button>
                 </div>
               </div>
             </div>,
             uiOverlayRoot
           )
         : null}
-      {customLayoutOpen && uiOverlayRoot
+      {itemSpawnerOpen && uiOverlayRoot
         ? createPortal(
-            <div
-              className="modal-backdrop"
-              role="presentation"
-              onPointerDown={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                setCustomLayoutOpen(false);
-              }}
-              onMouseDown={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-              }}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-              }}
-            >
-              <div
-                className="modal modal--wide"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="custom-layout-title"
-                onPointerDown={(event) => event.stopPropagation()}
-                onMouseDown={(event) => event.stopPropagation()}
-                onClick={(event) => event.stopPropagation()}
-              >
+            <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setItemSpawnerOpen(false); }}>
+              <div className="modal modal--wide" role="dialog" aria-modal="true" aria-labelledby="item-spawner-title" onPointerDown={(event) => event.stopPropagation()}>
                 <div className="modal__title-row">
-                  <h3 id="custom-layout-title" className="modal__title">
-                    Create a Custom Layout
-                  </h3>
-                  <button
-                    className="modal__close"
-                    type="button"
-                    aria-label="Close"
-                    onClick={() => setCustomLayoutOpen(false)}
-                  >
-                    ×
-                  </button>
+                  <h3 id="item-spawner-title" className="modal__title">Item Spawner</h3>
+                  <button className="modal__close" type="button" aria-label="Close" onClick={() => setItemSpawnerOpen(false)}>×</button>
                 </div>
                 <div className="modal__section">
-                  <label className="table-settings__row table-settings__row--stacked">
-                    <span className="table-settings__label">Search</span>
-                    <input
-                      className="table-settings__input table-settings__input--full"
-                      type="text"
-                      placeholder="Search items…"
-                      value={customLayoutSearchQuery}
-                      onChange={(event) => setCustomLayoutSearchQuery(event.target.value)}
-                    />
-                  </label>
+                  <input className="table-settings__input table-settings__input--full" type="text" placeholder="Search items…" value={itemSpawnerSearchQuery} onChange={(event) => setItemSpawnerSearchQuery(event.target.value)} />
                 </div>
                 <div className="modal__section">
-                  <div
-                    className="table-settings__spawn-list"
-                    style={{ maxHeight: '320px', overflowY: 'auto' }}
-                  >
-                    {filteredCustomLayoutItems.map((item) => {
-                      const itemState = customLayoutSelected[item.id] ?? {
-                        checked: false,
-                        qty: 1
-                      };
+                  <div className="table-settings__spawn-list" style={{ maxHeight: '320px', overflowY: 'auto' }}>
+                    {filteredItemSpawnerItems.map((item) => {
+                      const itemState = itemSpawnerSelected[item.id] ?? { checked: false, qty: 1 };
                       return (
                         <div key={item.id} className="table-settings__spawn-item">
-                          {CUSTOM_LAYOUT_SECTION_LABELS[item.id] ? (
-                            <div className="modal__section-title">
-                              {CUSTOM_LAYOUT_SECTION_LABELS[item.id]}
-                            </div>
-                          ) : null}
                           <div className="table-settings__spawn-item-row">
                             <label className="table-settings__switch table-settings__switch--inline">
-                              <input
-                                type="checkbox"
-                                checked={itemState.checked}
-                                onChange={(event) => {
-                                  const checked = event.target.checked;
-                                  setCustomLayoutSelected((prev) => ({
-                                    ...prev,
-                                    [item.id]: {
-                                      checked,
-                                      qty: checked
-                                        ? Math.max(1, Math.min(CUSTOM_LAYOUT_MAX_QTY, prev[item.id]?.qty ?? 1))
-                                        : prev[item.id]?.qty ?? 1
-                                    }
-                                  }));
-                                }}
-                              />
+                              <input type="checkbox" checked={itemState.checked} onChange={(event) => setItemSpawnerSelected((prev) => ({ ...prev, [item.id]: { checked: event.target.checked, qty: prev[item.id]?.qty ?? 1 } }))} />
                               <span>{item.label}</span>
                             </label>
-                            <label className="table-settings__row">
-                              <span className="table-settings__label">Qty</span>
-                              <input
-                                className="table-settings__input"
-                                type="number"
-                                inputMode="numeric"
-                                min="1"
-                                max={CUSTOM_LAYOUT_MAX_QTY}
-                                step="1"
-                                disabled={!itemState.checked}
-                                value={itemState.qty}
-                                onChange={(event) => {
-                                  const parsed = Number.parseInt(event.target.value, 10);
-                                  const qty = Number.isFinite(parsed)
-                                    ? Math.max(1, Math.min(CUSTOM_LAYOUT_MAX_QTY, parsed))
-                                    : 1;
-                                  setCustomLayoutSelected((prev) => ({
-                                    ...prev,
-                                    [item.id]: {
-                                      checked: prev[item.id]?.checked ?? false,
-                                      qty
-                                    }
-                                  }));
-                                }}
-                              />
-                            </label>
+                            <input className="table-settings__input" type="number" min="1" max={CUSTOM_LAYOUT_MAX_QTY} disabled={!itemState.checked} value={itemState.qty} onChange={(event) => {
+                              const parsed = Number.parseInt(event.target.value, 10);
+                              const qty = Number.isFinite(parsed) ? Math.max(1, Math.min(CUSTOM_LAYOUT_MAX_QTY, parsed)) : 1;
+                              setItemSpawnerSelected((prev) => ({ ...prev, [item.id]: { checked: prev[item.id]?.checked ?? false, qty } }));
+                            }} />
                           </div>
                         </div>
                       );
@@ -4689,14 +4883,36 @@ const Table = () => {
                   </div>
                 </div>
                 <div className="modal__actions">
-                  <button
-                    className="modal__button modal__button--primary"
-                    type="button"
-                    onClick={handleSpawnCustomLayout}
-                    disabled={selectedCustomLayoutCount === 0}
-                  >
-                    Spawn
-                  </button>
+                  <button className="modal__button modal__button--primary" type="button" onClick={handleSpawnItems} disabled={selectedItemSpawnerCount === 0}>Spawn</button>
+                </div>
+              </div>
+            </div>,
+            uiOverlayRoot
+          )
+        : null}
+      {saveLayoutOpen && uiOverlayRoot
+        ? createPortal(
+            <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setSaveLayoutOpen(false); }}>
+              <div className="modal" role="dialog" aria-modal="true" aria-labelledby="save-layout-title" onPointerDown={(event) => event.stopPropagation()}>
+                <div className="modal__title-row"><h3 id="save-layout-title" className="modal__title">Save Custom Layout</h3></div>
+                <label className="table-settings__row table-settings__row--stacked"><span className="table-settings__label">Layout Name</span><input className="table-settings__input table-settings__input--full" type="text" value={saveLayoutName} onChange={(event) => setSaveLayoutName(event.target.value)} /></label>
+                <label className="table-settings__row table-settings__row--stacked"><span className="table-settings__label">Optional Notes</span><input className="table-settings__input table-settings__input--full" type="text" value={saveLayoutNotes} onChange={(event) => setSaveLayoutNotes(event.target.value)} /></label>
+                <div className="modal__section"><div className="modal__section-title">Include Options</div>
+                  {[
+                    ['shape', 'Include table shape'],
+                    ['seatCount', 'Include seat count'],
+                    ['seatPositions', 'Include seat positions'],
+                    ['tableStyle', 'Include table style'],
+                    ['spawnFaceDown', 'Include “spawn face-down” default'],
+                    ['deckDefaults', 'Include deck settings defaults']
+                  ].map(([key, label]) => (
+                    <label key={key} className="table-settings__switch table-settings__switch--inline"><input type="checkbox" checked={saveLayoutInclude[key]} onChange={(event) => setSaveLayoutInclude((prev) => ({ ...prev, [key]: event.target.checked }))} /><span>{label}</span></label>
+                  ))}
+                </div>
+                {saveLayoutCode ? <p className="modal__body">Saved. Code: <strong>{saveLayoutCode}</strong></p> : null}
+                <div className="modal__actions">
+                  {saveLayoutCode ? <button className="modal__button modal__button--secondary" type="button" onClick={() => navigator.clipboard?.writeText(saveLayoutCode)}>Copy Code</button> : null}
+                  <button className="modal__button modal__button--primary" type="button" onClick={handleSaveCurrentLayout} disabled={!saveLayoutName.trim()}>Save</button>
                 </div>
               </div>
             </div>,
