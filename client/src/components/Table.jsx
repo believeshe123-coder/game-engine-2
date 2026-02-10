@@ -732,6 +732,7 @@ const Table = () => {
     slideLastPos: null,
     slideCarryDist: 0,
     selectedStackId: null,
+    selected: null,
     menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
   });
   const [hoveredStackId, setHoveredStackId] = useState(null);
@@ -875,6 +876,9 @@ const Table = () => {
       selectedStackId: preserveSelection
         ? nextSelectedStackId ?? prev.selectedStackId
         : nextSelectedStackId,
+      selected: preserveSelection
+        ? (nextSelectedStackId ? { kind: 'stack', id: nextSelectedStackId } : prev.selected)
+        : (nextSelectedStackId ? { kind: 'stack', id: nextSelectedStackId } : null),
       menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
     }));
   }, [actions, defaultRmbState]);
@@ -914,6 +918,7 @@ const Table = () => {
       slideLastPos: null,
       slideCarryDist: 0,
       selectedStackId: null,
+      selected: null,
       menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
     });
   }, [actions]);
@@ -936,11 +941,18 @@ const Table = () => {
   }, []);
 
   actions.selectStack = useCallback((stackId, screenXY) => {
+    const selectedStack = stacksById[stackId];
+    const selectedKind = isChipStack(selectedStack)
+      ? 'chips'
+      : isDieStack(selectedStack)
+        ? 'die'
+        : 'stack';
     setPickCountOpen(false);
     setInteraction((prev) => ({
       ...prev,
       ...defaultRmbState,
       selectedStackId: stackId,
+      selected: selectedKind && stackId ? { kind: selectedKind, id: stackId } : null,
       menu: {
         open: true,
         stackId,
@@ -948,7 +960,7 @@ const Table = () => {
         screenY: screenXY?.y ?? 0
       }
     }));
-  }, [defaultRmbState]);
+  }, [defaultRmbState, stacksById]);
 
   useEffect(() => {
     if (process.env.NODE_ENV === 'production') {
@@ -1629,6 +1641,7 @@ const Table = () => {
     setInteraction((prev) => ({
       ...prev,
       selectedStackId: null,
+      selected: null,
       menu: { ...prev.menu, open: false, stackId: null }
     }));
   }, [interaction.selectedStackId, setInteraction, stacksById]);
@@ -2961,6 +2974,7 @@ const Table = () => {
       drag: null,
       held: cloneState(previousSnapshot.held ?? null),
       selectedStackId: previousSnapshot.selectedStackId ?? null,
+      selected: previousSnapshot.selectedStackId ? { kind: 'stack', id: previousSnapshot.selectedStackId } : null,
       menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
     }));
     setTimeout(() => {
@@ -2998,6 +3012,7 @@ const Table = () => {
         drag: shouldClearHeld ? null : prev.drag,
         held: shouldClearHeld ? null : prev.held,
         selectedStackId: prev.selectedStackId === stackId ? null : prev.selectedStackId,
+        selected: prev.selectedStackId === stackId ? null : prev.selected,
         menu: { open: false, stackId: null, screenX: 0, screenY: 0 }
       };
     });
@@ -3046,6 +3061,7 @@ const Table = () => {
       setInteraction((prev) => ({
         ...prev,
         selectedStackId: nextSelected,
+        selected: nextSelected ? { kind: 'chips', id: nextSelected } : prev.selected,
         menu: { ...prev.menu, open: false, stackId: null }
       }));
       logAction(`${myName} split ${parsed} chips`);
@@ -4477,10 +4493,11 @@ const Table = () => {
               const occupied = Boolean(seatPlayerId);
               const isMine = seatPlayerId === myPlayerId;
               const seatHand = hands?.[seat.seatIndex] ?? { cardIds: [], revealed: {} };
-              const seatHandCount = seatHand.cardIds.length;
+              const seatHandCardIds = arr(seatHand?.cardIds);
+              const seatHandCount = seatHandCardIds.length;
               const maxRender = 10;
-              const visibleCardIds = seatHand.cardIds.slice(0, maxRender);
-              const overflowCount = Math.max(0, seatHand.cardIds.length - visibleCardIds.length);
+              const visibleCardIds = seatHandCardIds.slice(0, maxRender);
+              const overflowCount = Math.max(0, seatHandCardIds.length - visibleCardIds.length);
               const seatStyle = {
                 left: `${seat.x}px`,
                 top: `${seat.y}px`,
@@ -4672,7 +4689,7 @@ const Table = () => {
                     const isValidDropZone = isDragHover;
                     const isInvalidDropZone = false;
                     const seatHand = hands?.[zone.seatIndex] ?? { cardIds: [], revealed: {} };
-                    const count = seatHand.cardIds.length;
+                    const count = arr(seatHand?.cardIds).length;
                     const seatPlayerId = seatAssignments[zone.seatIndex];
                     const seatPlayer = seatPlayerId ? players[seatPlayerId] : null;
                     return (
@@ -4696,9 +4713,10 @@ const Table = () => {
                   })}
                   {handZones.map((zone) => {
                     const seatHand = hands?.[zone.seatIndex] ?? { cardIds: [], revealed: {} };
-                    const count = seatHand.cardIds.length;
+                    const seatHandCardIds = arr(seatHand?.cardIds);
+                    const count = seatHandCardIds.length;
                     const isOwnerZone = mySeatIndex === zone.seatIndex;
-                    const revealedIds = seatHand.cardIds.filter(
+                    const revealedIds = seatHandCardIds.filter(
                       (cardId) => seatHand.revealed?.[cardId]
                     );
                     if (!count && revealedIds.length === 0) {

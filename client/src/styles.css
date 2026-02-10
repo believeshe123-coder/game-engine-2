@@ -32,8 +32,8 @@
   --card-base-height: 104px;
   --cardW: 90px;
   --cardH: 126px;
-  --dice: calc(var(--cardW) * 0.55);
-  --chip: calc(var(--cardW) * 0.38);
+  --diceSize: calc(var(--cardW) * 0.58);
+  --chipSize: calc(var(--cardW) * 0.42);
   --card-scale: 1;
 }
 
@@ -351,30 +351,36 @@
 }
 
 .dice {
-  width: var(--dice);
-  height: var(--dice);
-  border-radius: 10px;
-  background: linear-gradient(145deg,#fff,#ddd);
+  position: relative;
+  width: var(--diceSize);
+  height: var(--diceSize);
+  border-radius: 12px;
+  background: linear-gradient(145deg, #f7f7f7, #d9d9d9);
+  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.35), inset 0 2px 0 rgba(255, 255, 255, 0.6);
   display: grid;
   place-items: center;
-  font-weight: 800;
-  font-size: calc(var(--dice)*.4);
-  color: #1f2438;
+  font-weight: 900;
+  font-size: calc(var(--diceSize) * 0.38);
+  color: #111;
 }
 
 .chipStack {
-  width: var(--chip);
-  height: var(--chip);
+  width: var(--chipSize);
+  height: var(--chipSize);
   border-radius: 999px;
-  background: linear-gradient(145deg,#c62828,#8e0000);
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.25), rgba(0, 0, 0, 0.15)),
+    linear-gradient(145deg, #b00020, #6a0012);
+  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.35);
   display: grid;
   place-items: center;
   color: #fff;
-  font-weight: 800;
+  font-weight: 900;
+  font-size: calc(var(--chipSize) * 0.32);
   position: relative;
 }
 
-.chipStack__denom { font-size: 12px; }
+.chipStack__denom { font-size: inherit; }
 .chipStack__count {
   position: absolute;
   top: calc(100% + 4px);
@@ -383,13 +389,17 @@
 }
 
 .die-stack__type {
-  font-size: 12px;
-  font-weight: 700;
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  font-size: 11px;
+  font-weight: 800;
+  opacity: 0.8;
 }
 
 .die-stack__value {
-  font-size: 24px;
-  font-weight: 800;
+  font-size: calc(var(--diceSize) * 0.38);
+  font-weight: 900;
   line-height: 1;
 }
 .stackCountBadge {

@@ -91,6 +91,18 @@ const normalizeTableState = (rawInput) => {
     held: raw.held ?? null,
     selectedStackId: raw.selectedStackId ?? null,
     selectedSeatId: raw.selectedSeatId ?? null,
+    tokens: arr(raw.tokens),
+    interaction: {
+      held: raw.held ?? null,
+      selected:
+        raw.interaction?.selected && typeof raw.interaction.selected === 'object'
+          ? raw.interaction.selected
+          : raw.selectedStackId
+            ? { kind: 'stack', id: raw.selectedStackId }
+            : null,
+      dragging: raw.interaction?.dragging ?? null,
+      ...obj(raw.interaction)
+    },
     savedLayouts: arr(raw.savedLayouts).map(normalizeLayoutMeta),
     objects: hasUnifiedObjects ? arr(raw.objects) : undefined,
     chipStacks: hasUnifiedObjects ? undefined : arr(raw.chipStacks).map(normalizeStack),
