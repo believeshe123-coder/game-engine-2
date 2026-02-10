@@ -4,6 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Tabletop MVP</title>
+    <script>
+      (function () {
+        const params = new URLSearchParams(location.search);
+        const p = params.get("p");
+        if (p) {
+          params.delete("p");
+          const newUrl = "/game-engine-2" + p + (params.toString() ? "?" + params.toString() : "");
+          history.replaceState(null, "", newUrl);
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

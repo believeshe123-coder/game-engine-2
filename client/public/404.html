@@ -1,0 +1,13 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="refresh" content="0; url=/game-engine-2/" />
+    <script>
+      // preserve path on refresh
+      var path = location.pathname.replace("/game-engine-2", "");
+      location.replace("/game-engine-2/?p=" + encodeURIComponent(path + location.search + location.hash));
+    </script>
+  </head>
+  <body></body>
+</html>
