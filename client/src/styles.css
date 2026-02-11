@@ -518,7 +518,8 @@ body,
   z-index: 30;
 }
 
-#ui-overlay {
+#ui-overlay,
+#ui-overlay-root {
   position: fixed;
   inset: 0;
   pointer-events: none;
@@ -1798,7 +1799,8 @@ body,
 }
 
 /* Seat UI rebuild */
-#ui-overlay {
+#ui-overlay,
+#ui-overlay-root {
   z-index: var(--ui-panel-z);
 }
 

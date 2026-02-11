@@ -22,7 +22,8 @@ const InventoryPanel = forwardRef(
     },
     ref
   ) => {
-    const hasCards = Boolean(cardIds && cardIds.length);
+    const safeCardIds = Array.isArray(cardIds) ? cardIds : [];
+    const hasCards = safeCardIds.length > 0;
 
     return (
       <section
@@ -46,7 +47,7 @@ const InventoryPanel = forwardRef(
               {hasCards ? 'Drag cards to the table, toggle reveal per card.' : 'No cards yet'}
             </div>
           </div>
-          <span className="inventory-panel__count">{cardIds?.length ?? 0}</span>
+          <span className="inventory-panel__count">{safeCardIds.length}</span>
         </div>
         {hasCards ? (
           <div
@@ -57,7 +58,7 @@ const InventoryPanel = forwardRef(
             onDragEnter={preventNativeDrag}
             onDrop={preventNativeDrag}
           >
-            {cardIds.map((cardId) => {
+            {safeCardIds.map((cardId) => {
               const card = cardsById[cardId];
               const isRevealed = Boolean(revealed?.[cardId]);
               return (
