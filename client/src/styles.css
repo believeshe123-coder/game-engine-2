@@ -2202,6 +2202,13 @@ body,
   box-shadow: 0 24px 40px rgba(0, 0, 0, 0.45);
   z-index: var(--ui-panel-z);
   backdrop-filter: blur(10px);
+  pointer-events: auto;
+}
+
+.inventory-panel--docked {
+  background: rgba(20, 18, 16, 0.82);
+  box-shadow: 0 14px 26px rgba(0, 0, 0, 0.32);
+  border-color: color-mix(in srgb, var(--player-accent, rgba(255, 225, 175, 0.45)) 55%, rgba(255, 225, 175, 0.2));
 }
 
 .inventory-panel__header {
@@ -2212,6 +2219,10 @@ body,
   margin-bottom: 12px;
   cursor: grab;
   user-select: none;
+}
+
+.inventory-panel__header--locked {
+  cursor: default;
 }
 
 .inventory-panel.is-dragging .inventory-panel__header {

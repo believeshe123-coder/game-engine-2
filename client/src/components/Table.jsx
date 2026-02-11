@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Card from './Card.jsx';
 import InventoryPanel from './InventoryPanel.jsx';
@@ -661,6 +661,46 @@ const clampInventoryPosition = (position, rect) => {
   };
 };
 
+const HAND_PANEL_VIEWPORT_MARGIN = 12;
+
+const getHandAnchorForSeat = (seat, seatRect, tableScale = 1) => {
+  if (seatRect) {
+    return {
+      x: seatRect.left + seatRect.width / 2,
+      y: seatRect.top + seatRect.height / 2,
+      rotationDeg: 0
+    };
+  }
+  if (!seat) {
+    return null;
+  }
+  const trayOffset = 18 * Math.max(0.5, tableScale || 1);
+  const fallbackX = seat.x - Math.cos(seat.angle) * trayOffset;
+  const fallbackY = seat.y - Math.sin(seat.angle) * trayOffset;
+  return {
+    x: fallbackX,
+    y: fallbackY,
+    rotationDeg: 0
+  };
+};
+
+const clampHandPanelToViewport = (anchor, panelRect) => {
+  if (!anchor || !panelRect || typeof window === 'undefined') {
+    return anchor;
+  }
+  const halfWidth = panelRect.width / 2;
+  const halfHeight = panelRect.height / 2;
+  const minX = halfWidth + HAND_PANEL_VIEWPORT_MARGIN;
+  const maxX = window.innerWidth - halfWidth - HAND_PANEL_VIEWPORT_MARGIN;
+  const minY = halfHeight + HAND_PANEL_VIEWPORT_MARGIN;
+  const maxY = window.innerHeight - halfHeight - HAND_PANEL_VIEWPORT_MARGIN;
+  return {
+    ...anchor,
+    x: clamp(anchor.x, Math.min(minX, maxX), Math.max(minX, maxX)),
+    y: clamp(anchor.y, Math.min(minY, maxY), Math.max(minY, maxY))
+  };
+};
+
 const getHeldTopLeft = (pointerPosition, offset) => {
   if (!pointerPosition) {
     return null;
@@ -870,6 +910,7 @@ const Table = () => {
   });
   const [inventoryDrag, setInventoryDrag] = useState(null);
   const [inventoryCardDrag, setInventoryCardDrag] = useState(null);
+  const [dockedInventoryAnchor, setDockedInventoryAnchor] = useState(null);
   const [heldScreenPos, setHeldScreenPos] = useState(null);
   const [seatMenuState, setSeatMenuState] = useState({
     seatIndex: null,
@@ -2005,6 +2046,9 @@ const Table = () => {
 
   actions.handleInventoryHeaderPointerDown = useCallback(
     (event) => {
+      if (mySeatIndex !== null) {
+        return;
+      }
       if (!settings.inventoryDragEnabled) {
         return;
       }
@@ -2026,7 +2070,7 @@ const Table = () => {
         height: rect.height
       });
     },
-    [inventoryPos, settings.inventoryDragEnabled]
+    [inventoryPos, mySeatIndex, settings.inventoryDragEnabled]
   );
 
   useEffect(() => {
@@ -2102,6 +2146,72 @@ const Table = () => {
       setInventoryPos(clamped);
     }
   }, [inventoryPos]);
+
+  const recalcDockedInventoryAnchor = useCallback(() => {
+    if (typeof window === 'undefined' || mySeatIndex === null) {
+      setDockedInventoryAnchor(null);
+      return;
+    }
+    const panel = inventoryPanelRef.current;
+    const panelRect = panel
+      ? panel.getBoundingClientRect()
+      : {
+          width: Math.min(960, window.innerWidth - 32),
+          height: 230
+        };
+    const seat = seatPositions.find((entry) => entry.seatIndex === mySeatIndex) ?? null;
+    const zoneNode = document.querySelector(`[data-handzone="seat-${mySeatIndex}"]`);
+    const zoneRect = zoneNode?.getBoundingClientRect?.() ?? null;
+    const nextAnchor = getHandAnchorForSeat(seat, zoneRect, combinedScale);
+    const clampedAnchor = clampHandPanelToViewport(nextAnchor, panelRect);
+    setDockedInventoryAnchor((previous) => {
+      if (!clampedAnchor && !previous) {
+        return previous;
+      }
+      if (!clampedAnchor || !previous) {
+        return clampedAnchor;
+      }
+      if (
+        Math.abs(previous.x - clampedAnchor.x) < 0.5 &&
+        Math.abs(previous.y - clampedAnchor.y) < 0.5 &&
+        Math.abs((previous.rotationDeg ?? 0) - (clampedAnchor.rotationDeg ?? 0)) < 0.25
+      ) {
+        return previous;
+      }
+      return clampedAnchor;
+    });
+  }, [combinedScale, mySeatIndex, seatPositions]);
+
+  useLayoutEffect(() => {
+    let frameId = requestAnimationFrame(() => {
+      recalcDockedInventoryAnchor();
+    });
+    return () => {
+      cancelAnimationFrame(frameId);
+    };
+  }, [recalcDockedInventoryAnchor, tableShape, tableZoom]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+    const handleResize = () => {
+      recalcDockedInventoryAnchor();
+    };
+    window.addEventListener('resize', handleResize);
+    const panel = inventoryPanelRef.current;
+    let observer = null;
+    if (panel && typeof ResizeObserver === 'function') {
+      observer = new ResizeObserver(() => {
+        recalcDockedInventoryAnchor();
+      });
+      observer.observe(panel);
+    }
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      observer?.disconnect();
+    };
+  }, [recalcDockedInventoryAnchor]);
 
   const logDealt = useCallback(
     (seatIndex, count) => {
@@ -4520,14 +4630,22 @@ const Table = () => {
             (interaction.drag?.offset?.y ?? cardSize.height / 2) * combinedScale
         }
       : null;
-  const inventoryPanelStyle = inventoryPos
-    ? {
-        left: `${inventoryPos.x}px`,
-        top: `${inventoryPos.y}px`,
-        bottom: 'auto',
-        transform: 'none'
-      }
-    : undefined;
+  const inventoryPanelStyle =
+    mySeatIndex !== null && dockedInventoryAnchor
+      ? {
+          left: `${dockedInventoryAnchor.x}px`,
+          top: `${dockedInventoryAnchor.y}px`,
+          bottom: 'auto',
+          transform: `translate(-50%, -50%) rotate(${dockedInventoryAnchor.rotationDeg ?? 0}deg)`
+        }
+      : inventoryPos && mySeatIndex === null
+        ? {
+            left: `${inventoryPos.x}px`,
+            top: `${inventoryPos.y}px`,
+            bottom: 'auto',
+            transform: 'none'
+          }
+        : undefined;
   return (
     <div className="tabletop">
       {isLegacyDisabledShape ? <div className="felt--legacyDisabledShape" aria-hidden="true" /> : null}
@@ -4620,6 +4738,7 @@ const Table = () => {
                         seatPadRefs.current[seat.seatIndex] = el;
                       }}
                       className="seatPad seat__hand"
+                      data-handzone={`seat-${seat.seatIndex}`}
                       aria-label={`${seat.label} hand zone`}
                     >
                       {/* hand contents render here if needed */}
@@ -4943,28 +5062,27 @@ const Table = () => {
             </div>
         </div>
       </div>
-      {mySeatIndex !== null ? (
-        <InventoryPanel
-          ref={inventoryPanelRef}
-          cardIds={hands?.[mySeatIndex]?.cardIds ?? []}
-          cardsById={cardsById}
-          revealed={hands?.[mySeatIndex]?.revealed ?? {}}
-          onToggleReveal={(cardId) => actions.handleToggleReveal?.(cardId)}
-          onHeaderPointerDown={(event) =>
-            actions.handleInventoryHeaderPointerDown?.(event)
-          }
-          onCardPointerDown={(event, cardId) =>
-            actions.handleInventoryCardPointerDown?.(event, cardId)
-          }
-          preventNativeDrag={preventNativeDrag}
-          onPreviewCard={(cardId) => openCardPreview(cardId, true)}
-          seatColor={players[myPlayerId]?.seatColor}
-          cardStyle={settings.cardStyle}
-          colorBlindMode={uiPrefs.colorBlindMode}
-          panelStyle={inventoryPanelStyle}
-          isDragging={Boolean(inventoryDrag)}
-        />
-      ) : null}
+      <InventoryPanel
+        ref={inventoryPanelRef}
+        cardIds={mySeatIndex !== null ? hands?.[mySeatIndex]?.cardIds ?? [] : []}
+        cardsById={cardsById}
+        revealed={mySeatIndex !== null ? hands?.[mySeatIndex]?.revealed ?? {} : {}}
+        onToggleReveal={(cardId) => actions.handleToggleReveal?.(cardId)}
+        onHeaderPointerDown={(event) =>
+          actions.handleInventoryHeaderPointerDown?.(event)
+        }
+        onCardPointerDown={(event, cardId) =>
+          actions.handleInventoryCardPointerDown?.(event, cardId)
+        }
+        preventNativeDrag={preventNativeDrag}
+        onPreviewCard={(cardId) => openCardPreview(cardId, true)}
+        seatColor={players[myPlayerId]?.seatColor}
+        cardStyle={settings.cardStyle}
+        colorBlindMode={uiPrefs.colorBlindMode}
+        panelStyle={inventoryPanelStyle}
+        isDragging={Boolean(inventoryDrag)}
+        isDocked={mySeatIndex !== null}
+      />
       {hoverSeatCardInfo && uiOverlayRoot
         ? createPortal(
             <div
