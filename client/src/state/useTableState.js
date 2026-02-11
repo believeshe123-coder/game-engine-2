@@ -513,11 +513,6 @@ export const useTableState = (
   const sitAtSeat = useCallback((seatIndex) => {
     setSeatState((prev) => {
       const count = prev.seatAssignments.length;
-      console.log('sitAtSeat before', {
-        seatIndex,
-        mySeatIndex: prev.mySeatIndex,
-        seatAssignments: prev.seatAssignments
-      });
       if (!Number.isInteger(seatIndex) || seatIndex < 0 || seatIndex >= count) {
         return prev;
       }
@@ -535,7 +530,6 @@ export const useTableState = (
         mySeatIndex: seatIndex,
         seatAssignments: nextAssignments
       };
-      console.log('sitAtSeat after', nextState);
       return nextState;
     });
     setPlayers((prev) => ({

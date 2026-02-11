@@ -649,56 +649,67 @@ const adjustSlideSeparation = (position, direction, trail) => {
   return adjusted;
 };
 
+const INVENTORY_VIEWPORT_MARGIN = 8;
+
 const clampInventoryPosition = (position, rect) => {
   if (!rect || typeof window === 'undefined') {
     return position;
   }
-  const maxX = Math.max(0, window.innerWidth - rect.width);
-  const maxY = Math.max(0, window.innerHeight - rect.height);
+  const maxX = Math.max(INVENTORY_VIEWPORT_MARGIN, window.innerWidth - rect.width - INVENTORY_VIEWPORT_MARGIN);
+  const maxY = Math.max(INVENTORY_VIEWPORT_MARGIN, window.innerHeight - rect.height - INVENTORY_VIEWPORT_MARGIN);
   return {
-    x: Math.min(maxX, Math.max(0, position.x)),
-    y: Math.min(maxY, Math.max(0, position.y))
+    x: Math.min(maxX, Math.max(INVENTORY_VIEWPORT_MARGIN, position.x)),
+    y: Math.min(maxY, Math.max(INVENTORY_VIEWPORT_MARGIN, position.y))
   };
 };
 
-const HAND_PANEL_VIEWPORT_MARGIN = 12;
-
-const getHandAnchorForSeat = (seat, seatRect, tableScale = 1) => {
-  if (seatRect) {
-    return {
-      x: seatRect.left + seatRect.width / 2,
-      y: seatRect.top + seatRect.height / 2,
-      rotationDeg: 0
-    };
-  }
-  if (!seat) {
+const getSeatTrayRect = (seatIndex) => {
+  if (typeof document === 'undefined' || !Number.isInteger(seatIndex)) {
     return null;
   }
-  const trayOffset = 18 * Math.max(0.5, tableScale || 1);
-  const fallbackX = seat.x - Math.cos(seat.angle) * trayOffset;
-  const fallbackY = seat.y - Math.sin(seat.angle) * trayOffset;
+  const el = document.querySelector(`[data-seat-tray="${seatIndex}"]`);
+  return el?.getBoundingClientRect?.() ?? null;
+};
+
+const getFeltCenterRect = () => {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+  const felt = document.querySelector('[data-felt-root="true"]');
+  const feltRect = felt?.getBoundingClientRect?.() ?? null;
+  if (!feltRect) {
+    return null;
+  }
   return {
-    x: fallbackX,
-    y: fallbackY,
-    rotationDeg: 0
+    x: feltRect.left + feltRect.width / 2,
+    y: feltRect.top + feltRect.height / 2
   };
 };
 
-const clampHandPanelToViewport = (anchor, panelRect) => {
-  if (!anchor || !panelRect || typeof window === 'undefined') {
-    return anchor;
+const getDockedInventoryPosition = (seatIndex, panelRect) => {
+  const trayRect = getSeatTrayRect(seatIndex);
+  if (!trayRect || !panelRect) {
+    return null;
   }
-  const halfWidth = panelRect.width / 2;
-  const halfHeight = panelRect.height / 2;
-  const minX = halfWidth + HAND_PANEL_VIEWPORT_MARGIN;
-  const maxX = window.innerWidth - halfWidth - HAND_PANEL_VIEWPORT_MARGIN;
-  const minY = halfHeight + HAND_PANEL_VIEWPORT_MARGIN;
-  const maxY = window.innerHeight - halfHeight - HAND_PANEL_VIEWPORT_MARGIN;
-  return {
-    ...anchor,
-    x: clamp(anchor.x, Math.min(minX, maxX), Math.max(minX, maxX)),
-    y: clamp(anchor.y, Math.min(minY, maxY), Math.max(minY, maxY))
+  const trayCenterX = trayRect.left + trayRect.width / 2;
+  const trayCenterY = trayRect.top + trayRect.height / 2;
+  const feltCenter = getFeltCenterRect();
+  let insetX = 0;
+  let insetY = 0;
+  if (feltCenter) {
+    const dx = trayCenterX - feltCenter.x;
+    const dy = trayCenterY - feltCenter.y;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      insetX = dx < 0 ? 12 : -12;
+    } else {
+      insetY = dy < 0 ? 12 : -12;
+    }
+  }
+  const centered = {
+    x: trayCenterX + insetX - panelRect.width / 2,
+    y: trayCenterY + insetY - panelRect.height / 2
   };
+  return clampInventoryPosition(centered, panelRect);
 };
 
 const getHeldTopLeft = (pointerPosition, offset) => {
@@ -808,7 +819,7 @@ const Table = () => {
     moveCardIdsToHand,
     moveFromHandToTable,
     toggleReveal,
-    resetTableSurface
+    hardResetTableState
   } = useTableState(
     tableRect,
     cardSize,
@@ -863,6 +874,7 @@ const Table = () => {
   const [splitCountValue, setSplitCountValue] = useState('1');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState('player');
+  const [loadLayoutConfirmOpen, setLoadLayoutConfirmOpen] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [itemSpawnerOpen, setItemSpawnerOpen] = useState(false);
   const [itemSpawnerSearchQuery, setItemSpawnerSearchQuery] = useState('');
@@ -910,7 +922,7 @@ const Table = () => {
   });
   const [inventoryDrag, setInventoryDrag] = useState(null);
   const [inventoryCardDrag, setInventoryCardDrag] = useState(null);
-  const [dockedInventoryAnchor, setDockedInventoryAnchor] = useState(null);
+  const [dockedInventoryPos, setDockedInventoryPos] = useState(null);
   const [heldScreenPos, setHeldScreenPos] = useState(null);
   const [seatMenuState, setSeatMenuState] = useState({
     seatIndex: null,
@@ -932,6 +944,7 @@ const Table = () => {
   const suppressNextHistoryRef = useRef(false);
   const wasLegacyDisabledShapeRef = useRef(false);
   const isModalOpen =
+    loadLayoutConfirmOpen ||
     resetConfirmOpen ||
     itemSpawnerOpen ||
     saveLayoutOpen ||
@@ -1671,6 +1684,7 @@ const Table = () => {
       actionsRef.current.updateTabletopScale?.();
     };
     window.addEventListener('resize', handleResize);
+    window.addEventListener('scroll', handleResize, true);
     return () => window.removeEventListener('resize', handleResize);
   }, [layoutSeats]);
 
@@ -2046,9 +2060,6 @@ const Table = () => {
 
   actions.handleInventoryHeaderPointerDown = useCallback(
     (event) => {
-      if (mySeatIndex !== null) {
-        return;
-      }
       if (!settings.inventoryDragEnabled) {
         return;
       }
@@ -2070,7 +2081,7 @@ const Table = () => {
         height: rect.height
       });
     },
-    [inventoryPos, mySeatIndex, settings.inventoryDragEnabled]
+    [inventoryPos, settings.inventoryDragEnabled]
   );
 
   useEffect(() => {
@@ -2127,10 +2138,14 @@ const Table = () => {
 
   actions.resetInventoryPosition = useCallback(() => {
     setInventoryPos(null);
+    setSettings((prev) => ({
+      ...prev,
+      inventoryDragEnabled: false
+    }));
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem('tt_inventoryPos');
     }
-  }, []);
+  }, [setSettings]);
 
   useEffect(() => {
     if (!inventoryPos) {
@@ -2147,71 +2162,88 @@ const Table = () => {
     }
   }, [inventoryPos]);
 
-  const recalcDockedInventoryAnchor = useCallback(() => {
-    if (typeof window === 'undefined' || mySeatIndex === null) {
-      setDockedInventoryAnchor(null);
+  const shouldDockInventory = mySeatIndex !== null && !settings.inventoryDragEnabled;
+
+  const recalcDockedInventoryPosition = useCallback(() => {
+    if (typeof window === 'undefined' || !shouldDockInventory) {
+      setDockedInventoryPos(null);
       return;
     }
     const panel = inventoryPanelRef.current;
-    const panelRect = panel
-      ? panel.getBoundingClientRect()
+    const measured = panel?.getBoundingClientRect?.();
+    const panelRect = measured
+      ? { width: measured.width, height: measured.height }
       : {
           width: Math.min(960, window.innerWidth - 32),
           height: 230
         };
-    const seat = seatPositions.find((entry) => entry.seatIndex === mySeatIndex) ?? null;
-    const zoneNode = document.querySelector(`[data-handzone="seat-${mySeatIndex}"]`);
-    const zoneRect = zoneNode?.getBoundingClientRect?.() ?? null;
-    const nextAnchor = getHandAnchorForSeat(seat, zoneRect, combinedScale);
-    const clampedAnchor = clampHandPanelToViewport(nextAnchor, panelRect);
-    setDockedInventoryAnchor((previous) => {
-      if (!clampedAnchor && !previous) {
-        return previous;
-      }
-      if (!clampedAnchor || !previous) {
-        return clampedAnchor;
+    const nextPosition = getDockedInventoryPosition(mySeatIndex, panelRect);
+    setDockedInventoryPos((previous) => {
+      if (!nextPosition) {
+        return null;
       }
       if (
-        Math.abs(previous.x - clampedAnchor.x) < 0.5 &&
-        Math.abs(previous.y - clampedAnchor.y) < 0.5 &&
-        Math.abs((previous.rotationDeg ?? 0) - (clampedAnchor.rotationDeg ?? 0)) < 0.25
+        previous &&
+        Math.abs(previous.x - nextPosition.x) < 0.5 &&
+        Math.abs(previous.y - nextPosition.y) < 0.5
       ) {
         return previous;
       }
-      return clampedAnchor;
+      return nextPosition;
     });
-  }, [combinedScale, mySeatIndex, seatPositions]);
+  }, [mySeatIndex, shouldDockInventory]);
 
   useLayoutEffect(() => {
-    let frameId = requestAnimationFrame(() => {
-      recalcDockedInventoryAnchor();
+    const frameId = requestAnimationFrame(() => {
+      recalcDockedInventoryPosition();
     });
     return () => {
       cancelAnimationFrame(frameId);
     };
-  }, [recalcDockedInventoryAnchor, tableShape, tableZoom]);
+  }, [
+    recalcDockedInventoryPosition,
+    seatPositions,
+    tableShape,
+    tableZoom,
+    mySeatIndex,
+    shouldDockInventory
+  ]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
       return undefined;
     }
+    let frameId = null;
+    const queueRecalc = () => {
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId);
+      }
+      frameId = requestAnimationFrame(() => {
+        recalcDockedInventoryPosition();
+      });
+    };
     const handleResize = () => {
-      recalcDockedInventoryAnchor();
+      queueRecalc();
     };
     window.addEventListener('resize', handleResize);
+    window.addEventListener('scroll', handleResize, true);
     const panel = inventoryPanelRef.current;
     let observer = null;
     if (panel && typeof ResizeObserver === 'function') {
       observer = new ResizeObserver(() => {
-        recalcDockedInventoryAnchor();
+        queueRecalc();
       });
       observer.observe(panel);
     }
     return () => {
       window.removeEventListener('resize', handleResize);
+      window.removeEventListener('scroll', handleResize, true);
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId);
+      }
       observer?.disconnect();
     };
-  }, [recalcDockedInventoryAnchor]);
+  }, [recalcDockedInventoryPosition]);
 
   const logDealt = useCallback(
     (seatIndex, count) => {
@@ -2237,7 +2269,7 @@ const Table = () => {
 
   actions.handleSeatPointerDown = useCallback(
     (event, seatIndex) => {
-      if (interaction.mode !== 'idle' || settings.roomSettings.seatLock || isModalOpen) {
+      if (interaction.mode !== 'idle' || interaction.held || settings.roomSettings.seatLock || isModalOpen) {
         return;
       }
       event.preventDefault();
@@ -2255,7 +2287,7 @@ const Table = () => {
       setDragSeatIndex(seatIndex);
       updateSeatParamFromPointer(event, seatIndex);
     },
-    [interaction.mode, isModalOpen, settings.roomSettings.seatLock, updateSeatParamFromPointer]
+    [interaction.held, interaction.mode, isModalOpen, settings.roomSettings.seatLock, updateSeatParamFromPointer]
   );
 
   actions.handleSeatPointerMove = useCallback(
@@ -4316,7 +4348,7 @@ const Table = () => {
       );
     }
     logAction(`Loaded custom layout ${layout.name ?? selectedLayoutCode}`);
-    setResetConfirmOpen(false);
+    setLoadLayoutConfirmOpen(false);
   }, [
     createStackId,
     logAction,
@@ -4386,18 +4418,32 @@ const Table = () => {
     suppressNextHistoryRef.current = true;
     historyRef.current = [];
     setCanUndo(false);
-    resetTableSurface(settings);
+    hardResetTableState(settings);
     actions.resetInteractionStates?.();
     actions.resetInteractionToDefaults?.();
     setCardFaceOverrides({});
     setSettingsOpen(false);
     setItemSpawnerOpen(false);
     setSaveLayoutOpen(false);
+    setLoadLayoutConfirmOpen(false);
     setResetConfirmOpen(false);
     setRemoveConfirmOpen(false);
     setCardPreview(null);
     setUiState(UI_SAFE_DEFAULTS);
     actions.updateTabletopScale?.();
+    setSettings((prev) => ({
+      ...prev,
+      roomSettings: {
+        ...prev.roomSettings,
+        seatParams: {},
+        seatPositions: isLegacyDisabledShape
+          ? {
+              ...(prev.roomSettings.seatPositions ?? {}),
+              legacyDisabledShape: []
+            }
+          : prev.roomSettings.seatPositions
+      }
+    }));
     if (isLegacyDisabledShape) {
       const nextLayout = buildLegacyDisabledShapeSeatLayout();
       setSeatPositions(nextLayout);
@@ -4411,15 +4457,40 @@ const Table = () => {
           }
         }
       }));
+    } else if (seatRailBounds) {
+      const nextLayout = buildSeatLayout({
+        shape: tableShape,
+        seatCount: seatsDerived.length,
+        tableRect,
+        seatRailBounds,
+        seatParams: normalizeSeatParams(undefined, seatCount, tableShape)
+      });
+      setSeatPositions(
+        seatsDerived.map((seat, index) => {
+          const anchor = nextLayout[index] ?? { x: 0, y: 0, angle: -Math.PI / 2, side: 'top' };
+          return {
+            ...seat,
+            x: anchor.x,
+            y: anchor.y,
+            angle: anchor.angle ?? -Math.PI / 2,
+            side: anchor.side ?? 'top'
+          };
+        })
+      );
     }
-    logAction('Reset table using current settings');
+    logAction('Reset table to default state');
   }, [
     actions,
     buildLegacyDisabledShapeSeatLayout,
+    hardResetTableState,
     isLegacyDisabledShape,
     logAction,
-    resetTableSurface,
-    settings
+    seatCount,
+    seatRailBounds,
+    seatsDerived,
+    settings,
+    tableRect,
+    tableShape
   ]);
 
   actions.handleStackDoubleClick = useCallback((event, stackId) => {
@@ -4601,6 +4672,10 @@ const Table = () => {
   const seatMenuIsOccupied = Boolean(seatMenuPlayerId);
   const uiOverlayRoot =
     typeof document !== 'undefined' ? document.getElementById('ui-overlay') : null;
+  const inventoryOverlayRoot =
+    typeof document !== 'undefined'
+      ? (document.getElementById('ui-overlay-root') ?? document.getElementById('ui-overlay'))
+      : null;
   const hoverSeatCardInfo = (() => {
     if (!hoverSeatCard) {
       return null;
@@ -4631,14 +4706,14 @@ const Table = () => {
         }
       : null;
   const inventoryPanelStyle =
-    mySeatIndex !== null && dockedInventoryAnchor
+    shouldDockInventory && dockedInventoryPos
       ? {
-          left: `${dockedInventoryAnchor.x}px`,
-          top: `${dockedInventoryAnchor.y}px`,
+          left: `${dockedInventoryPos.x}px`,
+          top: `${dockedInventoryPos.y}px`,
           bottom: 'auto',
-          transform: `translate(-50%, -50%) rotate(${dockedInventoryAnchor.rotationDeg ?? 0}deg)`
+          transform: 'none'
         }
-      : inventoryPos && mySeatIndex === null
+      : inventoryPos
         ? {
             left: `${inventoryPos.x}px`,
             top: `${inventoryPos.y}px`,
@@ -4739,6 +4814,7 @@ const Table = () => {
                       }}
                       className="seatPad seat__hand"
                       data-handzone={`seat-${seat.seatIndex}`}
+                      data-seat-tray={seat.seatIndex}
                       aria-label={`${seat.label} hand zone`}
                     >
                       {/* hand contents render here if needed */}
@@ -4834,6 +4910,7 @@ const Table = () => {
                 <div
                   ref={feltRef}
                   className="table__felt"
+                  data-felt-root="true"
                   aria-hidden="true"
                 />
               <div className="table__stack-layer">
@@ -5062,27 +5139,32 @@ const Table = () => {
             </div>
         </div>
       </div>
-      <InventoryPanel
-        ref={inventoryPanelRef}
-        cardIds={mySeatIndex !== null ? hands?.[mySeatIndex]?.cardIds ?? [] : []}
-        cardsById={cardsById}
-        revealed={mySeatIndex !== null ? hands?.[mySeatIndex]?.revealed ?? {} : {}}
-        onToggleReveal={(cardId) => actions.handleToggleReveal?.(cardId)}
-        onHeaderPointerDown={(event) =>
-          actions.handleInventoryHeaderPointerDown?.(event)
-        }
-        onCardPointerDown={(event, cardId) =>
-          actions.handleInventoryCardPointerDown?.(event, cardId)
-        }
-        preventNativeDrag={preventNativeDrag}
-        onPreviewCard={(cardId) => openCardPreview(cardId, true)}
-        seatColor={players[myPlayerId]?.seatColor}
-        cardStyle={settings.cardStyle}
-        colorBlindMode={uiPrefs.colorBlindMode}
-        panelStyle={inventoryPanelStyle}
-        isDragging={Boolean(inventoryDrag)}
-        isDocked={mySeatIndex !== null}
-      />
+      {inventoryOverlayRoot
+        ? createPortal(
+            <InventoryPanel
+              ref={inventoryPanelRef}
+              cardIds={mySeatIndex !== null ? hands?.[mySeatIndex]?.cardIds ?? [] : []}
+              cardsById={cardsById}
+              revealed={mySeatIndex !== null ? hands?.[mySeatIndex]?.revealed ?? {} : {}}
+              onToggleReveal={(cardId) => actions.handleToggleReveal?.(cardId)}
+              onHeaderPointerDown={(event) =>
+                actions.handleInventoryHeaderPointerDown?.(event)
+              }
+              onCardPointerDown={(event, cardId) =>
+                actions.handleInventoryCardPointerDown?.(event, cardId)
+              }
+              preventNativeDrag={preventNativeDrag}
+              onPreviewCard={(cardId) => openCardPreview(cardId, true)}
+              seatColor={players[myPlayerId]?.seatColor}
+              cardStyle={settings.cardStyle}
+              colorBlindMode={uiPrefs.colorBlindMode}
+              panelStyle={inventoryPanelStyle}
+              isDragging={Boolean(inventoryDrag)}
+              isDocked={Boolean(shouldDockInventory && dockedInventoryPos)}
+            />,
+            inventoryOverlayRoot
+          )
+        : null}
       {hoverSeatCardInfo && uiOverlayRoot
         ? createPortal(
             <div
@@ -5314,7 +5396,7 @@ const Table = () => {
                         className="table-settings__button table-settings__button--secondary"
                         type="button"
                         onClick={() => actions.resetInventoryPosition?.()}
-                        disabled={!inventoryPos}
+                        disabled={!inventoryPos && !settings.inventoryDragEnabled}
                       >
                         Reset Inventory Location
                       </button>
@@ -5396,7 +5478,7 @@ const Table = () => {
                         <button className="table-settings__button table-settings__button--secondary" type="button" onClick={() => { setSaveLayoutCode(''); setSaveLayoutName(''); setSaveLayoutNotes(''); setSaveLayoutOpen(true); }}>
                           Save Current Setup...
                         </button>
-                        <button className="table-settings__button table-settings__button--secondary" type="button" onClick={() => setResetConfirmOpen(true)} disabled={!selectedLayoutCode}>
+                        <button className="table-settings__button table-settings__button--secondary" type="button" onClick={() => setLoadLayoutConfirmOpen(true)} disabled={!selectedLayoutCode}>
                           Load
                         </button>
                         <button className="table-settings__button table-settings__button--danger" type="button" onClick={handleDeleteLayout} disabled={!selectedLayoutCode}>
@@ -5428,7 +5510,7 @@ const Table = () => {
                       <button
                         className="table-settings__button table-settings__button--danger"
                         type="button"
-                        onClick={handleResetTable}
+                        onClick={() => setResetConfirmOpen(true)}
                       >
                         Reset Table
                       </button>
@@ -5607,14 +5689,28 @@ const Table = () => {
             uiOverlayRoot
           )
         : null}
-      {resetConfirmOpen && uiOverlayRoot
+      {loadLayoutConfirmOpen && uiOverlayRoot
         ? createPortal(
-            <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setResetConfirmOpen(false); }}>
+            <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setLoadLayoutConfirmOpen(false); }}>
               <div className="modal" role="dialog" aria-modal="true" aria-labelledby="load-layout-title" onPointerDown={(event) => event.stopPropagation()}>
                 <h3 id="load-layout-title" className="modal__title">Load layout?</h3>
                 <p className="modal__body">This will clear the current table (and optionally reset seats).</p>
                 <div className="modal__actions">
                   <button className="modal__button modal__button--primary" type="button" onClick={handleLoadLayout}>Yes</button>
+                  <button className="modal__button modal__button--secondary" type="button" onClick={() => setLoadLayoutConfirmOpen(false)}>No</button>
+                </div>
+              </div>
+            </div>,
+            uiOverlayRoot
+          )
+        : null}
+      {resetConfirmOpen && uiOverlayRoot
+        ? createPortal(
+            <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setResetConfirmOpen(false); }}>
+              <div className="modal" role="dialog" aria-modal="true" aria-labelledby="reset-table-title" onPointerDown={(event) => event.stopPropagation()}>
+                <h3 id="reset-table-title" className="modal__title">Reset table to default?</h3>
+                <div className="modal__actions">
+                  <button className="modal__button modal__button--primary" type="button" onClick={handleResetTable}>Yes</button>
                   <button className="modal__button modal__button--secondary" type="button" onClick={() => setResetConfirmOpen(false)}>No</button>
                 </div>
               </div>

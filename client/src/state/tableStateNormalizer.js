@@ -7,7 +7,9 @@ const DEFAULT_INTERACTION_STATE = {
   held: null,
   dragId: null,
   dragging: false,
-  dragOffset: { x: 0, y: 0 }
+  dragOffset: { x: 0, y: 0 },
+  hover: null,
+  drag: null
 };
 const DEFAULT_UI_STATE = {
   logChatOpen: true,
@@ -41,12 +43,48 @@ const normalizeStack = (stack) => {
   };
 };
 
-const normalizeSnapshot = (s) => ({
-  entities: obj(s?.entities),
-  order: arr(s?.order),
-  hands: obj(s?.hands),
-  selections: arr(s?.selections)
-});
+const normalizeHeld = (heldInput) => {
+  if (!heldInput || typeof heldInput !== 'object') {
+    return null;
+  }
+  const held = obj(heldInput);
+  const offset = obj(held.offset ?? held.dragOffset);
+  const dragStart = obj(held.dragStart);
+  return {
+    ...held,
+    kind: held.kind ?? 'cardStack',
+    id: held.id ?? held.stackId ?? null,
+    payload: obj(held.payload),
+    offset: {
+      x: Number.isFinite(offset.x) ? offset.x : 0,
+      y: Number.isFinite(offset.y) ? offset.y : 0
+    },
+    dragStart: {
+      x: Number.isFinite(dragStart.x) ? dragStart.x : 0,
+      y: Number.isFinite(dragStart.y) ? dragStart.y : 0
+    },
+    isDragging: Boolean(held.isDragging ?? held.dragging)
+  };
+};
+
+const normalizeSnapshot = (snapshotInput) => {
+  const snapshot = obj(snapshotInput);
+  return {
+    entities: obj(snapshot.entities),
+    order: arr(snapshot.order),
+    hands: obj(snapshot.hands),
+    seats: arr(snapshot.seats),
+    settings: obj(snapshot.settings),
+    interaction: {
+      ...DEFAULT_INTERACTION_STATE,
+      ...obj(snapshot.interaction),
+      held: normalizeHeld(snapshot.interaction?.held)
+    },
+    chat: arr(snapshot.chat),
+    log: arr(snapshot.log),
+    selections: arr(snapshot.selections)
+  };
+};
 
 const normalizeHands = (handsInput) => {
   const handsObj = obj(handsInput);
@@ -94,7 +132,7 @@ const normalizeTableState = (rawInput) => {
       interactionInput.selectedId ??
       raw.selectedStackId ??
       DEFAULT_INTERACTION_STATE.selectedId,
-    held: interactionInput.held ?? raw.held ?? DEFAULT_INTERACTION_STATE.held,
+    held: normalizeHeld(interactionInput.held ?? raw.held ?? DEFAULT_INTERACTION_STATE.held),
     dragId: interactionInput.dragId ?? interactionInput.drag?.stackId ?? DEFAULT_INTERACTION_STATE.dragId,
     dragging: Boolean(interactionInput.dragging ?? interactionInput.drag),
     dragOffset: {
@@ -117,7 +155,9 @@ const normalizeTableState = (rawInput) => {
     seats: arr(raw.seats).map(normalizeSeat),
     actionLog: arr(raw.actionLog),
     hands: normalizeHands(raw.hands),
+    settings: obj(raw.settings),
     chat: arr(raw.chat),
+    log: arr(raw.log),
     undo: arr(raw.undo),
     redo: arr(raw.redo),
     history: arr(raw.history),
@@ -127,6 +167,8 @@ const normalizeTableState = (rawInput) => {
     tokens: arr(raw.tokens),
     interaction: {
       ...normalizedInteraction,
+      hover: normalizedInteraction.hover ?? null,
+      drag: normalizedInteraction.drag ?? null,
       selected:
         interactionInput.selected && typeof interactionInput.selected === 'object'
           ? interactionInput.selected
@@ -161,7 +203,7 @@ const normalizeRuntimeState = (rawInput) => {
       ...DEFAULT_INTERACTION_STATE,
       ...normalized.interaction,
       selectedId: normalized.interaction?.selectedId ?? null,
-      held: normalized.interaction?.held ?? null,
+      held: normalizeHeld(normalized.interaction?.held),
       dragId: normalized.interaction?.dragId ?? null,
       dragging: Boolean(normalized.interaction?.dragging),
       dragOffset: {
@@ -181,6 +223,8 @@ const normalizeRuntimeState = (rawInput) => {
     }
   };
 };
+
+const normalizeState = (rawInput) => normalizeTableState(rawInput);
 
 const normalizeCustomLayout = (rawLayout, codeHint = '') => {
   const normalized = normalizeLayoutMeta(rawLayout, 0);
@@ -212,6 +256,7 @@ export {
   obj,
   normalizeCustomLayout,
   normalizeRuntimeState,
+  normalizeState,
   normalizeSnapshot,
   normalizeTableState
 };
