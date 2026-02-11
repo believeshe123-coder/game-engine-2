@@ -251,8 +251,31 @@ const D6_PIP_MAP = {
   6: [1, 3, 4, 6, 7, 9]
 };
 
+const getEntityCardIds = (entity) => {
+  if (!entity || typeof entity !== 'object') {
+    return [];
+  }
+  if (Array.isArray(entity.cardIds)) {
+    return entity.cardIds.filter(Boolean);
+  }
+  if (Array.isArray(entity.cards)) {
+    return entity.cards
+      .map((card) => (typeof card === 'string' ? card : card?.id ?? card?.cardId ?? null))
+      .filter(Boolean);
+  }
+  if (Array.isArray(entity.payload?.cardIds)) {
+    return entity.payload.cardIds.filter(Boolean);
+  }
+  if (Array.isArray(entity.payload?.cards)) {
+    return entity.payload.cards
+      .map((card) => (typeof card === 'string' ? card : card?.id ?? card?.cardId ?? null))
+      .filter(Boolean);
+  }
+  return [];
+};
+
 const isCardStack = (entity) =>
-  entity?.kind === 'cardStack' || (entity?.kind == null && Array.isArray(entity?.cardIds));
+  entity?.kind === 'cardStack' || (entity?.kind == null && getEntityCardIds(entity).length > 0);
 const isChipStack = (entity) => entity?.kind === 'chipStack' || entity?.kind === 'chips';
 const isDieStack = (entity) => entity?.kind === 'dice' || entity?.kind === 'die';
 
@@ -1729,7 +1752,7 @@ const Table = () => {
 
   useEffect(() => {
     updatePresence({
-      holdingCount: interaction.held ? (interaction.held.cardIds?.length ?? 0) : 0
+      holdingCount: getEntityCardIds(interaction.held).length
     });
   }, [interaction.held, updatePresence]);
 
@@ -2339,8 +2362,9 @@ const Table = () => {
       seatDragRef.current = { seatIndex: null, moved: false, start: null };
       if (interaction.held || interaction.mode === 'holdStack') {
         if (interaction.held) {
-          moveCardIdsToHand(seatIndex, interaction.held.cardIds);
-          logDealt(seatIndex, interaction.held.cardIds?.length ?? 0);
+          const heldCardIds = getEntityCardIds(interaction.held);
+          moveCardIdsToHand(seatIndex, heldCardIds);
+          logDealt(seatIndex, heldCardIds.length);
           actions.clearInteraction({ preserveSelection: false });
         }
         return;
@@ -2374,7 +2398,7 @@ const Table = () => {
             }
             return {
               ...stack,
-              cardIds: origin.cardIdsBefore ?? [...stack.cardIds, ...(held.cardIds ?? [])]
+              cardIds: origin.cardIdsBefore ?? [...stack.cardIds, ...getEntityCardIds(held)]
             };
           });
         }
@@ -2399,7 +2423,7 @@ const Table = () => {
         y: origin.y ?? 0,
         rotation: 0,
         faceUp: held.faceUp ?? true,
-        cardIds: origin.cardIdsBefore ?? held.cardIds,
+        cardIds: origin.cardIdsBefore ?? getEntityCardIds(held),
         zone: 'table',
         ownerSeatIndex: null
       });
@@ -2666,8 +2690,9 @@ const Table = () => {
           ? getSeatIndexAtScreenPoint(clientX, clientY)
           : null;
       if (seatDropIndex !== null && seatDropIndex !== undefined) {
-        moveCardIdsToHand(seatDropIndex, held.cardIds);
-        logDealt(seatDropIndex, held.cardIds?.length ?? 0);
+        const heldCardIds = getEntityCardIds(held);
+        moveCardIdsToHand(seatDropIndex, heldCardIds);
+        logDealt(seatDropIndex, heldCardIds.length);
         actions.clearInteraction({ preserveSelection: false });
         return;
       }
@@ -2686,8 +2711,9 @@ const Table = () => {
         placement.y + cardSize.height / 2
       );
       if (handSeatIndex !== null && handSeatIndex !== undefined) {
-        moveCardIdsToHand(handSeatIndex, held.cardIds);
-        logDealt(handSeatIndex, held.cardIds?.length ?? 0);
+        const heldCardIds = getEntityCardIds(held);
+        moveCardIdsToHand(handSeatIndex, heldCardIds);
+        logDealt(handSeatIndex, heldCardIds.length);
         actions.clearInteraction({ preserveSelection: false });
         return;
       }
@@ -2700,7 +2726,7 @@ const Table = () => {
           }
           const merged = {
             ...target,
-            cardIds: [...target.cardIds, ...held.cardIds]
+            cardIds: [...target.cardIds, ...getEntityCardIds(held)]
           };
           return prev.filter((stack) => stack.id !== overlapId).concat(merged);
         });
@@ -2717,7 +2743,7 @@ const Table = () => {
           y: placement.y,
           rotation: 0,
           faceUp: held.faceUp ?? true,
-          cardIds: held.cardIds,
+          cardIds: getEntityCardIds(held),
           zone: 'table',
           ownerSeatIndex: null
         })
@@ -2856,7 +2882,7 @@ const Table = () => {
         return;
       }
       const placement = clampTopLeftToFelt(nextTopLeft).position ?? nextTopLeft;
-      const remaining = [...interaction.held.cardIds];
+      const remaining = [...getEntityCardIds(interaction.held)];
       const placedCard = remaining.pop();
       if (!placedCard) {
         actions.clearInteraction({ preserveSelection: true });
@@ -3020,8 +3046,8 @@ const Table = () => {
         return;
       }
 
-      drops = Math.min(drops, interaction.held.cardIds?.length ?? 0, SLIDE_MAX_DROPS_PER_TICK);
-      const remaining = [...interaction.held.cardIds];
+      drops = Math.min(drops, getEntityCardIds(interaction.held).length, SLIDE_MAX_DROPS_PER_TICK);
+      const remaining = [...getEntityCardIds(interaction.held)];
       const placements = [];
       let trail = interaction.slideTrail;
 
@@ -3757,7 +3783,7 @@ const Table = () => {
             !interaction.isSliding &&
             (now - interaction.rmbDownAt > HOLD_DELAY_MS || distanceFromStart > HOLD_MOVE_PX)
           ) {
-            if ((interaction.held.cardIds?.length ?? 0) <= 1) {
+            if (getEntityCardIds(interaction.held).length <= 1) {
               if (isChipStack(interaction.held)) {
                 placeOneChipFromHeld(pointerWorld);
               } else {
@@ -4560,7 +4586,7 @@ const Table = () => {
     ? stacksById[safeInteraction.selectedStackId]
     : null;
   const highlightStackId = held ? HELD_STACK_ID : safeInteraction.selectedStackId;
-  const heldCardIds = Array.isArray(held?.cardIds) ? held.cardIds : [];
+  const heldCardIds = getEntityCardIds(held);
   const heldTopCardId = heldCardIds.length > 0 ? heldCardIds[heldCardIds.length - 1] : null;
   const heldTopCard = heldTopCardId ? cardsById[heldTopCardId] : null;
   const heldWorldPosition = (() => {
