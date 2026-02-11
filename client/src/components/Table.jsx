@@ -4902,7 +4902,7 @@ const Table = () => {
                                 y={0}
                                 rotation={0}
                                 faceUp={isRevealed}
-                                cardStyle={stack.cardStyle ?? settings.cardStyle}
+                                cardStyle={settings.cardStyle}
                                 colorBlindMode={uiPrefs.colorBlindMode}
                                 zIndex={index + 1}
                                 rank={card?.rank}
