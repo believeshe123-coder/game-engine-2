@@ -69,17 +69,19 @@ const normalizeHeld = (heldInput) => {
 
 const normalizeSnapshot = (snapshotInput) => {
   const snapshot = obj(snapshotInput);
+  const normalizedInteraction = {
+    ...DEFAULT_INTERACTION_STATE,
+    ...obj(snapshot.interaction),
+    held: normalizeHeld(snapshot.interaction?.held)
+  };
   return {
+    ...snapshot,
     entities: obj(snapshot.entities),
     order: arr(snapshot.order),
     hands: obj(snapshot.hands),
     seats: arr(snapshot.seats),
     settings: obj(snapshot.settings),
-    interaction: {
-      ...DEFAULT_INTERACTION_STATE,
-      ...obj(snapshot.interaction),
-      held: normalizeHeld(snapshot.interaction?.held)
-    },
+    interaction: normalizedInteraction,
     chat: arr(snapshot.chat),
     log: arr(snapshot.log),
     selections: arr(snapshot.selections)
