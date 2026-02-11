@@ -4553,41 +4553,44 @@ const Table = () => {
     handleStackDoubleClick: actions.handleStackDoubleClick,
   };
 
-  const selectedStack = interaction.selectedStackId
-    ? stacksById[interaction.selectedStackId]
+  const safeInteraction = interaction ?? INTERACTION_SAFE_DEFAULTS;
+  const held = safeInteraction?.held ?? null;
+  const heldKind = held?.kind ?? null;
+  const selectedStack = safeInteraction.selectedStackId
+    ? stacksById[safeInteraction.selectedStackId]
     : null;
-  const held = interaction?.held ?? null;
-  const highlightStackId = held ? HELD_STACK_ID : interaction.selectedStackId;
-  const heldTopCardId = held?.cardIds?.[(held?.cardIds?.length ?? 1) - 1];
+  const highlightStackId = held ? HELD_STACK_ID : safeInteraction.selectedStackId;
+  const heldCardIds = Array.isArray(held?.cardIds) ? held.cardIds : [];
+  const heldTopCardId = heldCardIds.length > 0 ? heldCardIds[heldCardIds.length - 1] : null;
   const heldTopCard = heldTopCardId ? cardsById[heldTopCardId] : null;
   const heldWorldPosition = (() => {
-    if (!interaction.held || !interaction.drag) {
+    if (!held || !safeInteraction.drag) {
       return null;
     }
-    const pointerWorld = lastPointerWorldRef.current ?? interaction.drag.startWorld;
+    const pointerWorld = lastPointerWorldRef.current ?? safeInteraction.drag.startWorld;
     if (!pointerWorld) {
-      return interaction.drag.originXY;
+      return safeInteraction.drag.originXY;
     }
-    const raw = getHeldTopLeft(pointerWorld, interaction.drag.offset);
+    const raw = getHeldTopLeft(pointerWorld, safeInteraction.drag.offset);
     if (!raw) {
-      return interaction.drag.originXY;
+      return safeInteraction.drag.originXY;
     }
     const clamped = clampTopLeftToFelt(raw);
     return clamped.position ?? raw;
   })();
   const placementGhost =
-    interaction.held && heldWorldPosition
+    held && heldWorldPosition
       ? { x: heldWorldPosition.x, y: heldWorldPosition.y, rot: 0 }
       : null;
   const heldStackVisual =
-    interaction.held && heldWorldPosition
+    held && heldWorldPosition
       ? {
           id: HELD_STACK_ID,
           x: heldWorldPosition.x,
           y: heldWorldPosition.y,
           rotation: 0,
-          faceUp: interaction.held.faceUp ?? true,
-          cardIds: interaction.held.cardIds,
+          faceUp: held.faceUp ?? true,
+          cardIds: heldCardIds,
           zone: 'table',
           ownerSeatIndex: null,
           isHeldVisual: true
@@ -4603,40 +4606,43 @@ const Table = () => {
     }, {});
   }, [renderStacks]);
   const order = useMemo(() => (renderStacks ?? []).map((entity) => entity?.id).filter(Boolean), [renderStacks]);
+  const safeEntities = entities ?? {};
+  const safeOrder = Array.isArray(order) ? order : [];
   const hoverHandSeatId =
-    interaction.held && heldWorldPosition
+    held && heldWorldPosition
       ? getHandZoneAtPoint(
           heldWorldPosition.x + cardSize.width / 2,
           heldWorldPosition.y + cardSize.height / 2
         )
       : null;
   const mergeHighlightStackId =
-    interaction.held &&
+    held &&
     heldWorldPosition &&
     !hoverHandSeatId
       ? findTableOverlapStackId(
           heldWorldPosition.x,
           heldWorldPosition.y,
           null,
-          getStackBounds(interaction.held, cardSize)
+          getStackBounds(held, cardSize)
         )
       : null;
   const menuBelow = selectedStack ? selectedStack.y < 140 : false;
   const menuPosition =
-    interaction.menu.open
+    safeInteraction.menu?.open
       ? {
-          left: interaction.menu.screenX,
-          top: interaction.menu.screenY
+          left: safeInteraction.menu?.screenX ?? 0,
+          top: safeInteraction.menu?.screenY ?? 0
         }
       : null;
+  const selectedCardIds = Array.isArray(selectedStack?.cardIds) ? selectedStack.cardIds : [];
   const menuStackCount = selectedStack
     ? isChipStack(selectedStack)
-      ? selectedStack.count
-      : selectedStack.cardIds?.length ?? 0
+      ? Math.max(0, Number(selectedStack.count) || 0)
+      : selectedCardIds.length
     : 0;
   const previewTopCardId =
-    selectedStack && isCardStack(selectedStack) && (selectedStack.cardIds?.length ?? 0)
-      ? selectedStack.cardIds?.[(selectedStack.cardIds?.length ?? 1) - 1]
+    selectedStack && isCardStack(selectedStack) && selectedCardIds.length > 0
+      ? selectedCardIds[selectedCardIds.length - 1]
       : null;
   const previewTopCardFaceUp = previewTopCardId
     ? getCardFace(selectedStack, previewTopCardId)
@@ -4695,14 +4701,14 @@ const Table = () => {
     };
   })();
   const dragCardPosition =
-    interaction.held && heldScreenPos
+    held && heldScreenPos
       ? {
           x:
             heldScreenPos.x -
-            (interaction.drag?.offset?.x ?? cardSize.width / 2) * combinedScale,
+            (safeInteraction.drag?.offset?.x ?? cardSize.width / 2) * combinedScale,
           y:
             heldScreenPos.y -
-            (interaction.drag?.offset?.y ?? cardSize.height / 2) * combinedScale
+            (safeInteraction.drag?.offset?.y ?? cardSize.height / 2) * combinedScale
         }
       : null;
   const inventoryPanelStyle =
@@ -5028,8 +5034,8 @@ const Table = () => {
                       }}
                     />
                   ) : null}
-                  {(order ?? []).map((entityId, index) => {
-                    const stack = entities[entityId];
+                  {safeOrder.map((entityId, index) => {
+                    const stack = safeEntities[entityId];
                     if (!stack) {
                       return null;
                     }
@@ -5040,11 +5046,11 @@ const Table = () => {
                     const isSelectedStack = stack.id === highlightStackId;
                     const isHeldStack =
                       stack.id === HELD_STACK_ID ||
-                      (interaction.mode === 'dragStack' &&
-                        interaction.drag?.stackId === stack.id);
+                      (safeInteraction.mode === 'dragStack' &&
+                        safeInteraction.drag?.stackId === stack.id);
                     const isHoveredStack = stack.id === hoveredStackId;
                     const isMenuTarget =
-                      interaction.menu.open && interaction.menu.stackId === stack.id;
+                      safeInteraction.menu?.open && safeInteraction.menu?.stackId === stack.id;
                     const isMergeTarget = stack.id === mergeHighlightStackId;
                     const isTokenStack = Boolean(stack.token);
                     const highlightState = isHeldStack
@@ -5129,7 +5135,7 @@ const Table = () => {
                           />
                         )}
                         {showBadge ? (
-                          <div className="stackCountBadge">Stack: {stack?.cardIds?.length ?? 0}</div>
+                          <div className="stackCountBadge">Stack: {Array.isArray(stack?.cardIds) ? stack.cardIds.length : 0}</div>
                         ) : null}
                       </div>
                     );
@@ -5198,7 +5204,7 @@ const Table = () => {
       {held && uiOverlayRoot && dragCardPosition
         ? createPortal(
             <div
-                className="drag-layer"
+                className={`drag-layer ${heldKind ? `drag-layer--${heldKind}` : ''}`}
                 aria-hidden="true"
                 style={{ '--card-scale': viewTransform.cardScale * combinedScale }}
               >
@@ -5212,7 +5218,7 @@ const Table = () => {
                   </div>
                 ) : (
                   <Card
-                    id={held.stackId}
+                    id={held.stackId ?? held.id ?? 'held-stack'}
                     x={dragCardPosition.x}
                     y={dragCardPosition.y}
                     rotation={0}
@@ -5913,12 +5919,12 @@ const Table = () => {
                     type="button"
                     className="stack-menu__button"
                     onClick={() => {
-                      if ((selectedStack.cardIds?.length ?? 0) < 2) {
+                      if (selectedCardIds.length < 2) {
                         return;
                       }
                       actions.pickupFromStack?.(
                         selectedStack.id,
-                        Math.ceil((selectedStack.cardIds?.length ?? 0) / 2)
+                        Math.ceil(selectedCardIds.length / 2)
                       );
                       actions.closeMenu?.();
                     }}
