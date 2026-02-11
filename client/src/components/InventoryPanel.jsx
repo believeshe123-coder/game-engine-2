@@ -17,7 +17,8 @@ const InventoryPanel = forwardRef(
       colorBlindMode,
       onPreviewCard,
       panelStyle,
-      isDragging
+      isDragging,
+      isDocked
     },
     ref
   ) => {
@@ -26,7 +27,7 @@ const InventoryPanel = forwardRef(
     return (
       <section
         ref={ref}
-        className={`inventory-panel${isDragging ? ' is-dragging' : ''}`}
+        className={`inventory-panel${isDragging ? ' is-dragging' : ''}${isDocked ? ' inventory-panel--docked' : ''}`}
         aria-label="Your hand"
         style={panelStyle}
         draggable={false}
@@ -35,7 +36,10 @@ const InventoryPanel = forwardRef(
         onDragEnter={preventNativeDrag}
         onDrop={preventNativeDrag}
       >
-        <div className="inventory-panel__header" onPointerDown={onHeaderPointerDown}>
+        <div
+          className={`inventory-panel__header${isDocked ? ' inventory-panel__header--locked' : ''}`}
+          onPointerDown={onHeaderPointerDown}
+        >
           <div>
             <div className="inventory-panel__title">Your Hand</div>
             <div className="inventory-panel__subtitle">
